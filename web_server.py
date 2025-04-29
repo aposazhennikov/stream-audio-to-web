@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Generator, Optional
 from flask import Flask, Response, render_template_string, stream_with_context, jsonify, redirect, request
+from werkzeug.exceptions import BadRequest
 from playlist_manager import PlaylistManager
 from audio_streamer import AudioStreamer
 
@@ -134,8 +135,9 @@ class AudioStreamServer:
         self.app = Flask(__name__)
         self.current_track = None
         
-        # Регистрация маршрутов
+        # Регистрация маршрутов и обработчиков ошибок
         self._register_routes()
+        self._register_error_handlers()
     
     def _register_routes(self) -> None:
         """
@@ -190,6 +192,30 @@ class AudioStreamServer:
         
         except Exception as e:
             self.logger.error(f"Ошибка при регистрации маршрутов: {e}", exc_info=True)
+    
+    def _register_error_handlers(self) -> None:
+        """
+        Регистрирует обработчики ошибок Flask для веб-сервера.
+        """
+        try:
+            @self.app.errorhandler(400)
+            def handle_bad_request(e):
+                """
+                Обработчик ошибок 400 (Bad Request).
+                Отлавливает ошибки от TLS-соединений к HTTP-серверу.
+                """
+                # Проверяем есть ли бинарные данные в описании ошибки
+                error_desc = str(e)
+                if '\\x' in error_desc:
+                    self.logger.warning(f"Перехвачена попытка TLS-соединения: {str(e)[:30]}...")
+                    # Возвращаем простой ответ вместо стандартной ошибки 400
+                    return Response("Это HTTP-сервер. Используйте HTTP, а не HTTPS.", 
+                                    status=400, 
+                                    mimetype='text/plain')
+                return e
+        
+        except Exception as e:
+            self.logger.error(f"Ошибка при регистрации обработчиков ошибок: {e}", exc_info=True)
     
     def _create_direct_stream_response(self):
         """
@@ -286,6 +312,8 @@ class AudioStreamServer:
         """
         try:
             self.logger.info(f"Запуск аудио-сервера на {host}:{port}")
+            # Используем threaded=True для обработки нескольких запросов одновременно
+            # Но добавляем простой обработчик сигналов для корректного завершения
             self.app.run(host=host, port=port, debug=debug, threaded=True)
         except Exception as e:
             self.logger.error(f"Ошибка при запуске аудио-сервера: {e}", exc_info=True) 
