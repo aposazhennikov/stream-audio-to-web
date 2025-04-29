@@ -6,6 +6,7 @@
 """
 
 import os
+import random
 import logging
 from typing import List, Optional
 
@@ -15,62 +16,66 @@ class PlaylistManager:
     Класс для управления плейлистом аудиофайлов.
     
     Attributes:
-        playlist_file (str): Путь к файлу плейлиста
+        audio_directory (str): Путь к директории с аудиофайлами
         audio_files (List[str]): Список путей к аудиофайлам
         current_index (int): Индекс текущего воспроизводимого файла
     """
     
-    def __init__(self, playlist_file: str):
+    def __init__(self, audio_directory: str):
         """
         Инициализирует менеджер плейлиста.
         
         Args:
-            playlist_file (str): Путь к файлу плейлиста
+            audio_directory (str): Путь к директории с аудиофайлами
         """
         self.logger = logging.getLogger('audio_streamer')
-        self.playlist_file = playlist_file
+        self.audio_directory = audio_directory
         self.audio_files = []
         self.current_index = 0
         
-        self._load_playlist()
+        self._scan_directory()
     
-    def _load_playlist(self) -> None:
+    def _scan_directory(self) -> None:
         """
-        Загружает список аудиофайлов из файла плейлиста.
-        Проверяет существование файлов и их формат (.mp3 или .wav).
+        Сканирует директорию и находит все поддерживаемые аудиофайлы (.mp3 или .wav).
         """
         try:
-            if not os.path.exists(self.playlist_file):
-                self.logger.error(f"Файл плейлиста {self.playlist_file} не найден")
+            if not os.path.exists(self.audio_directory):
+                self.logger.error(f"Директория {self.audio_directory} не найдена")
                 return
             
-            with open(self.playlist_file, 'r') as f:
-                lines = f.readlines()
-            
             self.audio_files = []
-            for line in lines:
-                file_path = line.strip()
-                if not file_path:
-                    continue
-                
-                if not os.path.exists(file_path):
-                    self.logger.warning(f"Аудиофайл не найден: {file_path}")
-                    continue
-                
-                extension = os.path.splitext(file_path)[1].lower()
-                if extension not in ['.mp3', '.wav']:
-                    self.logger.warning(f"Неподдерживаемый формат файла: {file_path}")
-                    continue
-                
-                self.audio_files.append(file_path)
+            
+            # Рекурсивно обходим все файлы в директории
+            for root, _, files in os.walk(self.audio_directory, followlinks=True):
+                for filename in files:
+                    try:
+                        # Проверяем расширение файла
+                        extension = os.path.splitext(filename)[1].lower()
+                        if extension not in ['.mp3', '.wav']:
+                            continue
+                        
+                        # Полный путь к файлу
+                        file_path = os.path.join(root, filename)
+                        
+                        # Проверяем существование файла
+                        if not os.path.exists(file_path):
+                            continue
+                        
+                        self.audio_files.append(file_path)
+                    except Exception as e:
+                        self.logger.warning(f"Ошибка при обработке файла {filename}: {e}")
+            
+            # Перемешиваем файлы для разнообразия воспроизведения
+            random.shuffle(self.audio_files)
             
             if not self.audio_files:
-                self.logger.warning("Плейлист пуст или не содержит доступных аудиофайлов")
+                self.logger.warning(f"В директории {self.audio_directory} не найдено аудиофайлов (.mp3, .wav)")
             else:
-                self.logger.info(f"Загружено {len(self.audio_files)} аудиофайлов")
+                self.logger.info(f"Найдено {len(self.audio_files)} аудиофайлов в {self.audio_directory}")
         
         except Exception as e:
-            self.logger.error(f"Ошибка при загрузке плейлиста: {e}", exc_info=True)
+            self.logger.error(f"Ошибка при сканировании директории: {e}", exc_info=True)
     
     def get_next_track(self) -> Optional[str]:
         """
@@ -81,7 +86,10 @@ class PlaylistManager:
         """
         try:
             if not self.audio_files:
-                return None
+                # Повторно сканируем директорию, возможно, появились новые файлы
+                self._scan_directory()
+                if not self.audio_files:
+                    return None
             
             track = self.audio_files[self.current_index]
             self.current_index = (self.current_index + 1) % len(self.audio_files)
@@ -102,10 +110,10 @@ class PlaylistManager:
     
     def reload_playlist(self) -> None:
         """
-        Перезагружает плейлист из файла.
+        Перезагружает плейлист, сканируя директорию заново.
         """
         try:
             self.current_index = 0
-            self._load_playlist()
+            self._scan_directory()
         except Exception as e:
             self.logger.error(f"Ошибка при перезагрузке плейлиста: {e}", exc_info=True) 

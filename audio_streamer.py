@@ -11,6 +11,7 @@ import tempfile
 from typing import Optional, BinaryIO, Tuple
 from pydub import AudioSegment
 import io
+import sys
 
 
 class AudioStreamer:
@@ -24,6 +25,11 @@ class AudioStreamer:
         """
         self.logger = logging.getLogger('audio_streamer')
         self.chunk_size = 4096  # Размер чанка данных для потоковой передачи
+        
+        # Настройка кодировки для правильной обработки Unicode в путях файлов
+        if sys.platform == 'win32':
+            # Для Windows нужна специальная обработка Unicode в путях файлов
+            self.logger.info("Обнаружена Windows, настройка для обработки Unicode путей")
     
     def get_audio_format(self, file_path: str) -> str:
         """
@@ -57,7 +63,28 @@ class AudioStreamer:
             self.logger.info(f"Загрузка аудиофайла: {audio_file_path}")
             audio_format = self.get_audio_format(audio_file_path)
             
-            audio = AudioSegment.from_file(audio_file_path, format=audio_format)
+            # Обработка файлов с нестандартными символами в имени
+            try:
+                audio = AudioSegment.from_file(audio_file_path, format=audio_format)
+            except Exception as e:
+                self.logger.warning(f"Стандартный метод загрузки не сработал для {audio_file_path}: {e}")
+                # Альтернативный метод с использованием временного файла
+                with tempfile.NamedTemporaryFile(suffix=f".{audio_format}", delete=False) as temp_file:
+                    temp_path = temp_file.name
+                
+                try:
+                    # Копируем содержимое в временный файл с безопасным именем
+                    with open(audio_file_path, 'rb') as original_file:
+                        with open(temp_path, 'wb') as tmp:
+                            tmp.write(original_file.read())
+                    
+                    # Загружаем из временного файла
+                    audio = AudioSegment.from_file(temp_path, format=audio_format)
+                    # Удаляем временный файл
+                    os.unlink(temp_path)
+                except Exception as e2:
+                    self.logger.error(f"Не удалось загрузить файл даже через временный файл: {e2}", exc_info=True)
+                    raise
             
             # Создаем временный буфер для MP3
             buffer = io.BytesIO()
@@ -87,6 +114,10 @@ class AudioStreamer:
             if not os.path.exists(file_path):
                 self.logger.error(f"Аудиофайл не найден: {file_path}")
                 return None
+            
+            # Логируем информацию о треке
+            file_name = os.path.basename(file_path)
+            self.logger.info(f"Начало обработки трека: {file_name}")
             
             return self.convert_to_mp3_stream(file_path)
         

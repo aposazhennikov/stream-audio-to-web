@@ -1,0 +1,73 @@
+# Git
+.git
+.gitignore
+.github
+
+# Временные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Виртуальные окружения
+venv/
+ENV/
+env/
+.env
+
+# Документация и IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+docs/
+*.md
+
+# Не игнорировать README.md
+!README.md
+
+# Локальные файлы
+*.log
+*.sqlite3
+data/
+logs/
+test/
+tests/
+examples/
+
+# Временные аудиофайлы для тестирования
+*.mp3
+*.wav
+
+# Временные файлы Docker
+.dockerignore
+docker-compose*.yml 

@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from typing import Generator, Optional
-from flask import Flask, Response, render_template_string, stream_with_context
+from flask import Flask, Response, render_template_string, stream_with_context, jsonify
 from playlist_manager import PlaylistManager
 from audio_streamer import AudioStreamer
 
@@ -55,14 +55,42 @@ HTML_TEMPLATE = """
             font-style: italic;
             color: #7f8c8d;
             text-align: center;
+            min-height: 20px;
+        }
+        #track-name {
+            font-weight: bold;
+            color: #3498db;
         }
     </style>
+    <script>
+        // Периодическое обновление информации о текущем треке
+        function updateCurrentTrack() {
+            fetch('/now-playing')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.track) {
+                        document.getElementById('track-name').textContent = data.track;
+                    }
+                })
+                .catch(err => console.error('Ошибка при получении информации о треке:', err));
+        }
+        
+        window.onload = function() {
+            // Первоначальное обновление информации о треке
+            updateCurrentTrack();
+            
+            // Периодическое обновление каждые 10 секунд
+            setInterval(updateCurrentTrack, 10000);
+        };
+    </script>
 </head>
 <body>
     <div class="container">
         <h1>Аудио стриминг</h1>
         <div class="player-container">
-            <div class="now-playing">Трансляция аудиопотока</div>
+            <div class="now-playing">
+                Сейчас играет: <span id="track-name">загрузка...</span>
+            </div>
             <audio controls autoplay>
                 <source src="/stream" type="audio/mpeg">
                 Ваш браузер не поддерживает аудио элемент.
@@ -118,6 +146,14 @@ class AudioStreamServer:
                     stream_with_context(self._generate_audio_stream()),
                     mimetype='audio/mpeg'
                 )
+                
+            @self.app.route('/now-playing')
+            def now_playing():
+                """Эндпоинт для получения информации о текущем треке."""
+                track_name = "Нет активного трека"
+                if self.current_track:
+                    track_name = os.path.basename(self.current_track)
+                return jsonify({"track": track_name})
         
         except Exception as e:
             self.logger.error(f"Ошибка при регистрации маршрутов: {e}", exc_info=True)
@@ -138,7 +174,8 @@ class AudioStreamServer:
                     continue
                 
                 self.current_track = track
-                self.logger.info(f"Начало трансляции трека: {track}")
+                file_name = os.path.basename(track)
+                self.logger.info(f"Начало трансляции трека: {file_name}")
                 
                 audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
                 if not audio_stream:
