@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Модуль веб-сервера для потоковой передачи аудио.
+"""
+
+import os
+import logging
+import threading
+import time
+from typing import Generator, Optional
+from flask import Flask, Response, render_template_string, stream_with_context
+from playlist_manager import PlaylistManager
+from audio_streamer import AudioStreamer
+
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Аудио стриминг</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .player-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        audio {
+            width: 100%;
+            margin: 20px 0;
+        }
+        .now-playing {
+            margin: 10px 0;
+            font-style: italic;
+            color: #7f8c8d;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Аудио стриминг</h1>
+        <div class="player-container">
+            <div class="now-playing">Трансляция аудиопотока</div>
+            <audio controls autoplay>
+                <source src="/stream" type="audio/mpeg">
+                Ваш браузер не поддерживает аудио элемент.
+            </audio>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+class AudioStreamServer:
+    """
+    Класс веб-сервера для потоковой передачи аудио.
+    
+    Attributes:
+        playlist_manager (PlaylistManager): Менеджер плейлиста
+        audio_streamer (AudioStreamer): Обработчик аудиопотока
+        app (Flask): Экземпляр Flask приложения
+        current_track (str): Текущий проигрываемый трек
+    """
+    
+    def __init__(self, playlist_manager: PlaylistManager):
+        """
+        Инициализирует веб-сервер для потоковой передачи аудио.
+        
+        Args:
+            playlist_manager (PlaylistManager): Менеджер плейлиста
+        """
+        self.logger = logging.getLogger('audio_streamer')
+        self.playlist_manager = playlist_manager
+        self.audio_streamer = AudioStreamer()
+        self.app = Flask(__name__)
+        self.current_track = None
+        
+        # Регистрация маршрутов
+        self._register_routes()
+    
+    def _register_routes(self) -> None:
+        """
+        Регистрирует маршруты Flask для веб-сервера.
+        """
+        try:
+            @self.app.route('/')
+            def index():
+                """Главная страница с аудиоплеером."""
+                return render_template_string(HTML_TEMPLATE)
+            
+            @self.app.route('/stream')
+            def stream():
+                """Эндпоинт для потоковой передачи аудио."""
+                return Response(
+                    stream_with_context(self._generate_audio_stream()),
+                    mimetype='audio/mpeg'
+                )
+        
+        except Exception as e:
+            self.logger.error(f"Ошибка при регистрации маршрутов: {e}", exc_info=True)
+    
+    def _generate_audio_stream(self) -> Generator[bytes, None, None]:
+        """
+        Генератор для потоковой передачи аудио.
+        
+        Yields:
+            bytes: Чанки аудиоданных
+        """
+        try:
+            while True:
+                track = self._get_next_track()
+                if not track:
+                    # Если нет треков, ждем и пробуем снова
+                    time.sleep(1)
+                    continue
+                
+                self.current_track = track
+                self.logger.info(f"Начало трансляции трека: {track}")
+                
+                audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
+                if not audio_stream:
+                    continue
+                
+                while True:
+                    chunk = audio_stream.read(self.audio_streamer.chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+                
+                # Закрытие потока
+                audio_stream.close()
+        
+        except Exception as e:
+            self.logger.error(f"Ошибка при генерации аудиопотока: {e}", exc_info=True)
+            # Возвращаем пустые данные, чтобы не прерывать поток
+            yield b''
+    
+    def _get_next_track(self) -> Optional[str]:
+        """
+        Получает следующий трек из плейлиста.
+        
+        Returns:
+            Optional[str]: Путь к следующему треку или None, если плейлист пуст
+        """
+        try:
+            return self.playlist_manager.get_next_track()
+        except Exception as e:
+            self.logger.error(f"Ошибка при получении следующего трека: {e}", exc_info=True)
+            return None
+    
+    def run(self, host: str = '0.0.0.0', port: int = 9999, debug: bool = False) -> None:
+        """
+        Запускает веб-сервер для потоковой передачи аудио.
+        
+        Args:
+            host (str): IP-адрес сервера (по умолчанию '0.0.0.0')
+            port (int): Порт сервера (по умолчанию 9999)
+            debug (bool): Флаг режима отладки Flask (по умолчанию False)
+        """
+        try:
+            self.logger.info(f"Запуск аудио-сервера на {host}:{port}")
+            self.app.run(host=host, port=port, debug=debug, threaded=True)
+        except Exception as e:
+            self.logger.error(f"Ошибка при запуске аудио-сервера: {e}", exc_info=True) 
