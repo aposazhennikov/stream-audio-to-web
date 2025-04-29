@@ -8,6 +8,7 @@
 import os
 import random
 import logging
+import stat
 from typing import List, Optional
 
 
@@ -35,6 +36,44 @@ class PlaylistManager:
         
         self._scan_directory()
     
+    def _check_file_permissions(self, file_path: str) -> bool:
+        """
+        Проверяет права доступа к файлу.
+        
+        Args:
+            file_path (str): Путь к файлу
+            
+        Returns:
+            bool: True если файл доступен для чтения, иначе False
+        """
+        try:
+            # Получаем информацию о файле
+            file_stat = os.stat(file_path)
+            
+            # Проверяем права доступа
+            readable = bool(file_stat.st_mode & stat.S_IRUSR)  # Проверка прав на чтение для владельца
+            
+            # Логируем отсутствие прав доступа
+            if not readable:
+                self.logger.warning(f"Нет прав на чтение файла: {file_path}")
+                
+                # Дополнительно выводим информацию о правах
+                mode = file_stat.st_mode
+                self.logger.debug(f"Права файла: {oct(mode)}, UID: {file_stat.st_uid}, GID: {file_stat.st_gid}")
+                
+                # Пробуем вывести текущего пользователя
+                try:
+                    import pwd
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    self.logger.debug(f"Текущий пользователь: {current_user} (UID: {os.getuid()})")
+                except:
+                    self.logger.debug(f"Не удалось определить текущего пользователя")
+            
+            return readable
+        except Exception as e:
+            self.logger.error(f"Ошибка при проверке прав доступа к файлу {file_path}: {e}")
+            return False
+    
     def _scan_directory(self) -> None:
         """
         Сканирует директорию и находит все поддерживаемые аудиофайлы (.mp3 или .wav).
@@ -44,35 +83,55 @@ class PlaylistManager:
                 self.logger.error(f"Директория {self.audio_directory} не найдена")
                 return
             
+            self.logger.info(f"Сканирование директории: {self.audio_directory}")
             self.audio_files = []
             
-            # Рекурсивно обходим все файлы в директории
-            for root, _, files in os.walk(self.audio_directory, followlinks=True):
-                for filename in files:
-                    try:
-                        # Проверяем расширение файла
-                        extension = os.path.splitext(filename)[1].lower()
-                        if extension not in ['.mp3', '.wav']:
-                            continue
-                        
-                        # Полный путь к файлу
-                        file_path = os.path.join(root, filename)
-                        
-                        # Проверяем существование файла
-                        if not os.path.exists(file_path):
-                            continue
-                        
-                        self.audio_files.append(file_path)
-                    except Exception as e:
-                        self.logger.warning(f"Ошибка при обработке файла {filename}: {e}")
+            # Проверяем права доступа к директории
+            if not os.access(self.audio_directory, os.R_OK):
+                self.logger.error(f"Нет прав на чтение директории: {self.audio_directory}")
+                
+                try:
+                    # Выводим информацию о правах директории
+                    dir_stat = os.stat(self.audio_directory)
+                    self.logger.debug(f"Права директории: {oct(dir_stat.st_mode)}")
+                    self.logger.debug(f"UID директории: {dir_stat.st_uid}, GID директории: {dir_stat.st_gid}")
+                    
+                    # Выводим информацию о текущем пользователе
+                    import pwd
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    self.logger.debug(f"Текущий пользователь: {current_user} (UID: {os.getuid()})")
+                except Exception as e:
+                    self.logger.debug(f"Ошибка при получении информации о правах: {e}")
+                
+                return
+            
+            # Прямой поиск mp3 и wav файлов без рекурсии
+            for f in os.listdir(self.audio_directory):
+                try:
+                    file_path = os.path.join(self.audio_directory, f)
+                    if os.path.isfile(file_path):
+                        extension = os.path.splitext(f)[1].lower()
+                        if extension in ['.mp3', '.wav']:
+                            # Проверяем права доступа к файлу
+                            if self._check_file_permissions(file_path):
+                                self.audio_files.append(file_path)
+                                self.logger.debug(f"Добавлен файл: {f}")
+                            else:
+                                self.logger.warning(f"Файл пропущен из-за отсутствия прав: {f}")
+                except Exception as e:
+                    self.logger.warning(f"Ошибка при обработке файла {f}: {e}")
             
             # Перемешиваем файлы для разнообразия воспроизведения
             random.shuffle(self.audio_files)
             
             if not self.audio_files:
-                self.logger.warning(f"В директории {self.audio_directory} не найдено аудиофайлов (.mp3, .wav)")
+                self.logger.warning(f"В директории {self.audio_directory} не найдено доступных аудиофайлов (.mp3, .wav)")
             else:
                 self.logger.info(f"Найдено {len(self.audio_files)} аудиофайлов в {self.audio_directory}")
+                # Выводим первые 5 файлов для отладки
+                for i, file_path in enumerate(self.audio_files[:5]):
+                    file_name = os.path.basename(file_path)
+                    self.logger.info(f"Пример файла {i+1}: {file_name}")
         
         except Exception as e:
             self.logger.error(f"Ошибка при сканировании директории: {e}", exc_info=True)
@@ -92,6 +151,7 @@ class PlaylistManager:
                     return None
             
             track = self.audio_files[self.current_index]
+            self.logger.info(f"Воспроизведение трека: {os.path.basename(track)}")
             self.current_index = (self.current_index + 1) % len(self.audio_files)
             return track
         

@@ -51,15 +51,36 @@ HTML_TEMPLATE = """
             margin: 20px 0;
         }
         .now-playing {
-            margin: 10px 0;
+            margin: 20px 0;
             font-style: italic;
             color: #7f8c8d;
             text-align: center;
             min-height: 20px;
+            padding: 10px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
         }
         #track-name {
             font-weight: bold;
             color: #3498db;
+            display: block;
+            margin-top: 5px;
+            font-size: 1.2em;
+        }
+        .controls {
+            margin: 15px 0;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        button:hover {
+            background-color: #2980b9;
         }
     </style>
     <script>
@@ -75,12 +96,43 @@ HTML_TEMPLATE = """
                 .catch(err => console.error('Ошибка при получении информации о треке:', err));
         }
         
+        // Ручное управление аудиоплеером для надежного воспроизведения
+        function setupAudioPlayer() {
+            const audioPlayer = document.getElementById('audio-player');
+            
+            // Автоматический переход к следующему треку в случае ошибки
+            audioPlayer.addEventListener('error', () => {
+                console.log('Ошибка воспроизведения, обновление источника...');
+                audioPlayer.src = '/stream?nocache=' + new Date().getTime();
+                audioPlayer.load();
+                audioPlayer.play().catch(e => console.error('Не удалось воспроизвести после ошибки:', e));
+            });
+            
+            // Кнопки управления
+            document.getElementById('play-btn').addEventListener('click', () => {
+                audioPlayer.play().catch(e => console.error('Не удалось воспроизвести:', e));
+            });
+            
+            document.getElementById('stop-btn').addEventListener('click', () => {
+                audioPlayer.pause();
+                audioPlayer.currentTime = 0;
+            });
+            
+            document.getElementById('reload-btn').addEventListener('click', () => {
+                audioPlayer.src = '/stream?nocache=' + new Date().getTime();
+                audioPlayer.load();
+                audioPlayer.play().catch(e => console.error('Не удалось перезагрузить:', e));
+                updateCurrentTrack();
+            });
+        }
+        
         window.onload = function() {
             // Первоначальное обновление информации о треке
             updateCurrentTrack();
+            setupAudioPlayer();
             
-            // Периодическое обновление каждые 10 секунд
-            setInterval(updateCurrentTrack, 10000);
+            // Периодическое обновление каждые 5 секунд
+            setInterval(updateCurrentTrack, 5000);
         };
     </script>
 </head>
@@ -89,12 +141,20 @@ HTML_TEMPLATE = """
         <h1>Аудио стриминг</h1>
         <div class="player-container">
             <div class="now-playing">
-                Сейчас играет: <span id="track-name">загрузка...</span>
+                Сейчас играет: 
+                <span id="track-name">загрузка...</span>
             </div>
-            <audio controls autoplay>
+            
+            <audio id="audio-player" controls autoplay>
                 <source src="/stream" type="audio/mpeg">
                 Ваш браузер не поддерживает аудио элемент.
             </audio>
+            
+            <div class="controls">
+                <button id="play-btn">▶ Воспроизвести</button>
+                <button id="stop-btn">⏹ Остановить</button>
+                <button id="reload-btn">🔄 Перезагрузить</button>
+            </div>
         </div>
     </div>
 </body>
@@ -154,6 +214,16 @@ class AudioStreamServer:
                 if self.current_track:
                     track_name = os.path.basename(self.current_track)
                 return jsonify({"track": track_name})
+            
+            @self.app.route('/reload-playlist')
+            def reload_playlist():
+                """Эндпоинт для перезагрузки плейлиста."""
+                try:
+                    self.playlist_manager.reload_playlist()
+                    return jsonify({"status": "success", "message": "Плейлист перезагружен"})
+                except Exception as e:
+                    self.logger.error(f"Ошибка при перезагрузке плейлиста: {e}", exc_info=True)
+                    return jsonify({"status": "error", "message": str(e)})
         
         except Exception as e:
             self.logger.error(f"Ошибка при регистрации маршрутов: {e}", exc_info=True)
@@ -170,7 +240,8 @@ class AudioStreamServer:
                 track = self._get_next_track()
                 if not track:
                     # Если нет треков, ждем и пробуем снова
-                    time.sleep(1)
+                    self.logger.warning("Нет доступных треков для воспроизведения, ожидание...")
+                    time.sleep(2)
                     continue
                 
                 self.current_track = track
@@ -179,16 +250,25 @@ class AudioStreamServer:
                 
                 audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
                 if not audio_stream:
+                    self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
                     continue
                 
-                while True:
-                    chunk = audio_stream.read(self.audio_streamer.chunk_size)
-                    if not chunk:
-                        break
-                    yield chunk
-                
-                # Закрытие потока
-                audio_stream.close()
+                try:
+                    while True:
+                        chunk = audio_stream.read(self.audio_streamer.chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+                    
+                    # Закрытие потока
+                    audio_stream.close()
+                except Exception as e:
+                    self.logger.error(f"Ошибка при чтении аудиопотока: {e}", exc_info=True)
+                    if audio_stream:
+                        try:
+                            audio_stream.close()
+                        except:
+                            pass
         
         except Exception as e:
             self.logger.error(f"Ошибка при генерации аудиопотока: {e}", exc_info=True)
