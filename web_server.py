@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 from typing import Generator, Optional
-from flask import Flask, Response, render_template_string, stream_with_context, jsonify
+from flask import Flask, Response, render_template_string, stream_with_context, jsonify, redirect, request
 from playlist_manager import PlaylistManager
 from audio_streamer import AudioStreamer
 
@@ -67,21 +67,6 @@ HTML_TEMPLATE = """
             margin-top: 5px;
             font-size: 1.2em;
         }
-        .controls {
-            margin: 15px 0;
-        }
-        button {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 8px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin: 0 5px;
-        }
-        button:hover {
-            background-color: #2980b9;
-        }
     </style>
     <script>
         // Периодическое обновление информации о текущем треке
@@ -96,40 +81,9 @@ HTML_TEMPLATE = """
                 .catch(err => console.error('Ошибка при получении информации о треке:', err));
         }
         
-        // Ручное управление аудиоплеером для надежного воспроизведения
-        function setupAudioPlayer() {
-            const audioPlayer = document.getElementById('audio-player');
-            
-            // Автоматический переход к следующему треку в случае ошибки
-            audioPlayer.addEventListener('error', () => {
-                console.log('Ошибка воспроизведения, обновление источника...');
-                audioPlayer.src = '/stream?nocache=' + new Date().getTime();
-                audioPlayer.load();
-                audioPlayer.play().catch(e => console.error('Не удалось воспроизвести после ошибки:', e));
-            });
-            
-            // Кнопки управления
-            document.getElementById('play-btn').addEventListener('click', () => {
-                audioPlayer.play().catch(e => console.error('Не удалось воспроизвести:', e));
-            });
-            
-            document.getElementById('stop-btn').addEventListener('click', () => {
-                audioPlayer.pause();
-                audioPlayer.currentTime = 0;
-            });
-            
-            document.getElementById('reload-btn').addEventListener('click', () => {
-                audioPlayer.src = '/stream?nocache=' + new Date().getTime();
-                audioPlayer.load();
-                audioPlayer.play().catch(e => console.error('Не удалось перезагрузить:', e));
-                updateCurrentTrack();
-            });
-        }
-        
         window.onload = function() {
             // Первоначальное обновление информации о треке
             updateCurrentTrack();
-            setupAudioPlayer();
             
             // Периодическое обновление каждые 5 секунд
             setInterval(updateCurrentTrack, 5000);
@@ -149,12 +103,6 @@ HTML_TEMPLATE = """
                 <source src="/stream" type="audio/mpeg">
                 Ваш браузер не поддерживает аудио элемент.
             </audio>
-            
-            <div class="controls">
-                <button id="play-btn">▶ Воспроизвести</button>
-                <button id="stop-btn">⏹ Остановить</button>
-                <button id="reload-btn">🔄 Перезагрузить</button>
-            </div>
         </div>
     </div>
 </body>
@@ -196,15 +144,49 @@ class AudioStreamServer:
         try:
             @self.app.route('/')
             def index():
-                """Главная страница с аудиоплеером."""
+                """
+                Главная страница, редирект на аудиопоток для радиоприемников 
+                или веб-интерфейс для браузеров.
+                """
+                user_agent = request.headers.get('User-Agent', '').lower()
+                # Если запрос от радиоприемника или плеера (не полноценный браузер)
+                if 'mozilla' not in user_agent and 'webkit' not in user_agent and 'chrome' not in user_agent and 'safari' not in user_agent:
+                    self.logger.info(f"Обнаружен запрос от устройства, перенаправление на прямой аудиопоток")
+                    return redirect('/direct-stream')
+                # Для браузеров отдаем веб-интерфейс
+                return render_template_string(HTML_TEMPLATE)
+            
+            @self.app.route('/web')
+            def web_interface():
+                """Веб-интерфейс для браузеров."""
                 return render_template_string(HTML_TEMPLATE)
             
             @self.app.route('/stream')
             def stream():
-                """Эндпоинт для потоковой передачи аудио."""
+                """Эндпоинт для потоковой передачи аудио через веб-интерфейс."""
                 return Response(
                     stream_with_context(self._generate_audio_stream()),
                     mimetype='audio/mpeg'
+                )
+                
+            @self.app.route('/direct-stream')
+            def direct_stream():
+                """
+                Прямой аудиопоток для радиоприемников.
+                Без HTML, чистый аудиопоток.
+                """
+                self.logger.info("Запрошен прямой аудиопоток (для радиоприемников)")
+                return Response(
+                    stream_with_context(self._generate_audio_stream()),
+                    mimetype='audio/mpeg',
+                    headers={
+                        # Заголовки для лучшей совместимости с радиоприемниками
+                        'Content-Type': 'audio/mpeg',
+                        'icy-name': 'Audio Stream Server',
+                        'icy-description': 'Direct audio stream',
+                        'icy-genre': 'Various',
+                        'icy-br': '192'
+                    }
                 )
                 
             @self.app.route('/now-playing')
