@@ -145,20 +145,14 @@ class AudioStreamServer:
             @self.app.route('/')
             def index():
                 """
-                Главная страница, редирект на аудиопоток для радиоприемников 
-                или веб-интерфейс для браузеров.
+                Главная страница - сразу отдает аудиопоток без HTML-интерфейса
                 """
-                user_agent = request.headers.get('User-Agent', '').lower()
-                # Если запрос от радиоприемника или плеера (не полноценный браузер)
-                if 'mozilla' not in user_agent and 'webkit' not in user_agent and 'chrome' not in user_agent and 'safari' not in user_agent:
-                    self.logger.info(f"Обнаружен запрос от устройства, перенаправление на прямой аудиопоток")
-                    return redirect('/direct-stream')
-                # Для браузеров отдаем веб-интерфейс
-                return render_template_string(HTML_TEMPLATE)
+                self.logger.info("Запрос на главную страницу - прямой аудиопоток")
+                return self._create_direct_stream_response()
             
             @self.app.route('/web')
             def web_interface():
-                """Веб-интерфейс для браузеров."""
+                """Веб-интерфейс для браузеров (доступен только по специальному URL)."""
                 return render_template_string(HTML_TEMPLATE)
             
             @self.app.route('/stream')
@@ -172,22 +166,9 @@ class AudioStreamServer:
             @self.app.route('/direct-stream')
             def direct_stream():
                 """
-                Прямой аудиопоток для радиоприемников.
-                Без HTML, чистый аудиопоток.
+                Прямой аудиопоток для радиоприемников (legacy URL).
                 """
-                self.logger.info("Запрошен прямой аудиопоток (для радиоприемников)")
-                return Response(
-                    stream_with_context(self._generate_audio_stream()),
-                    mimetype='audio/mpeg',
-                    headers={
-                        # Заголовки для лучшей совместимости с радиоприемниками
-                        'Content-Type': 'audio/mpeg',
-                        'icy-name': 'Audio Stream Server',
-                        'icy-description': 'Direct audio stream',
-                        'icy-genre': 'Various',
-                        'icy-br': '192'
-                    }
-                )
+                return self._create_direct_stream_response()
                 
             @self.app.route('/now-playing')
             def now_playing():
@@ -209,6 +190,30 @@ class AudioStreamServer:
         
         except Exception as e:
             self.logger.error(f"Ошибка при регистрации маршрутов: {e}", exc_info=True)
+    
+    def _create_direct_stream_response(self):
+        """
+        Создает ответ для прямого аудиопотока
+        
+        Returns:
+            Response: Flask-ответ с аудиопотоком и необходимыми заголовками
+        """
+        return Response(
+            stream_with_context(self._generate_audio_stream()),
+            mimetype='audio/mpeg',
+            headers={
+                # Заголовки для совместимости с радиоприемниками и автоматического воспроизведения
+                'Content-Type': 'audio/mpeg',
+                'icy-name': 'Audio Stream Server',
+                'icy-description': 'Direct audio stream',
+                'icy-genre': 'Various',
+                'icy-br': '192',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'X-Content-Type-Options': 'nosniff'
+            }
+        )
     
     def _generate_audio_stream(self) -> Generator[bytes, None, None]:
         """
