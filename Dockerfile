@@ -13,8 +13,14 @@ COPY go.mod ./
 # Выполнение go mod tidy для создания/обновления go.sum
 RUN go mod tidy
 
+# Загрузка всех зависимостей (явно)
+RUN go mod download all
+
 # Копирование исходного кода
 COPY . .
+
+# Повторное выполнение go mod tidy после копирования кода
+RUN go mod tidy && go mod verify
 
 # Сборка приложения
 # Флаг CGO_ENABLED=0 для статической компиляции
