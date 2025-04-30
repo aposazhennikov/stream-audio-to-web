@@ -81,7 +81,12 @@ func main() {
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
 
-	// Создание HTTP сервера - ПЕРВЫМ ДЕЛОМ
+	// Теперь настраиваем маршруты СИНХРОННО, перед запуском HTTP-сервера
+	log.Printf("Начало настройки аудио маршрутов...")
+	configureAudioRoutes(server, stationManager, config)
+	log.Printf("Аудио маршруты настроены успешно")
+
+	// Создание HTTP сервера
 	httpSrv := &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
 		Handler: server.Handler(),
@@ -91,27 +96,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Добавляем временное перенаправление с корневого маршрута на страницу обслуживания
-	// пока радиостанции не настроены
-	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			// Пропускаем запросы к другим путям
-			server.Handler().ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte("<html><body><h1>Аудио стример</h1><p>Пожалуйста, подождите, идет настройка радиостанций...</p></body></html>"))
-	})
-
-	// Добавляем временный обработчик healthz
-	server.Handler().(*mux.Router).HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен временный запрос healthz от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Server starting up"))
-	})
-
-	// Запуск сервера в горутине ПЕРВЫМ ДЕЛОМ
+	// Запуск сервера в горутине ПОСЛЕ настройки всех маршрутов
 	go func() {
 		log.Printf("Сервер запущен и слушает на 0.0.0.0:%d", config.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -141,17 +126,6 @@ func main() {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-
-	// Настройка маршрутов для аудиопотоков в отдельной горутине
-	go func() {
-		log.Printf("Начало настройки аудио маршрутов...")
-		// Даем HTTP серверу время на инициализацию
-		time.Sleep(1 * time.Second)
-		
-		configureAudioRoutes(server, stationManager, config)
-		
-		log.Printf("Аудио маршруты настроены успешно")
-	}()
 
 	// Отдельная горутина для проверки доступности сервера после настройки
 	go func() {
@@ -213,22 +187,23 @@ func configureAudioRoutes(server *httpServer.Server, stationManager *radio.Radio
 
 	// Настраиваем маршруты из конфигурации
 	for route, dir := range config.DirectoryRoutes {
-		// Нормализуем путь маршрута
+		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
+		// Но на всякий случай проверяем
 		if route[0] != '/' {
 			route = "/" + route
 		}
+		
+		log.Printf("Настройка маршрута '%s' -> директория '%s'", route, dir)
 		configureRoute(server, stationManager, route, dir, config)
+		log.Printf("Маршрут '%s' настроен успешно", route)
 	}
 	
 	// Добавляем перенаправление с корневого маршрута на /humor, если он существует, или первый доступный маршрут
 	redirectTo := "/humor" // по умолчанию перенаправляем на /humor
-	if _, exists := config.DirectoryRoutes["humor"]; !exists {
+	if _, exists := config.DirectoryRoutes["/humor"]; !exists {
 		// Если /humor не существует, берем первый маршрут из конфигурации
 		for route := range config.DirectoryRoutes {
-			redirectTo = "/" + route
-			if redirectTo[0] != '/' {
-				redirectTo = "/" + redirectTo
-			}
+			redirectTo = route
 			break
 		}
 	}
@@ -238,10 +213,14 @@ func configureAudioRoutes(server *httpServer.Server, stationManager *radio.Radio
 		log.Printf("Перенаправление с / на %s", redirectTo)
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	}).Methods("GET")
+	
+	log.Printf("Настроено перенаправление с / на %s", redirectTo)
 }
 
 // configureRoute настраивает один маршрут для аудиопотока
 func configureRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) {
+	log.Printf("Начало настройки маршрута '%s'...", route)
+	
 	// Создаём директорию, если она не существует
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		log.Printf("Создание директории для маршрута %s: %s", route, dir)
@@ -265,12 +244,46 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 
 	// Добавляем радиостанцию
 	stationManager.AddStation(route, streamer, pl)
+	log.Printf("Радиостанция '%s' добавлена в менеджер", route)
 
 	// Регистрируем аудиопоток на HTTP сервере
 	server.RegisterStream(route, streamer, pl)
+	log.Printf("Аудиопоток '%s' зарегистрирован на HTTP сервере", route)
 
 	// Регистрируем обработчик для маршрута
 	server.Handler().(*mux.Router).HandleFunc(route, server.StreamAudioHandler(route)).Methods("GET")
+	log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
+	
+	// Проверяем, что маршрут действительно был зарегистрирован
+	routes := getAllRoutes(server.Handler().(*mux.Router))
+	routeExists := false
+	for _, r := range routes {
+		if r == route {
+			routeExists = true
+			break
+		}
+	}
+	
+	if routeExists {
+		log.Printf("Маршрут '%s' успешно зарегистрирован в HTTP сервере", route)
+	} else {
+		log.Printf("ВНИМАНИЕ: Маршрут '%s' не найден в зарегистрированных маршрутах!", route)
+	}
+}
+
+// getAllRoutes возвращает список всех зарегистрированных маршрутов
+func getAllRoutes(router *mux.Router) []string {
+	routes := []string{}
+	
+	router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+		pathTemplate, err := route.GetPathTemplate()
+		if err == nil {
+			routes = append(routes, pathTemplate)
+		}
+		return nil
+	})
+	
+	return routes
 }
 
 // Загрузка конфигурации из флагов командной строки и переменных окружения
@@ -355,16 +368,28 @@ func loadConfig() *Config {
 	}
 
 	// Проверяем наличие основных маршрутов (humor, science)
-	// Если их нет - добавляем явно
-	if _, exists := config.DirectoryRoutes["humor"]; !exists {
-		config.DirectoryRoutes["humor"] = "/app/humor"
-		log.Printf("Добавлен маршрут по умолчанию: 'humor' -> '/app/humor'")
+	// Если их нет - добавляем явно с ведущим слешем /humor и /science
+	if _, exists := config.DirectoryRoutes["/humor"]; !exists && _, exists2 := config.DirectoryRoutes["humor"]; !exists2 {
+		config.DirectoryRoutes["/humor"] = "/app/humor"
+		log.Printf("Добавлен маршрут по умолчанию: '/humor' -> '/app/humor'")
 	}
 	
-	if _, exists := config.DirectoryRoutes["science"]; !exists {
-		config.DirectoryRoutes["science"] = "/app/science"
-		log.Printf("Добавлен маршрут по умолчанию: 'science' -> '/app/science'")
+	if _, exists := config.DirectoryRoutes["/science"]; !exists && _, exists2 := config.DirectoryRoutes["science"]; !exists2 {
+		config.DirectoryRoutes["/science"] = "/app/science"
+		log.Printf("Добавлен маршрут по умолчанию: '/science' -> '/app/science'")
 	}
+
+	// Нормализуем все маршруты, добавляя ведущий слеш, если его нет
+	normalizedRoutes := make(map[string]string)
+	for route, dir := range config.DirectoryRoutes {
+		if route[0] != '/' {
+			normalizedRoutes["/"+route] = dir
+			log.Printf("Нормализован маршрут: '%s' -> '/%s'", route, route)
+		} else {
+			normalizedRoutes[route] = dir
+		}
+	}
+	config.DirectoryRoutes = normalizedRoutes
 
 	// Не проверяем директорию по умолчанию, так как маршрут "/" не используется
 	// if _, err := os.Stat(config.AudioDir); os.IsNotExist(err) {

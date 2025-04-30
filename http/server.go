@@ -94,8 +94,21 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	// Убедимся, что маршрут начинается со слеша
+	if route[0] != '/' {
+		route = "/" + route
+		log.Printf("Поправлен маршрут при регистрации: '%s'", route)
+	}
+
 	s.streams[route] = stream
 	s.playlists[route] = playlist
+
+	// Проверяем, добавился ли поток
+	if _, exists := s.streams[route]; exists {
+		log.Printf("Поток для маршрута '%s' успешно добавлен в map streams", route)
+	} else {
+		log.Printf("ОШИБКА: Поток для маршрута '%s' не был добавлен в map streams!", route)
+	}
 
 	// Запуск горутины для отслеживания текущего трека
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
