@@ -60,6 +60,20 @@ func main() {
 
 	// Загрузка конфигурации
 	config := loadConfig()
+	
+	// Подробное логирование конфигурации для диагностики
+	log.Printf("========== КОНФИГУРАЦИЯ ПРИЛОЖЕНИЯ ==========")
+	log.Printf("Порт: %d", config.Port)
+	log.Printf("Аудио директория по умолчанию: %s", config.AudioDir)
+	log.Printf("Формат потока: %s", config.StreamFormat)
+	log.Printf("Битрейт: %d", config.Bitrate)
+	log.Printf("Макс. клиентов: %d", config.MaxClients)
+	log.Printf("Размер буфера: %d", config.BufferSize)
+	log.Printf("Дополнительные директории маршрутов:")
+	for route, dir := range config.DirectoryRoutes {
+		log.Printf("  - Маршрут '%s' -> Директория '%s'", route, dir)
+	}
+	log.Printf("============================================")
 
 	// Создание HTTP сервера
 	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
@@ -72,13 +86,13 @@ func main() {
 
 	// Создание HTTP сервера
 	httpSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", config.Port),
+		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
 		Handler: server.Handler(),
 	}
 
 	// Запуск сервера в горутине
 	go func() {
-		log.Printf("Сервер запущен на порту %d", config.Port)
+		log.Printf("Сервер запущен и слушает на 0.0.0.0:%d", config.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Ошибка запуска сервера: %s", err)
 			sentry.CaptureException(err)
@@ -91,12 +105,10 @@ func main() {
 	sig := <-quit
 
 	log.Printf("Получен сигнал: %v, выполняется грациозное завершение...", sig)
-	sentry.CaptureMessage(fmt.Sprintf("Получен сигнал: %v, выполняется грациозное завершение", sig))
 
 	// Обработка SIGHUP для перезагрузки плейлистов
 	if sig == syscall.SIGHUP {
 		log.Println("Получен SIGHUP, перезагрузка плейлистов...")
-		sentry.CaptureMessage("Получен SIGHUP, перезагрузка плейлистов")
 		// TODO: Реализовать перезагрузку плейлистов без остановки сервера
 	}
 
@@ -112,7 +124,6 @@ func main() {
 		sentry.CaptureException(err)
 	}
 	log.Println("Сервер успешно остановлен")
-	sentry.CaptureMessage("Сервер успешно остановлен")
 }
 
 // configureAudioRoutes настраивает маршруты для аудиопотоков

@@ -3,176 +3,137 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудио Стриминг Сервер</title>
+    <title>Аудио Стример</title>
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: Arial, sans-serif;
             margin: 0;
             padding: 20px;
             background-color: #f5f5f5;
-            color: #333;
         }
         .container {
             max-width: 800px;
             margin: 0 auto;
             background-color: white;
-            padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
         }
         h1 {
             text-align: center;
-            color: #2c3e50;
-            margin-bottom: 30px;
+            color: #333;
         }
-        .station {
+        .stream-list {
+            margin-top: 20px;
+        }
+        .stream-item {
             margin-bottom: 20px;
             padding: 15px;
             border: 1px solid #ddd;
             border-radius: 4px;
             background-color: #f9f9f9;
         }
-        .station h2 {
-            margin-top: 0;
-            color: #3498db;
-        }
-        .player {
-            width: 100%;
-            margin: 10px 0;
-        }
-        .info {
-            display: flex;
-            justify-content: space-between;
-            font-size: 14px;
-            color: #666;
-        }
-        .listener-count {
+        .stream-title {
+            font-size: 18px;
             font-weight: bold;
-            color: #27ae60;
+            margin-bottom: 10px;
         }
         .now-playing {
+            margin-bottom: 10px;
             font-style: italic;
+            color: #666;
         }
-        #stations-container {
-            margin-top: 20px;
+        audio {
+            width: 100%;
         }
-        .refreshBtn {
-            display: block;
-            margin: 20px auto;
-            padding: 10px 20px;
-            background-color: #3498db;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
+        .listeners {
+            margin-top: 5px;
+            font-size: 14px;
+            color: #888;
         }
-        .refreshBtn:hover {
-            background-color: #2980b9;
+        .error-message {
+            color: red;
+            text-align: center;
+            padding: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Аудио Стриминг Сервер</h1>
-        
-        <div id="stations-container">
-            <!-- Здесь будут отображаться радиостанции -->
-            <div class="loading">Загрузка доступных радиостанций...</div>
+        <h1>Аудио Стример</h1>
+        <div id="streams" class="stream-list">
+            <div class="loading">Загрузка потоков...</div>
         </div>
-        
-        <button class="refreshBtn" onclick="loadStations()">Обновить</button>
     </div>
 
     <script>
-        // Загрузка информации о станциях при загрузке страницы
-        document.addEventListener('DOMContentLoaded', loadStations);
-
-        // Функция загрузки информации о станциях
-        function loadStations() {
-            const stationsContainer = document.getElementById('stations-container');
-            stationsContainer.innerHTML = '<div class="loading">Загрузка доступных радиостанций...</div>';
-            
-            fetch('/streams')
-                .then(response => response.json())
-                .then(data => {
-                    stationsContainer.innerHTML = '';
-                    
-                    if (data.streams && data.streams.length > 0) {
-                        data.streams.forEach(stream => {
-                            const stationElement = createStationElement(stream);
-                            stationsContainer.appendChild(stationElement);
-                        });
-                    } else {
-                        stationsContainer.innerHTML = '<div class="no-stations">Нет доступных радиостанций</div>';
-                    }
-                })
-                .catch(error => {
-                    console.error('Ошибка при загрузке станций:', error);
-                    stationsContainer.innerHTML = '<div class="error">Ошибка при загрузке станций. Пожалуйста, попробуйте позже.</div>';
-                });
-        }
-
-        // Создание элемента станции
-        function createStationElement(stream) {
-            const stationDiv = document.createElement('div');
-            stationDiv.className = 'station';
-            
-            // Имя станции (маршрут)
-            const routeName = stream.route === '/' ? 'Станция по умолчанию' : `Станция ${stream.route.slice(1)}`;
-            
-            stationDiv.innerHTML = `
-                <h2>${routeName}</h2>
-                <audio class="player" controls autoplay>
-                    <source src="${stream.route}" type="audio/mpeg">
-                    Ваш браузер не поддерживает аудио элемент.
-                </audio>
-                <div class="info">
-                    <span class="now-playing">Сейчас играет: ${stream.current_track || 'Нет информации'}</span>
-                    <span class="listener-count">Слушателей: ${stream.listeners}</span>
-                </div>
-            `;
-            
-            return stationDiv;
-        }
-
-        // Периодическое обновление информации о станциях
-        setInterval(updateStationInfo, 30000); // Обновление каждые 30 секунд
-        
-        // Функция обновления информации о станциях без перезагрузки плееров
-        function updateStationInfo() {
-            fetch('/streams')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.streams && data.streams.length > 0) {
-                        data.streams.forEach(stream => {
-                            updateStationInfoElement(stream);
-                        });
-                    }
-                })
-                .catch(error => {
-                    console.error('Ошибка при обновлении информации о станциях:', error);
-                });
-        }
-
-        // Обновление информации для конкретной станции
-        function updateStationInfoElement(stream) {
-            const stations = document.querySelectorAll('.station');
-            
-            for (let station of stations) {
-                const playerElement = station.querySelector('audio');
-                const sourceElement = playerElement.querySelector('source');
-                
-                if (sourceElement.src.endsWith(stream.route)) {
-                    const nowPlayingElement = station.querySelector('.now-playing');
-                    const listenerCountElement = station.querySelector('.listener-count');
-                    
-                    nowPlayingElement.textContent = `Сейчас играет: ${stream.current_track || 'Нет информации'}`;
-                    listenerCountElement.textContent = `Слушателей: ${stream.listeners}`;
-                    break;
+        // Функция для загрузки списка потоков
+        async function loadStreams() {
+            try {
+                const response = await fetch('/streams');
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки списка потоков');
                 }
+                
+                const data = await response.json();
+                const streamsContainer = document.getElementById('streams');
+                
+                // Очищаем контейнер
+                streamsContainer.innerHTML = '';
+                
+                if (data.streams && data.streams.length > 0) {
+                    // Сортируем потоки - корневой поток (/) в начале, затем по алфавиту
+                    data.streams.sort((a, b) => {
+                        if (a.route === '/') return -1;
+                        if (b.route === '/') return 1;
+                        return a.route.localeCompare(b.route);
+                    });
+                    
+                    // Создаем элементы для каждого потока
+                    data.streams.forEach(stream => {
+                        const streamItem = document.createElement('div');
+                        streamItem.className = 'stream-item';
+                        
+                        // Форматируем название потока
+                        let streamName = stream.route === '/' ? 'Основной поток' : 
+                            stream.route.replace('/', '').charAt(0).toUpperCase() + 
+                            stream.route.replace('/', '').slice(1);
+                        
+                        // Создаем содержимое элемента
+                        streamItem.innerHTML = `
+                            <div class="stream-title">${streamName}</div>
+                            <div class="now-playing">Сейчас играет: ${stream.current_track || 'Нет данных'}</div>
+                            <audio controls autoplay="false">
+                                <source src="${stream.route}" type="audio/mpeg">
+                                Ваш браузер не поддерживает аудио элемент.
+                            </audio>
+                            <div class="listeners">Слушателей: ${stream.listeners}</div>
+                        `;
+                        
+                        streamsContainer.appendChild(streamItem);
+                    });
+                } else {
+                    streamsContainer.innerHTML = '<div class="error-message">Нет доступных аудио потоков</div>';
+                }
+            } catch (error) {
+                console.error('Ошибка:', error);
+                document.getElementById('streams').innerHTML = 
+                    `<div class="error-message">Ошибка загрузки потоков: ${error.message}</div>`;
             }
         }
+        
+        // Загружаем потоки при загрузке страницы
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStreams();
+            
+            // Обновляем информацию каждые 30 секунд
+            setInterval(loadStreams, 30000);
+        });
     </script>
 </body>
 </html> 

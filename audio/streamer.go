@@ -77,48 +77,37 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	// Проверка на пустой путь
 	if trackPath == "" {
 		sentryErr := fmt.Errorf("пустой путь к аудиофайлу")
-		sentry.CaptureException(sentryErr)
+		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
 
 	log.Printf("Попытка воспроизведения файла: %s", trackPath)
-	sentry.CaptureMessage(fmt.Sprintf("Начало воспроизведения трека: %s", trackPath))
 	
 	// Проверка существования файла
 	fileInfo, err := os.Stat(trackPath)
 	if err != nil {
 		sentryErr := fmt.Errorf("ошибка проверки файла: %w", err)
-		sentry.CaptureException(sentryErr)
+		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
 	
 	// Проверка, что это не директория
 	if fileInfo.IsDir() {
 		sentryErr := fmt.Errorf("указанный путь %s является директорией, а не файлом", trackPath)
-		sentry.CaptureException(sentryErr)
+		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
-	
-	// Запись информации о файле в Sentry
-	sentry.ConfigureScope(func(scope *sentry.Scope) {
-		scope.SetContext("file_info", map[string]interface{}{
-			"name":  filepath.Base(trackPath),
-			"size":  fileInfo.Size(),
-			"mtime": fileInfo.ModTime(),
-		})
-	})
 	
 	// Открываем файл
 	file, err := os.Open(trackPath)
 	if err != nil {
 		sentryErr := fmt.Errorf("ошибка открытия файла: %w", err)
-		sentry.CaptureException(sentryErr)
+		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
 	defer file.Close()
 	
 	log.Printf("Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size())
-	sentry.CaptureMessage(fmt.Sprintf("Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size()))
 
 	// Отправляем информацию о текущем треке
 	select {
@@ -152,7 +141,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 		if err != nil {
 			sentryErr := fmt.Errorf("ошибка чтения файла: %w", err)
-			sentry.CaptureException(sentryErr)
+			sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 			return sentryErr
 		}
 
@@ -160,15 +149,15 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		
 		// Отправляем данные всем клиентам
 		if err := s.broadcastToClients(buffer[:n]); err != nil {
-			sentry.CaptureException(err)
+			sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
 			return err
 		}
 
 		// Проверяем сигнал завершения
 		select {
 		case <-s.quit:
-			sentry.CaptureMessage(fmt.Sprintf("Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
-				trackPath, bytesRead, fileInfo.Size()))
+			log.Printf("Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+				trackPath, bytesRead, fileInfo.Size())
 			return nil
 		default:
 		}
@@ -177,19 +166,6 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	duration := time.Since(startTime)
 	log.Printf("Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
 		trackPath, bytesRead, duration.Seconds())
-	
-	// Отправляем подробные метрики в Sentry
-	sentry.ConfigureScope(func(scope *sentry.Scope) {
-		scope.SetContext("playback_stats", map[string]interface{}{
-			"file_name":    filepath.Base(trackPath),
-			"file_path":    trackPath,
-			"bytes_read":   bytesRead,
-			"file_size":    fileInfo.Size(),
-			"duration_sec": duration.Seconds(),
-			"clients":      s.GetClientCount(),
-		})
-	})
-	sentry.CaptureMessage(fmt.Sprintf("Воспроизведение файла завершено: %s", filepath.Base(trackPath)))
 
 	// Добавляем паузу между треками для избежания обрезки начала
 	time.Sleep(gracePeriodMs * time.Millisecond)
@@ -202,7 +178,7 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	// Проверяем, не превышено ли максимальное количество клиентов
 	if s.maxClients > 0 && atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
 		err := fmt.Errorf("превышено максимальное количество клиентов (%d)", s.maxClients)
-		sentry.CaptureException(err)
+		sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
 		return nil, 0, err
 	}
 
@@ -219,7 +195,6 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	s.clientChannels[clientID] = clientChannel
 
 	log.Printf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
-	sentry.CaptureMessage(fmt.Sprintf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter)))
 
 	return clientChannel, clientID, nil
 }
@@ -234,7 +209,6 @@ func (s *Streamer) RemoveClient(clientID int) {
 		delete(s.clientChannels, clientID)
 		atomic.AddInt32(&s.clientCounter, -1)
 		log.Printf("Клиент %d отключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
-		sentry.CaptureMessage(fmt.Sprintf("Клиент %d отключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter)))
 	}
 }
 
@@ -273,7 +247,6 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			case <-time.After(500 * time.Millisecond):
 				// Тайм-аут при отправке данных
 				log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
-				sentry.CaptureMessage(fmt.Sprintf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID))
 				s.RemoveClient(clientID)
 				return nil
 			}

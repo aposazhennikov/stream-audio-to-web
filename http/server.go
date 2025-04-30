@@ -80,7 +80,7 @@ func NewServer(streamFormat string, maxClients int) *Server {
 	// Настройка маршрутов
 	server.setupRoutes()
 
-	sentry.CaptureMessage(fmt.Sprintf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients))
+	log.Printf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients)
 	return server
 }
 
@@ -100,7 +100,7 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	// Запуск горутины для отслеживания текущего трека
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	sentry.CaptureMessage(fmt.Sprintf("Зарегистрирован аудиопоток: %s", route))
+	log.Printf("Зарегистрирован аудиопоток: %s", route)
 }
 
 // trackCurrentTrack отслеживает текущий трек для указанного потока
@@ -112,24 +112,24 @@ func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 		// Обрабатываем специфические символы в имени файла (логирование)
 		log.Printf("Текущий трек для %s: %s (путь: %s)", route, fileName, trackPath)
 		
-		// Сохраняем расширенную информацию в Sentry для отладки имен файлов
-		sentry.ConfigureScope(func(scope *sentry.Scope) {
-			scope.SetContext("track_info", map[string]interface{}{
-				"route":         route,
-				"track_name":    fileName,
-				"track_path":    trackPath,
-				"track_dir":     filepath.Dir(trackPath),
-				"track_ext":     filepath.Ext(trackPath),
-				"track_len":     len(fileName),
-				"track_unicode": hasUnicodeChars(fileName),
+		// Сохраняем расширенную информацию в Sentry только для проблемных имен файлов с unicode
+		if hasUnicodeChars(fileName) {
+			sentry.ConfigureScope(func(scope *sentry.Scope) {
+				scope.SetContext("track_info", map[string]interface{}{
+					"route":         route,
+					"track_name":    fileName,
+					"track_path":    trackPath,
+					"track_dir":     filepath.Dir(trackPath),
+					"track_ext":     filepath.Ext(trackPath),
+					"track_len":     len(fileName),
+					"track_unicode": true,
+				})
 			})
-		})
+		}
 		
 		s.trackMutex.Lock()
 		s.currentTracks[route] = fileName
 		s.trackMutex.Unlock()
-		
-		sentry.CaptureMessage(fmt.Sprintf("Текущий трек для %s: %s", route, fileName))
 	}
 }
 
@@ -158,23 +158,53 @@ func (s *Server) setupRoutes() {
 	// Добавление статических файлов для веб-интерфейса
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 
-	sentry.CaptureMessage("HTTP маршруты настроены")
+	log.Printf("HTTP маршруты настроены")
 }
 
 // healthzHandler возвращает 200 OK, если сервер работает
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	// Логирование запроса healthz
+	log.Printf("Получен запрос healthz от %s", r.RemoteAddr)
+	
+	// Добавляем заголовки для предотвращения кеширования
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	
 	// Сервер считается работающим, даже если плейлисты пусты
 	// Важно, чтобы контейнер не перезапускался из-за отсутствия файлов
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+	
+	// Отправка данных немедленно
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // readyzHandler проверяет готовность к работе
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
+	// Логирование запроса readyz
+	log.Printf("Получен запрос readyz от %s", r.RemoteAddr)
+	
+	// Добавляем заголовки для предотвращения кеширования
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	
 	// Проверка, есть ли хотя бы один поток
 	s.mutex.RLock()
 	streamsCount := len(s.streams)
+	streamsList := make([]string, 0, streamsCount)
+	for route := range s.streams {
+		streamsList = append(streamsList, route)
+	}
 	s.mutex.RUnlock()
+	
+	// Логирование статуса 
+	log.Printf("Статус readyz: %d потоков. Маршруты: %v", streamsCount, streamsList)
 
 	// Если нет зарегистрированных потоков, приложение не готово
 	if streamsCount == 0 {
@@ -186,7 +216,12 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверка работоспособности - не обязательно иметь треки
 	// Приложение считается готовым, даже если плейлисты пусты
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Ready"))
+	w.Write([]byte(fmt.Sprintf("Ready - %d streams registered", streamsCount)))
+	
+	// Отправка данных немедленно
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // streamsHandler возвращает информацию о всех доступных потоках
@@ -230,7 +265,8 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 
 		if !exists {
 			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			sentry.CaptureMessage(errorMsg)
+			log.Printf("ОШИБКА: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
 			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
@@ -242,7 +278,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		sentry.CaptureMessage(fmt.Sprintf("Плейлист для потока %s перезагружен", route))
+		log.Printf("Плейлист для потока %s перезагружен", route)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(fmt.Sprintf("Плейлист для потока %s перезагружен", route)))
 	} else {
@@ -263,7 +299,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		sentry.CaptureMessage("Все плейлисты перезагружены")
+		log.Printf("Все плейлисты перезагружены")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Все плейлисты перезагружены"))
 	}
@@ -282,8 +318,8 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	if route != "" {
 		// Информация о конкретном потоке
 		if track, exists := s.currentTracks[route]; exists {
-			// Логируем в Sentry запрос информации о треке
-			sentry.CaptureMessage(fmt.Sprintf("Запрос информации о треке для %s: %s", route, track))
+			// Только логгирование, не отправляем в Sentry
+			log.Printf("Запрос информации о треке для %s: %s", route, track)
 			
 			// Отправляем JSON-ответ
 			json.NewEncoder(w).Encode(map[string]string{
@@ -292,20 +328,14 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 			})
 		} else {
 			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			sentry.CaptureMessage(errorMsg)
+			log.Printf("ОШИБКА: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
 			http.Error(w, errorMsg, http.StatusNotFound)
 		}
 	} else {
 		// Информация о всех потоках
-		// Логируем в Sentry запрос информации о всех треках
-		trackInfo := make(map[string]interface{})
-		for r, t := range s.currentTracks {
-			trackInfo[r] = t
-		}
-		sentry.ConfigureScope(func(scope *sentry.Scope) {
-			scope.SetContext("all_tracks", trackInfo)
-		})
-		sentry.CaptureMessage("Запрос информации о всех текущих треках")
+		// Только логгирование, не отправляем в Sentry
+		log.Printf("Запрос информации о всех текущих треках")
 		
 		// Отправляем JSON-ответ
 		json.NewEncoder(w).Encode(s.currentTracks)
@@ -333,7 +363,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 		if !exists {
 			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			sentry.CaptureMessage(errorMsg)
+			log.Printf("ОШИБКА: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
 			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
@@ -349,7 +380,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			errorMsg := "Streaming not supported"
-			sentry.CaptureMessage(errorMsg)
+			log.Printf("ОШИБКА: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
@@ -357,7 +389,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		// Получаем канал для данных и ID клиента
 		clientCh, clientID, err := stream.AddClient()
 		if err != nil {
-			sentry.CaptureException(err)
+			sentry.CaptureException(err) // Сохраняем, так как это ошибка
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
@@ -369,7 +401,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 		// Логирование подключения клиента
 		remoteAddr := r.RemoteAddr
-		sentry.CaptureMessage(fmt.Sprintf("Клиент подключен к потоку %s: %s (ID: %d)", route, remoteAddr, clientID))
+		log.Printf("Клиент подключен к потоку %s: %s (ID: %d)", route, remoteAddr, clientID)
 
 		// Проверяем закрытие соединения
 		clientClosed := r.Context().Done()
@@ -379,12 +411,12 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			select {
 			case <-clientClosed:
 				// Клиент отключился
-				sentry.CaptureMessage(fmt.Sprintf("Клиент отключился от потока %s: %s (ID: %d)", route, remoteAddr, clientID))
+				log.Printf("Клиент отключился от потока %s: %s (ID: %d)", route, remoteAddr, clientID)
 				return
 			case data, ok := <-clientCh:
 				if !ok {
 					// Канал закрыт
-					sentry.CaptureMessage(fmt.Sprintf("Канал закрыт для клиента %s (ID: %d)", remoteAddr, clientID))
+					log.Printf("Канал закрыт для клиента %s (ID: %d)", remoteAddr, clientID)
 					return
 				}
 				

@@ -58,5 +58,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Точка входа - наш entrypoint-скрипт
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Аргументы по умолчанию - запуск аудио-стримера
-CMD ["/app/audio-streamer", "--audio-dir", "/app/audio"] 
+# Аргументы по умолчанию - запуск аудио-стримера без явного указания директории
+CMD ["/app/audio-streamer"] 

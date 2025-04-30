@@ -44,14 +44,14 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 func (rs *RadioStation) Start() {
 	rs.waitGroup.Add(1)
 	go rs.streamLoop()
-	sentry.CaptureMessage(fmt.Sprintf("Запущена радиостанция: %s", rs.route))
+	log.Printf("Запущена радиостанция: %s", rs.route)
 }
 
 // Stop останавливает радиостанцию
 func (rs *RadioStation) Stop() {
 	close(rs.stop)
 	rs.waitGroup.Wait()
-	sentry.CaptureMessage(fmt.Sprintf("Остановлена радиостанция: %s", rs.route))
+	log.Printf("Остановлена радиостанция: %s", rs.route)
 }
 
 // streamLoop основной цикл воспроизведения треков
@@ -75,7 +75,7 @@ func (rs *RadioStation) streamLoop() {
 				if consecutiveEmptyTracks <= maxEmptyAttempts {
 					log.Printf("Нет треков в плейлисте для %s (попытка %d/%d), ожидание 5 секунд...", 
 						rs.route, consecutiveEmptyTracks, maxEmptyAttempts)
-					sentry.CaptureMessage(fmt.Sprintf("Нет треков в плейлисте для %s, ожидание 5 секунд...", rs.route))
+					// Не отправляем в Sentry - это информационное сообщение
 					
 					// Подождем и попробуем снова
 					time.Sleep(5 * time.Second)
@@ -83,7 +83,7 @@ func (rs *RadioStation) streamLoop() {
 				} else {
 					// Если после нескольких попыток плейлист всё ещё пуст, переходим в режим длительного ожидания
 					log.Printf("Плейлист %s пуст. Переход в режим ожидания...", rs.route)
-					sentry.CaptureMessage(fmt.Sprintf("Плейлист %s пуст. Переход в режим ожидания...", rs.route))
+					// Не отправляем в Sentry - это информационное сообщение
 					
 					// Ждём дольше между проверками, чтобы не тратить ресурсы
 					time.Sleep(30 * time.Second)
@@ -101,13 +101,13 @@ func (rs *RadioStation) streamLoop() {
 			trackPath := getTrackPath(track)
 			if trackPath == "" {
 				log.Printf("Невозможно получить путь к треку для станции %s, переход к следующему", rs.route)
-				sentry.CaptureMessage(fmt.Sprintf("Невозможно получить путь к треку для станции %s", rs.route))
+				sentry.CaptureMessage(fmt.Sprintf("Невозможно получить путь к треку для станции %s", rs.route)) // Это ошибка, отправляем в Sentry
 				rs.playlist.NextTrack()
 				continue
 			}
 			
 			log.Printf("Воспроизведение трека %s на станции %s", trackPath, rs.route)
-			sentry.CaptureMessage(fmt.Sprintf("Воспроизведение трека %s на станции %s", trackPath, rs.route))
+			// Не отправляем в Sentry - это информационное сообщение
 			
 			err := rs.streamer.StreamTrack(trackPath)
 			if err != nil {
@@ -154,7 +154,6 @@ func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, 
 	// Запускаем станцию
 	station.Start()
 	log.Printf("Радиостанция %s запущена", route)
-	sentry.CaptureMessage(fmt.Sprintf("Радиостанция %s добавлена и запущена", route))
 }
 
 // RemoveStation удаляет радиостанцию
@@ -166,7 +165,6 @@ func (rm *RadioStationManager) RemoveStation(route string) {
 		station.Stop()
 		delete(rm.stations, route)
 		log.Printf("Радиостанция %s остановлена и удалена", route)
-		sentry.CaptureMessage(fmt.Sprintf("Радиостанция %s остановлена и удалена", route))
 	}
 }
 
@@ -179,7 +177,7 @@ func (rm *RadioStationManager) StopAll() {
 		station.Stop()
 		log.Printf("Радиостанция %s остановлена", route)
 	}
-	sentry.CaptureMessage("Все радиостанции остановлены")
+	log.Printf("Все радиостанции остановлены")
 }
 
 // getTrackPath извлекает путь к треку из интерфейса
@@ -202,6 +200,6 @@ func getTrackPath(track interface{}) string {
 	}
 	
 	log.Printf("Неизвестный тип трека: %T", track)
-	sentry.CaptureMessage(fmt.Sprintf("Неизвестный тип трека: %T", track))
+	sentry.CaptureMessage(fmt.Sprintf("Неизвестный тип трека: %T", track)) // Это ошибка, отправляем в Sentry
 	return ""
 } 

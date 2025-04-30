@@ -93,20 +93,12 @@ func (p *Playlist) Reload() error {
 	if _, err := os.Stat(p.directory); os.IsNotExist(err) {
 		errorMsg := fmt.Sprintf("Директория %s не существует", p.directory)
 		log.Printf("%s", errorMsg)
-		sentry.CaptureMessage(errorMsg)
+		// Не отправляем в Sentry - это информационное сообщение
 		return nil // Не считаем отсутствие директории ошибкой
 	}
 
 	log.Printf("Сканирование директории %s на наличие аудиофайлов", p.directory)
-	sentry.CaptureMessage(fmt.Sprintf("Начало сканирования директории: %s", p.directory))
-
-	// Контекст с информацией о процессе сканирования
-	sentry.ConfigureScope(func(scope *sentry.Scope) {
-		scope.SetContext("scan_info", map[string]interface{}{
-			"directory": p.directory,
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
-	})
+	// Не отправляем в Sentry - это информационное сообщение
 
 	// Счетчики для статистики
 	var (
@@ -122,7 +114,7 @@ func (p *Playlist) Reload() error {
 			errorFiles++
 			errorMsg := fmt.Sprintf("Ошибка при доступе к файлу/директории %s: %v", path, err)
 			log.Printf("%s", errorMsg)
-			sentry.CaptureException(fmt.Errorf("%s: %w", errorMsg, err))
+			sentry.CaptureException(fmt.Errorf("%s: %w", errorMsg, err)) // Отправляем в Sentry как ошибку
 			return nil // Продолжаем обработку, даже если отдельный файл недоступен
 		}
 		
@@ -147,7 +139,7 @@ func (p *Playlist) Reload() error {
 	})
 
 	if err != nil {
-		sentry.CaptureException(err)
+		sentry.CaptureException(err) // Отправляем в Sentry как ошибку
 		return err
 	}
 
@@ -156,17 +148,7 @@ func (p *Playlist) Reload() error {
 		errorMsg := fmt.Sprintf("В директории %s не найдено аудиофайлов", p.directory)
 		log.Printf("%s", errorMsg)
 		
-		// Отправляем детальную информацию в Sentry
-		sentry.ConfigureScope(func(scope *sentry.Scope) {
-			scope.SetContext("scan_stats", map[string]interface{}{
-				"directory":        p.directory,
-				"total_files":      totalFiles,
-				"supported_files":  supportedFiles,
-				"unsupported_files": unsupportedFiles,
-				"error_files":      errorFiles,
-			})
-		})
-		sentry.CaptureMessage(errorMsg)
+		// Не отправляем в Sentry - это информационное сообщение
 		return nil // Не считаем отсутствие треков ошибкой
 	}
 
@@ -191,23 +173,12 @@ func (p *Playlist) Reload() error {
 
 	// Добавление директории в watcher
 	if err := p.watcher.Add(p.directory); err != nil {
-		sentry.CaptureException(err)
+		sentry.CaptureException(err) // Отправляем в Sentry как ошибку
 		return err
 	}
 
-	// Отправляем статистику в Sentry
-	sentry.ConfigureScope(func(scope *sentry.Scope) {
-		scope.SetContext("playlist_stats", map[string]interface{}{
-			"directory":        p.directory,
-			"tracks_count":     len(p.tracks),
-			"total_files":      totalFiles,
-			"supported_files":  supportedFiles,
-			"unsupported_files": unsupportedFiles,
-			"error_files":      errorFiles,
-			"sample_tracks":    trackNames,
-		})
-	})
-	sentry.CaptureMessage(fmt.Sprintf("Плейлист загружен: %s, треков: %d", p.directory, len(p.tracks)))
+	// Отправляем статистику только в логи
+	log.Printf("Плейлист загружен: %s, треков: %d", p.directory, len(p.tracks))
 	
 	return nil
 }
@@ -258,7 +229,7 @@ func (p *Playlist) Shuffle() {
 		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
 	})
 
-	sentry.CaptureMessage(fmt.Sprintf("Плейлист перемешан: %s, треков: %d", p.directory, len(p.tracks)))
+	log.Printf("Плейлист перемешан: %s, треков: %d", p.directory, len(p.tracks))
 }
 
 // GetTracks возвращает копию списка треков
@@ -287,7 +258,6 @@ func (p *Playlist) watchDirectory() {
 
 			if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 				log.Printf("Обнаружено изменение в плейлисте: %s", event.Name)
-				sentry.CaptureMessage(fmt.Sprintf("Обнаружено изменение в плейлисте: %s", event.Name))
 				
 				// Перезагрузка плейлиста
 				if err := p.Reload(); err != nil {
