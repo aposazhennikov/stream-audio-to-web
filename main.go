@@ -81,10 +81,7 @@ func main() {
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
 
-	// Настройка маршрутов для аудиопотоков
-	configureAudioRoutes(server, stationManager, config)
-
-	// Создание HTTP сервера
+	// Создание HTTP сервера - ПЕРВЫМ ДЕЛОМ
 	httpSrv := &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
 		Handler: server.Handler(),
@@ -94,7 +91,27 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Запуск сервера в горутине
+	// Добавляем временное перенаправление с корневого маршрута на страницу обслуживания
+	// пока радиостанции не настроены
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			// Пропускаем запросы к другим путям
+			server.Handler().ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte("<html><body><h1>Аудио стример</h1><p>Пожалуйста, подождите, идет настройка радиостанций...</p></body></html>"))
+	})
+
+	// Добавляем временный обработчик healthz
+	server.Handler().(*mux.Router).HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен временный запрос healthz от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Server starting up"))
+	})
+
+	// Запуск сервера в горутине ПЕРВЫМ ДЕЛОМ
 	go func() {
 		log.Printf("Сервер запущен и слушает на 0.0.0.0:%d", config.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -103,10 +120,43 @@ func main() {
 		}
 	}()
 
-	// Отдельная горутина для проверки доступности сервера
+	// Проверка стартовой доступности сервера
+	log.Printf("Проверка первичной доступности HTTP-сервера...")
+	time.Sleep(1 * time.Second)
+	checkServerStarted := func() bool {
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
+		if err != nil {
+			log.Printf("HTTP-сервер еще не готов: %s", err)
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}
+	
+	// Несколько попыток проверки
+	for i := 0; i < 5; i++ {
+		if checkServerStarted() {
+			log.Printf("HTTP-сервер успешно запущен и отвечает на запросы!")
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Настройка маршрутов для аудиопотоков в отдельной горутине
 	go func() {
-		// Ждем некоторое время, чтобы сервер успел запуститься
-		time.Sleep(3 * time.Second)
+		log.Printf("Начало настройки аудио маршрутов...")
+		// Даем HTTP серверу время на инициализацию
+		time.Sleep(1 * time.Second)
+		
+		configureAudioRoutes(server, stationManager, config)
+		
+		log.Printf("Аудио маршруты настроены успешно")
+	}()
+
+	// Отдельная горутина для проверки доступности сервера после настройки
+	go func() {
+		// Ждем некоторое время, чтобы сервер успел запуститься и настроить маршруты
+		time.Sleep(5 * time.Second)
 		
 		// Проверяем доступность сервера
 		for i := 0; i < 3; i++ {

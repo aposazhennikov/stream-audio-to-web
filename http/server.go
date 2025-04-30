@@ -175,18 +175,14 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mutex.RUnlock()
 	
-	// Проверка наличия потоков
+	// Логирование статуса
 	if streamsCount == 0 {
-		log.Printf("ОШИБКА HEALTHZ: Нет зарегистрированных потоков")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("No streams available"))
-		return
+		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Нет зарегистрированных потоков, но сервер работает")
+	} else {
+		log.Printf("Статус healthz: %d потоков зарегистрировано. Маршруты: %v", streamsCount, streamsList)
 	}
 	
-	// Логирование статуса потоков
-	log.Printf("Статус healthz: %d потоков зарегистрировано. Маршруты: %v", streamsCount, streamsList)
-	
-	// Максимально упрощаем ответ для надежности
+	// Всегда возвращаем успешный ответ, так как потоки могут настраиваться асинхронно
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
