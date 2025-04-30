@@ -42,9 +42,17 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 
 // Start запускает радиостанцию
 func (rs *RadioStation) Start() {
+	log.Printf("Начало запуска радиостанции %s...", rs.route)
+	
+	// Создаем новый канал остановки
+	rs.stop = make(chan struct{})
+	
 	rs.waitGroup.Add(1)
+	
+	// Запускаем основной цикл воспроизведения в отдельной горутине
 	go rs.streamLoop()
-	log.Printf("Запущена радиостанция: %s", rs.route)
+	
+	log.Printf("Радиостанция %s успешно запущена", rs.route)
 }
 
 // Stop останавливает радиостанцию
@@ -142,17 +150,27 @@ func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, 
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
+	log.Printf("Начало добавления радиостанции %s в менеджер...", route)
+
 	if _, exists := rm.stations[route]; exists {
 		// Если станция уже существует, останавливаем её перед заменой
+		log.Printf("Радиостанция %s уже существует, останавливаем её перед заменой", route)
 		rm.stations[route].Stop()
+		log.Printf("Существующая радиостанция %s остановлена", route)
 	}
 
 	// Создаём новую станцию
+	log.Printf("Создание новой радиостанции %s...", route)
 	station := NewRadioStation(route, streamer, playlist)
 	rm.stations[route] = station
 
-	// Запускаем станцию
-	station.Start()
+	// Запускаем станцию асинхронно, чтобы не блокировать основной поток
+	log.Printf("Запуск радиостанции %s в отдельной горутине...", route)
+	go func() {
+		station.Start()
+		log.Printf("Горутина радиостанции %s успешно запущена", route)
+	}()
+
 	log.Printf("Радиостанция %s запущена", route)
 }
 

@@ -375,6 +375,8 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 
 // StreamAudioHandler создаёт HTTP обработчик для стриминга аудио
 func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
+	log.Printf("Создание обработчика аудиопотока для маршрута %s", route)
+	
 	contentType := ""
 	switch s.streamFormat {
 	case "mp3":
@@ -386,8 +388,12 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	default:
 		contentType = "audio/mpeg"
 	}
+	
+	log.Printf("Формат аудиопотока для маршрута %s: %s (MIME: %s)", route, s.streamFormat, contentType)
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос на аудиопоток %s от %s", route, r.RemoteAddr)
+		
 		s.mutex.RLock()
 		stream, exists := s.streams[route]
 		s.mutex.RUnlock()
@@ -399,6 +405,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
+		
+		log.Printf("Поток %s найден, настройка заголовков для стриминга", route)
 
 		// Настройка заголовков для стриминга
 		w.Header().Set("Content-Type", contentType)
@@ -416,10 +424,13 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
+		
+		log.Printf("Добавление клиента к потоку %s...", route)
 
 		// Получаем канал для данных и ID клиента
 		clientCh, clientID, err := stream.AddClient()
 		if err != nil {
+			log.Printf("Ошибка при добавлении клиента к потоку %s: %s", route, err)
 			sentry.CaptureException(err) // Сохраняем, так как это ошибка
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
@@ -436,6 +447,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 		// Проверяем закрытие соединения
 		clientClosed := r.Context().Done()
+		
+		log.Printf("Начало отправки данных клиенту %d для потока %s", clientID, route)
 
 		// Отправляем данные клиенту
 		for {
