@@ -45,6 +45,12 @@ type Config struct {
 	BufferSize     int
 }
 
+// Глобальные переменные для маршрутов
+var (
+	humorRoute   *mux.Route
+	scienceRoute *mux.Route
+)
+
 func main() {
 	// Инициализация Sentry
 	err := sentry.Init(sentry.ClientOptions{
@@ -84,7 +90,7 @@ func main() {
 	// СНАЧАЛА настраиваем базовые маршруты - healthz и корневой маршрут
 	// Добавляем временный обработчик healthz, который всегда возвращает 200 OK
 	server.Handler().(*mux.Router).HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос healthz от %s", r.RemoteAddr)
+		log.Printf("Получен запрос healthz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Server is starting up"))
@@ -95,7 +101,7 @@ func main() {
 
 	// Добавляем временный обработчик readyz, который всегда возвращает 200 OK
 	server.Handler().(*mux.Router).HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос readyz от %s", r.RemoteAddr)
+		log.Printf("Получен запрос readyz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Server is starting up"))
@@ -103,6 +109,32 @@ func main() {
 			f.Flush()
 		}
 	}).Methods("GET")
+
+	// Добавляем временный обработчик для /humor и /science, чтобы они не возвращали 404
+	// Используем пустой хэндлер, а позже заменим его на настоящий
+	emptyHumorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос к временному /humor от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html><body><h1>Аудиопоток юмора загружается...</h1><p>Пожалуйста, подождите несколько секунд и обновите страницу.</p></body></html>"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+
+	emptyScienceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос к временному /science от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html><body><h1>Аудиопоток науки загружается...</h1><p>Пожалуйста, подождите несколько секунд и обновите страницу.</p></body></html>"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+
+	// Сохраняем временные маршруты для последующей замены на постоянные
+	humorRoute = server.Handler().(*mux.Router).Path("/humor").Methods("GET").Handler(emptyHumorHandler)
+	scienceRoute = server.Handler().(*mux.Router).Path("/science").Methods("GET").Handler(emptyScienceHandler)
 
 	// Добавляем временный обработчик для корневого маршрута
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -290,9 +322,21 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	server.RegisterStream(route, streamer, pl)
 	log.Printf("Аудиопоток '%s' зарегистрирован на HTTP сервере", route)
 
-	// Регистрируем обработчик для маршрута
-	server.Handler().(*mux.Router).HandleFunc(route, server.StreamAudioHandler(route)).Methods("GET")
-	log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
+	// Готовим обработчик для потока
+	audioHandler := server.StreamAudioHandler(route)
+
+	// Регистрируем маршрут в зависимости от его пути
+	if route == "/humor" && humorRoute != nil {
+		humorRoute.Handler(audioHandler)
+		log.Printf("Заменен временный обработчик на постоянный для маршрута /humor")
+	} else if route == "/science" && scienceRoute != nil {
+		scienceRoute.Handler(audioHandler)
+		log.Printf("Заменен временный обработчик на постоянный для маршрута /science")
+	} else {
+		// Для других маршрутов просто регистрируем новый обработчик
+		server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
+		log.Printf("Зарегистрирован новый обработчик для маршрута '%s'", route)
+	}
 	
 	// Проверяем, что маршрут действительно был зарегистрирован
 	routes := getAllRoutes(server.Handler().(*mux.Router))

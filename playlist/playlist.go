@@ -123,7 +123,7 @@ func (p *Playlist) Reload() error {
 			if supportedExtensions[ext] {
 				supportedFiles++
 				fileName := filepath.Base(path)
-				log.Printf("Добавление трека: %s", fileName)
+				// Не логируем каждый добавляемый трек
 				
 				p.tracks = append(p.tracks, Track{
 					Path:     path,
@@ -155,15 +155,14 @@ func (p *Playlist) Reload() error {
 	// Логирование найденных треков
 	log.Printf("Найдено %d треков в %s:", len(p.tracks), p.directory)
 	
-	trackNames := make([]string, 0, min(10, len(p.tracks)))
+	// Показываем только первые 5 треков
+	trackNames := make([]string, 0, min(5, len(p.tracks)))
 	for i, track := range p.tracks {
-		if i < 10 || len(p.tracks) < 20 { // Показываем первые 10 треков или все если их меньше 20
+		if i < 5 { // Показываем только первые 5 треков
 			log.Printf("  %d. %s", i+1, track.Name)
-			if i < 10 {
-				trackNames = append(trackNames, track.Name)
-			}
-		} else if i == 10 && len(p.tracks) >= 20 {
-			log.Printf("  ... и ещё %d треков", len(p.tracks)-10)
+			trackNames = append(trackNames, track.Name)
+		} else if i == 5 {
+			log.Printf("  ... и ещё %d треков", len(p.tracks)-5)
 			break
 		}
 	}

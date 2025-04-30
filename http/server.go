@@ -116,6 +116,16 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	log.Printf("Зарегистрирован аудиопоток: %s", route)
 }
 
+// IsStreamRegistered проверяет, зарегистрирован ли поток с указанным маршрутом
+func (s *Server) IsStreamRegistered(route string) bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	
+	// Проверяем, существует ли поток по указанному маршруту
+	_, exists := s.streams[route]
+	return exists
+}
+
 // trackCurrentTrack отслеживает текущий трек для указанного потока
 func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	for trackPath := range trackCh {
