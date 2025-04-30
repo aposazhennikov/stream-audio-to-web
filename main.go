@@ -16,7 +16,6 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/user/stream-audio-to-web/audio"
 	httpServer "github.com/user/stream-audio-to-web/http"
 	"github.com/user/stream-audio-to-web/playlist"

@@ -126,7 +126,7 @@ func (p *Playlist) Reload() error {
 }
 
 // GetCurrentTrack возвращает текущий трек
-func (p *Playlist) GetCurrentTrack() *Track {
+func (p *Playlist) GetCurrentTrack() interface{} {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 
@@ -137,7 +137,7 @@ func (p *Playlist) GetCurrentTrack() *Track {
 }
 
 // NextTrack переходит к следующему треку и возвращает его
-func (p *Playlist) NextTrack() *Track {
+func (p *Playlist) NextTrack() interface{} {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
