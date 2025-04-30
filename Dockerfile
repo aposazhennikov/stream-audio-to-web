@@ -7,10 +7,11 @@ RUN apk add --no-cache git
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование и загрузка зависимостей
+# Копирование только go.mod сначала
 COPY go.mod ./
-COPY go.sum ./
-RUN go mod download
+
+# Выполнение go mod tidy для создания/обновления go.sum
+RUN go mod tidy
 
 # Копирование исходного кода
 COPY . .
