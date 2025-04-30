@@ -182,10 +182,9 @@ func main() {
 		log.Printf("Вызван перенаправляющий обработчик для /humor от %s", r.RemoteAddr)
 		
 		// Проверяем, есть ли зарегистрированный поток
-		s := server.(*httpServer.Server)
-		if s.IsStreamRegistered("/humor") {
+		if server.IsStreamRegistered("/humor") {
 			// Если поток зарегистрирован, используем его обработчик
-			audioHandler := s.StreamAudioHandler("/humor")
+			audioHandler := server.StreamAudioHandler("/humor")
 			audioHandler(w, r)
 			return
 		}
@@ -198,10 +197,9 @@ func main() {
 		log.Printf("Вызван перенаправляющий обработчик для /science от %s", r.RemoteAddr)
 		
 		// Проверяем, есть ли зарегистрированный поток
-		s := server.(*httpServer.Server)
-		if s.IsStreamRegistered("/science") {
+		if server.IsStreamRegistered("/science") {
 			// Если поток зарегистрирован, используем его обработчик
-			audioHandler := s.StreamAudioHandler("/science")
+			audioHandler := server.StreamAudioHandler("/science")
 			audioHandler(w, r)
 			return
 		}
@@ -364,8 +362,7 @@ func main() {
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Перенаправление с / на %s", redirectTo)
 		// Проверяем, готов ли поток к которому хотим перенаправить
-		s := server.(*httpServer.Server)
-		if !s.IsStreamRegistered(redirectTo) {
+		if !server.IsStreamRegistered(redirectTo) {
 			// Если целевой поток еще не готов, выводим страницу с ссылками
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
