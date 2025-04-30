@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audio-streamer-config
+data:
+  STREAM_FORMAT: "mp3"
+  BITRATE: "128"
+  MAX_CLIENTS: "500"
+  LOG_LEVEL: "info"
+  BUFFER_SIZE: "65536"
+  DIRECTORY_ROUTES: '{"humor":"/app/humor","science":"/app/science"}'
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audio-default-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audio-humor-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audio-science-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audio-streamer
+  labels:
+    app: audio-streamer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audio-streamer
+  template:
+    metadata:
+      labels:
+        app: audio-streamer
+    spec:
+      securityContext:
+        runAsUser: 0
+        fsGroup: 0
+      containers:
+      - name: audio-streamer
+        image: audio-streamer:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: audio-streamer-config
+        resources:
+          limits:
+            cpu: "1"
+            memory: "256Mi"
+          requests:
+            cpu: "200m"
+            memory: "128Mi"
+        volumeMounts:
+        - name: audio-default
+          mountPath: /app/audio
+        - name: audio-humor
+          mountPath: /app/humor
+        - name: audio-science
+          mountPath: /app/science
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: audio-default
+        persistentVolumeClaim:
+          claimName: audio-default-pvc
+      - name: audio-humor
+        persistentVolumeClaim:
+          claimName: audio-humor-pvc
+      - name: audio-science
+        persistentVolumeClaim:
+          claimName: audio-science-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audio-streamer
+  labels:
+    app: audio-streamer
+spec:
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: audio-streamer
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: audio-streamer
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  rules:
+  - host: audio.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: audio-streamer
+            port:
+              number: 80 

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  audio-streamer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: audio-streamer:latest
+    container_name: audio-streamer
+    privileged: true
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./audio:/app/audio
+      - ./humor:/app/humor
+      - ./science:/app/science
+    environment:
+      - STREAM_FORMAT=mp3
+      - BITRATE=128
+      - MAX_CLIENTS=500
+      - LOG_LEVEL=info
+      - BUFFER_SIZE=65536
+      - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+    restart: unless-stopped 

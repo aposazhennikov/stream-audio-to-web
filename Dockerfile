@@ -1,50 +1,55 @@
-FROM python:3.9-slim
+# Этап 1: Сборка приложения
+FROM golang:1.22-alpine AS builder
 
-# Установка рабочей директории
+# Установка зависимостей для сборки
+RUN apk add --no-cache git
+
+# Создание рабочей директории
 WORKDIR /app
 
-# Установка зависимостей
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Копирование и загрузка зависимостей
+COPY go.mod ./
+COPY go.sum ./
+RUN go mod download
 
-# Установка ffmpeg для работы с аудио через pydub
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    gosu \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Копирование файлов приложения
+# Копирование исходного кода
 COPY . .
 
-# Создание стандартных директорий для аудиофайлов
-RUN mkdir -p /app/audio /app/humor /app/science && \
-    chmod 777 /app/audio /app/humor /app/science
+# Сборка приложения
+# Флаг CGO_ENABLED=0 для статической компиляции
+# Флаг -ldflags="-s -w" для оптимизации размера бинарного файла
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o audio-streamer .
 
-# Создаем пользователя с низкими привилегиями
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Этап 2: Создание итогового образа
+FROM alpine:latest
+
+# Установка базовых утилит
+RUN apk add --no-cache ca-certificates tzdata curl findutils
+
+# Копирование бинарного файла из этапа сборки
+COPY --from=builder /app/audio-streamer /app/
+COPY --from=builder /app/web /app/web
+
+# Копирование entrypoint-скрипта
+COPY entrypoint.sh /app/
+RUN chmod +x /app/entrypoint.sh
+
+# Создание директории для аудиофайлов
+RUN mkdir -p /app/audio /app/humor /app/science && \
+    chmod -R 755 /app
+
+# Рабочая директория
+WORKDIR /app
 
 # Открытие порта
-EXPOSE 9999
+EXPOSE 8000
 
-# Переменные среды для Sentry
-ENV ENVIRONMENT=production
-ENV RELEASE=1.0.0
+# Проверка работоспособности
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/healthz || exit 1
 
-# Аргумент сборки для настройки маршрутов аудиопотока
-ARG AUDIO_STREAM_ROUTES=/,/humor,/science
-ENV AUDIO_STREAM_ROUTES=${AUDIO_STREAM_ROUTES}
+# Точка входа - наш entrypoint-скрипт
+ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Аргумент сборки для настройки сопоставления директорий и маршрутов
-ARG DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}'
-ENV DIRECTORY_ROUTES=${DIRECTORY_ROUTES}
-
-# Скрипт-обертка для запуска с правильными правами доступа
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Точка входа в контейнер
-ENTRYPOINT ["/entrypoint.sh"]
-
-# Запуск приложения с директорией аудио по умолчанию
-CMD ["python", "main.py", "--audio-dir", "/app/audio"] 
+# Аргументы по умолчанию - запуск аудио-стримера
+CMD ["/app/audio-streamer", "--audio-dir", "/app/audio"] 

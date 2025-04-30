@@ -1,0 +1,219 @@
+package audio
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/getsentry/sentry-go"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	defaultBufferSize = 65536 // 64KB
+	gracePeriodMs     = 200   // 200ms буфер между треками для избежания обрезки начала
+)
+
+// Streamer управляет стримингом аудио для одного "радио" потока
+type Streamer struct {
+	bufferPool      *sync.Pool
+	bufferSize      int
+	clientCounter   int32
+	maxClients      int
+	quit            chan struct{}
+	currentTrackCh  chan string
+	clientChannels  map[int]chan []byte
+	clientMutex     sync.RWMutex
+	transcodeFormat string
+	bitrate         int
+}
+
+// NewStreamer создаёт новый аудио стример
+func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int) *Streamer {
+	if bufferSize <= 0 {
+		bufferSize = defaultBufferSize
+	}
+
+	return &Streamer{
+		bufferPool: &sync.Pool{
+			New: func() interface{} {
+				return make([]byte, bufferSize)
+			},
+		},
+		bufferSize:      bufferSize,
+		maxClients:      maxClients,
+		quit:            make(chan struct{}),
+		currentTrackCh:  make(chan string, 1),
+		clientChannels:  make(map[int]chan []byte),
+		clientMutex:     sync.RWMutex{},
+		transcodeFormat: transcodeFormat,
+		bitrate:         bitrate,
+	}
+}
+
+// Close закрывает стример и все клиентские соединения
+func (s *Streamer) Close() {
+	close(s.quit)
+	s.clientMutex.Lock()
+	defer s.clientMutex.Unlock()
+
+	for _, ch := range s.clientChannels {
+		close(ch)
+	}
+}
+
+// GetCurrentTrackChannel возвращает канал с информацией о текущем треке
+func (s *Streamer) GetCurrentTrackChannel() <-chan string {
+	return s.currentTrackCh
+}
+
+// StreamTrack стримит трек всем подключенным клиентам
+func (s *Streamer) StreamTrack(trackPath string) error {
+	// Открываем файл
+	file, err := os.Open(trackPath)
+	if err != nil {
+		sentryErr := fmt.Errorf("ошибка открытия файла: %w", err)
+		sentry.CaptureException(sentryErr)
+		return sentryErr
+	}
+	defer file.Close()
+
+	// Отправляем информацию о текущем треке
+	select {
+	case s.currentTrackCh <- trackPath:
+	default:
+		// Если канал полон, очищаем его и отправляем новое значение
+		select {
+		case <-s.currentTrackCh:
+		default:
+		}
+		s.currentTrackCh <- trackPath
+	}
+
+	// TODO: Реализовать транскодирование аудио если необходимо
+	// Это будет зависеть от формата входного файла и требуемого формата вывода
+
+	// Использование пула буферов для уменьшения нагрузки на GC
+	buffer := s.bufferPool.Get().([]byte)
+	defer s.bufferPool.Put(buffer)
+
+	for {
+		n, err := file.Read(buffer)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			sentryErr := fmt.Errorf("ошибка чтения файла: %w", err)
+			sentry.CaptureException(sentryErr)
+			return sentryErr
+		}
+
+		// Отправляем данные всем клиентам
+		if err := s.broadcastToClients(buffer[:n]); err != nil {
+			sentry.CaptureException(err)
+			return err
+		}
+
+		// Проверяем сигнал завершения
+		select {
+		case <-s.quit:
+			return nil
+		default:
+		}
+	}
+
+	// Добавляем паузу между треками для избежания обрезки начала
+	time.Sleep(gracePeriodMs * time.Millisecond)
+
+	return nil
+}
+
+// AddClient добавляет нового клиента и возвращает канал для получения данных
+func (s *Streamer) AddClient() (<-chan []byte, int, error) {
+	// Проверяем, не превышено ли максимальное количество клиентов
+	if s.maxClients > 0 && atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
+		err := fmt.Errorf("превышено максимальное количество клиентов (%d)", s.maxClients)
+		sentry.CaptureException(err)
+		return nil, 0, err
+	}
+
+	s.clientMutex.Lock()
+	defer s.clientMutex.Unlock()
+
+	// Увеличиваем счётчик клиентов
+	clientID := int(atomic.AddInt32(&s.clientCounter, 1))
+	
+	// Создаём канал для клиента с буфером
+	// Буферизованный канал нужен для предотвращения блокировки 
+	// при медленных клиентах
+	clientChannel := make(chan []byte, 10)
+	s.clientChannels[clientID] = clientChannel
+
+	log.Printf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+	sentry.CaptureMessage(fmt.Sprintf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter)))
+
+	return clientChannel, clientID, nil
+}
+
+// RemoveClient удаляет клиента
+func (s *Streamer) RemoveClient(clientID int) {
+	s.clientMutex.Lock()
+	defer s.clientMutex.Unlock()
+
+	if channel, exists := s.clientChannels[clientID]; exists {
+		close(channel)
+		delete(s.clientChannels, clientID)
+		atomic.AddInt32(&s.clientCounter, -1)
+		log.Printf("Клиент %d отключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+		sentry.CaptureMessage(fmt.Sprintf("Клиент %d отключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter)))
+	}
+}
+
+// GetClientCount возвращает текущее количество клиентов
+func (s *Streamer) GetClientCount() int {
+	return int(atomic.LoadInt32(&s.clientCounter))
+}
+
+// broadcastToClients отправляет данные всем подключенным клиентам
+func (s *Streamer) broadcastToClients(data []byte) error {
+	s.clientMutex.RLock()
+	defer s.clientMutex.RUnlock()
+
+	// Если нет клиентов, просто возвращаемся
+	if len(s.clientChannels) == 0 {
+		return nil
+	}
+
+	// Создаём копию данных для каждого клиента
+	// Это необходимо, потому что буфер может быть переиспользован
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+
+	var g errgroup.Group
+
+	// Отправляем данные каждому клиенту в отдельной горутине
+	for clientID, clientChan := range s.clientChannels {
+		clientID := clientID
+		clientChan := clientChan
+		
+		g.Go(func() error {
+			select {
+			case clientChan <- dataCopy:
+				// Данные успешно отправлены
+				return nil
+			case <-time.After(500 * time.Millisecond):
+				// Тайм-аут при отправке данных
+				log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
+				sentry.CaptureMessage(fmt.Sprintf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID))
+				s.RemoveClient(clientID)
+				return nil
+			}
+		})
+	}
+
+	return g.Wait()
+} 
