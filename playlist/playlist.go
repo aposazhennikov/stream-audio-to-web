@@ -89,19 +89,58 @@ func (p *Playlist) Reload() error {
 	p.tracks = []Track{}
 	p.current = 0
 
+	// Проверка существования директории
+	if _, err := os.Stat(p.directory); os.IsNotExist(err) {
+		errorMsg := fmt.Sprintf("Директория %s не существует", p.directory)
+		log.Printf("%s", errorMsg)
+		sentry.CaptureMessage(errorMsg)
+		return nil // Не считаем отсутствие директории ошибкой
+	}
+
+	log.Printf("Сканирование директории %s на наличие аудиофайлов", p.directory)
+	sentry.CaptureMessage(fmt.Sprintf("Начало сканирования директории: %s", p.directory))
+
+	// Контекст с информацией о процессе сканирования
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetContext("scan_info", map[string]interface{}{
+			"directory": p.directory,
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Счетчики для статистики
+	var (
+		totalFiles      int
+		supportedFiles  int
+		unsupportedFiles int
+		errorFiles      int
+	)
+
 	err := filepath.Walk(p.directory, func(path string, info os.FileInfo, err error) error {
+		totalFiles++
 		if err != nil {
-			sentry.CaptureException(err)
-			return err
+			errorFiles++
+			errorMsg := fmt.Sprintf("Ошибка при доступе к файлу/директории %s: %v", path, err)
+			log.Printf("%s", errorMsg)
+			sentry.CaptureException(fmt.Errorf("%s: %w", errorMsg, err))
+			return nil // Продолжаем обработку, даже если отдельный файл недоступен
 		}
+		
 		if !info.IsDir() {
 			ext := strings.ToLower(filepath.Ext(path))
 			if supportedExtensions[ext] {
+				supportedFiles++
+				fileName := filepath.Base(path)
+				log.Printf("Добавление трека: %s", fileName)
+				
 				p.tracks = append(p.tracks, Track{
 					Path:     path,
-					Name:     filepath.Base(path),
+					Name:     fileName,
 					FileInfo: info,
 				})
+			} else {
+				unsupportedFiles++
+				log.Printf("Пропуск неподдерживаемого файла: %s (расширение: %s)", filepath.Base(path), ext)
 			}
 		}
 		return nil
@@ -110,6 +149,41 @@ func (p *Playlist) Reload() error {
 	if err != nil {
 		sentry.CaptureException(err)
 		return err
+	}
+
+	// Проверка на наличие треков
+	if len(p.tracks) == 0 {
+		errorMsg := fmt.Sprintf("В директории %s не найдено аудиофайлов", p.directory)
+		log.Printf("%s", errorMsg)
+		
+		// Отправляем детальную информацию в Sentry
+		sentry.ConfigureScope(func(scope *sentry.Scope) {
+			scope.SetContext("scan_stats", map[string]interface{}{
+				"directory":        p.directory,
+				"total_files":      totalFiles,
+				"supported_files":  supportedFiles,
+				"unsupported_files": unsupportedFiles,
+				"error_files":      errorFiles,
+			})
+		})
+		sentry.CaptureMessage(errorMsg)
+		return nil // Не считаем отсутствие треков ошибкой
+	}
+
+	// Логирование найденных треков
+	log.Printf("Найдено %d треков в %s:", len(p.tracks), p.directory)
+	
+	trackNames := make([]string, 0, min(10, len(p.tracks)))
+	for i, track := range p.tracks {
+		if i < 10 || len(p.tracks) < 20 { // Показываем первые 10 треков или все если их меньше 20
+			log.Printf("  %d. %s", i+1, track.Name)
+			if i < 10 {
+				trackNames = append(trackNames, track.Name)
+			}
+		} else if i == 10 && len(p.tracks) >= 20 {
+			log.Printf("  ... и ещё %d треков", len(p.tracks)-10)
+			break
+		}
 	}
 
 	// Перемешивание треков
@@ -121,8 +195,29 @@ func (p *Playlist) Reload() error {
 		return err
 	}
 
+	// Отправляем статистику в Sentry
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetContext("playlist_stats", map[string]interface{}{
+			"directory":        p.directory,
+			"tracks_count":     len(p.tracks),
+			"total_files":      totalFiles,
+			"supported_files":  supportedFiles,
+			"unsupported_files": unsupportedFiles,
+			"error_files":      errorFiles,
+			"sample_tracks":    trackNames,
+		})
+	})
 	sentry.CaptureMessage(fmt.Sprintf("Плейлист загружен: %s, треков: %d", p.directory, len(p.tracks)))
+	
 	return nil
+}
+
+// min возвращает минимальное из двух чисел
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // GetCurrentTrack возвращает текущий трек

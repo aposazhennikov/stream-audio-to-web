@@ -106,11 +106,41 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 // trackCurrentTrack отслеживает текущий трек для указанного потока
 func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	for trackPath := range trackCh {
+		// Извлекаем только имя файла без пути
+		fileName := filepath.Base(trackPath)
+		
+		// Обрабатываем специфические символы в имени файла (логирование)
+		log.Printf("Текущий трек для %s: %s (путь: %s)", route, fileName, trackPath)
+		
+		// Сохраняем расширенную информацию в Sentry для отладки имен файлов
+		sentry.ConfigureScope(func(scope *sentry.Scope) {
+			scope.SetContext("track_info", map[string]interface{}{
+				"route":         route,
+				"track_name":    fileName,
+				"track_path":    trackPath,
+				"track_dir":     filepath.Dir(trackPath),
+				"track_ext":     filepath.Ext(trackPath),
+				"track_len":     len(fileName),
+				"track_unicode": hasUnicodeChars(fileName),
+			})
+		})
+		
 		s.trackMutex.Lock()
-		s.currentTracks[route] = filepath.Base(trackPath)
+		s.currentTracks[route] = fileName
 		s.trackMutex.Unlock()
-		sentry.CaptureMessage(fmt.Sprintf("Текущий трек для %s: %s", route, filepath.Base(trackPath)))
+		
+		sentry.CaptureMessage(fmt.Sprintf("Текущий трек для %s: %s", route, fileName))
 	}
+}
+
+// hasUnicodeChars проверяет наличие не-ASCII символов в строке
+func hasUnicodeChars(s string) bool {
+	for _, r := range s {
+		if r > 127 {
+			return true
+		}
+	}
+	return false
 }
 
 // setupRoutes настраивает маршруты HTTP сервера
@@ -133,13 +163,28 @@ func (s *Server) setupRoutes() {
 
 // healthzHandler возвращает 200 OK, если сервер работает
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	// Сервер считается работающим, даже если плейлисты пусты
+	// Важно, чтобы контейнер не перезапускался из-за отсутствия файлов
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
 
 // readyzHandler проверяет готовность к работе
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Добавить проверки дискового пространства, памяти и доступности директории с плейлистом
+	// Проверка, есть ли хотя бы один поток
+	s.mutex.RLock()
+	streamsCount := len(s.streams)
+	s.mutex.RUnlock()
+
+	// Если нет зарегистрированных потоков, приложение не готово
+	if streamsCount == 0 {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("No audio streams registered"))
+		return
+	}
+
+	// Проверка работоспособности - не обязательно иметь треки
+	// Приложение считается готовым, даже если плейлисты пусты
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Ready"))
 }
@@ -231,10 +276,16 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	s.trackMutex.RLock()
 	defer s.trackMutex.RUnlock()
 
+	// Устанавливаем правильные заголовки для Unicode
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
 	if route != "" {
 		// Информация о конкретном потоке
 		if track, exists := s.currentTracks[route]; exists {
-			w.Header().Set("Content-Type", "application/json")
+			// Логируем в Sentry запрос информации о треке
+			sentry.CaptureMessage(fmt.Sprintf("Запрос информации о треке для %s: %s", route, track))
+			
+			// Отправляем JSON-ответ
 			json.NewEncoder(w).Encode(map[string]string{
 				"route": route,
 				"track": track,
@@ -246,7 +297,17 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Информация о всех потоках
-		w.Header().Set("Content-Type", "application/json")
+		// Логируем в Sentry запрос информации о всех треках
+		trackInfo := make(map[string]interface{})
+		for r, t := range s.currentTracks {
+			trackInfo[r] = t
+		}
+		sentry.ConfigureScope(func(scope *sentry.Scope) {
+			scope.SetContext("all_tracks", trackInfo)
+		})
+		sentry.CaptureMessage("Запрос информации о всех текущих треках")
+		
+		// Отправляем JSON-ответ
 		json.NewEncoder(w).Encode(s.currentTracks)
 	}
 }

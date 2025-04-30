@@ -58,6 +58,9 @@ func (rs *RadioStation) Stop() {
 func (rs *RadioStation) streamLoop() {
 	defer rs.waitGroup.Done()
 
+	consecutiveEmptyTracks := 0
+	maxEmptyAttempts := 5 // Максимальное количество попыток проверки пустого плейлиста
+
 	for {
 		select {
 		case <-rs.stop:
@@ -66,15 +69,43 @@ func (rs *RadioStation) streamLoop() {
 		default:
 			// Получаем текущий трек
 			track := rs.playlist.GetCurrentTrack()
+			
 			if track == nil {
-				log.Printf("Нет треков в плейлисте для %s, ожидание 5 секунд...", rs.route)
-				sentry.CaptureMessage(fmt.Sprintf("Нет треков в плейлисте для %s, ожидание 5 секунд...", rs.route))
-				time.Sleep(5 * time.Second)
-				continue
+				consecutiveEmptyTracks++
+				if consecutiveEmptyTracks <= maxEmptyAttempts {
+					log.Printf("Нет треков в плейлисте для %s (попытка %d/%d), ожидание 5 секунд...", 
+						rs.route, consecutiveEmptyTracks, maxEmptyAttempts)
+					sentry.CaptureMessage(fmt.Sprintf("Нет треков в плейлисте для %s, ожидание 5 секунд...", rs.route))
+					
+					// Подождем и попробуем снова
+					time.Sleep(5 * time.Second)
+					continue
+				} else {
+					// Если после нескольких попыток плейлист всё ещё пуст, переходим в режим длительного ожидания
+					log.Printf("Плейлист %s пуст. Переход в режим ожидания...", rs.route)
+					sentry.CaptureMessage(fmt.Sprintf("Плейлист %s пуст. Переход в режим ожидания...", rs.route))
+					
+					// Ждём дольше между проверками, чтобы не тратить ресурсы
+					time.Sleep(30 * time.Second)
+					
+					// Сбрасываем счетчик для новой серии проверок
+					consecutiveEmptyTracks = 0
+					continue
+				}
 			}
+			
+			// Сбрасываем счетчик пустых попыток, если трек найден
+			consecutiveEmptyTracks = 0
 
 			// Стриминг текущего трека
 			trackPath := getTrackPath(track)
+			if trackPath == "" {
+				log.Printf("Невозможно получить путь к треку для станции %s, переход к следующему", rs.route)
+				sentry.CaptureMessage(fmt.Sprintf("Невозможно получить путь к треку для станции %s", rs.route))
+				rs.playlist.NextTrack()
+				continue
+			}
+			
 			log.Printf("Воспроизведение трека %s на станции %s", trackPath, rs.route)
 			sentry.CaptureMessage(fmt.Sprintf("Воспроизведение трека %s на станции %s", trackPath, rs.route))
 			

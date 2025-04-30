@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +74,40 @@ func (s *Streamer) GetCurrentTrackChannel() <-chan string {
 
 // StreamTrack стримит трек всем подключенным клиентам
 func (s *Streamer) StreamTrack(trackPath string) error {
+	// Проверка на пустой путь
+	if trackPath == "" {
+		sentryErr := fmt.Errorf("пустой путь к аудиофайлу")
+		sentry.CaptureException(sentryErr)
+		return sentryErr
+	}
+
+	log.Printf("Попытка воспроизведения файла: %s", trackPath)
+	sentry.CaptureMessage(fmt.Sprintf("Начало воспроизведения трека: %s", trackPath))
+	
+	// Проверка существования файла
+	fileInfo, err := os.Stat(trackPath)
+	if err != nil {
+		sentryErr := fmt.Errorf("ошибка проверки файла: %w", err)
+		sentry.CaptureException(sentryErr)
+		return sentryErr
+	}
+	
+	// Проверка, что это не директория
+	if fileInfo.IsDir() {
+		sentryErr := fmt.Errorf("указанный путь %s является директорией, а не файлом", trackPath)
+		sentry.CaptureException(sentryErr)
+		return sentryErr
+	}
+	
+	// Запись информации о файле в Sentry
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetContext("file_info", map[string]interface{}{
+			"name":  filepath.Base(trackPath),
+			"size":  fileInfo.Size(),
+			"mtime": fileInfo.ModTime(),
+		})
+	})
+	
 	// Открываем файл
 	file, err := os.Open(trackPath)
 	if err != nil {
@@ -81,6 +116,9 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		return sentryErr
 	}
 	defer file.Close()
+	
+	log.Printf("Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size())
+	sentry.CaptureMessage(fmt.Sprintf("Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size()))
 
 	// Отправляем информацию о текущем треке
 	select {
@@ -101,6 +139,12 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	buffer := s.bufferPool.Get().([]byte)
 	defer s.bufferPool.Put(buffer)
 
+	// Счетчик для отслеживания прогресса
+	var bytesRead int64
+	
+	// Отслеживаем начало воспроизведения
+	startTime := time.Now()
+	
 	for {
 		n, err := file.Read(buffer)
 		if err == io.EOF {
@@ -112,6 +156,8 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			return sentryErr
 		}
 
+		bytesRead += int64(n)
+		
 		// Отправляем данные всем клиентам
 		if err := s.broadcastToClients(buffer[:n]); err != nil {
 			sentry.CaptureException(err)
@@ -121,10 +167,29 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		// Проверяем сигнал завершения
 		select {
 		case <-s.quit:
+			sentry.CaptureMessage(fmt.Sprintf("Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+				trackPath, bytesRead, fileInfo.Size()))
 			return nil
 		default:
 		}
 	}
+	
+	duration := time.Since(startTime)
+	log.Printf("Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
+		trackPath, bytesRead, duration.Seconds())
+	
+	// Отправляем подробные метрики в Sentry
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetContext("playback_stats", map[string]interface{}{
+			"file_name":    filepath.Base(trackPath),
+			"file_path":    trackPath,
+			"bytes_read":   bytesRead,
+			"file_size":    fileInfo.Size(),
+			"duration_sec": duration.Seconds(),
+			"clients":      s.GetClientCount(),
+		})
+	})
+	sentry.CaptureMessage(fmt.Sprintf("Воспроизведение файла завершено: %s", filepath.Base(trackPath)))
 
 	// Добавляем паузу между треками для избежания обрезки начала
 	time.Sleep(gracePeriodMs * time.Millisecond)
