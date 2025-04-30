@@ -17,12 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Копирование файлов приложения
 COPY . .
 
-# Создание директорий для аудиофайлов 
-# (можно примонтировать внешние volumes с аудиофайлами)
-RUN mkdir -p /app/audio && chmod 777 /app/audio
-RUN mkdir -p /app/humor && chmod 777 /app/humor
-RUN mkdir -p /app/science && chmod 777 /app/science
-RUN mkdir -p /app/business && chmod 777 /app/business
+# Создание стандартных директорий для аудиофайлов
+RUN mkdir -p /app/audio /app/humor /app/science && \
+    chmod 777 /app/audio /app/humor /app/science
 
 # Создаем пользователя с низкими привилегиями
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -34,15 +31,13 @@ EXPOSE 9999
 ENV ENVIRONMENT=production
 ENV RELEASE=1.0.0
 
-# Аргумент сборки для настройки маршрутов аудиопотока (для обратной совместимости)
-ARG AUDIO_STREAM_ROUTES=/
-# Устанавливаем переменную окружения из аргумента сборки
+# Аргумент сборки для настройки маршрутов аудиопотока
+ARG AUDIO_STREAM_ROUTES=/,/humor,/science
 ENV AUDIO_STREAM_ROUTES=${AUDIO_STREAM_ROUTES}
 
-# Аргумент сборки для карты папок и маршрутов
-ARG FOLDER_ROUTE_MAP=/app/humor:/humor,/app/science:/science,/app/business:/business,/app/audio:/
-# Устанавливаем переменную окружения из аргумента сборки
-ENV FOLDER_ROUTE_MAP=${FOLDER_ROUTE_MAP}
+# Аргумент сборки для настройки сопоставления директорий и маршрутов
+ARG DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}'
+ENV DIRECTORY_ROUTES=${DIRECTORY_ROUTES}
 
 # Скрипт-обертка для запуска с правильными правами доступа
 COPY entrypoint.sh /entrypoint.sh
@@ -51,5 +46,5 @@ RUN chmod +x /entrypoint.sh
 # Точка входа в контейнер
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Запуск приложения
-CMD ["python", "main.py"] 
+# Запуск приложения с директорией аудио по умолчанию
+CMD ["python", "main.py", "--audio-dir", "/app/audio"] 
