@@ -16,7 +16,6 @@ from flask import Flask, Response, render_template_string, stream_with_context, 
 from werkzeug.exceptions import BadRequest
 from werkzeug.serving import run_simple
 from playlist_manager import PlaylistManager
-from audio_streamer import AudioStreamer
 
 
 HTML_TEMPLATE = """
@@ -120,7 +119,6 @@ class AudioStreamServer:
     
     Attributes:
         playlist_manager (PlaylistManager): Менеджер плейлиста
-        audio_streamer (AudioStreamer): Обработчик аудиопотока
         app (Flask): Экземпляр Flask приложения
         current_tracks (Dict[str, str]): Словарь текущих треков для каждого маршрута
     """
@@ -134,7 +132,6 @@ class AudioStreamServer:
         """
         self.logger = logging.getLogger('audio_streamer')
         self.playlist_manager = playlist_manager
-        self.audio_streamer = AudioStreamer()
         self.app = Flask(__name__)
         self.current_tracks = {}  # Словарь {route: current_track}
         
@@ -168,7 +165,7 @@ class AudioStreamServer:
             def stream():
                 """Эндпоинт для потоковой передачи аудио через веб-интерфейс."""
                 return Response(
-                    stream_with_context(self._generate_audio_stream()),
+                    stream_with_context(self._generate_radio_stream()),
                     mimetype='audio/mpeg'
                 )
                 
@@ -183,16 +180,26 @@ class AudioStreamServer:
             def now_playing():
                 """Эндпоинт для получения информации о текущем треке."""
                 # Получаем маршрут, для которого нужна информация о треке
-                route = request.args.get('route', None)
-                track_name = "Нет активного трека"
+                route = request.args.get('route', '/')
                 
-                if route in self.current_tracks and self.current_tracks[route]:
+                # Получаем информацию о текущем треке из радиопотока или из словаря текущих треков
+                track_name = "Нет активного трека"
+                radio_stream = self.playlist_manager.get_radio_stream(route)
+                
+                if radio_stream:
+                    current_track = radio_stream.get_current_track()
+                    if current_track:
+                        track_name = os.path.basename(current_track)
+                elif route in self.current_tracks and self.current_tracks[route]:
                     track_name = os.path.basename(self.current_tracks[route])
                 elif '/' in self.current_tracks and self.current_tracks['/']:
-                    # Если маршрут не указан или для него нет трека, возвращаем информацию о треке для маршрута по умолчанию
                     track_name = os.path.basename(self.current_tracks['/'])
                 
-                return jsonify({"track": track_name, "route": route if route else "/"})
+                return jsonify({
+                    "status": "success",
+                    "track": track_name, 
+                    "route": route
+                })
             
             @self.app.route('/reload-playlist')
             def reload_playlist():
@@ -217,8 +224,15 @@ class AudioStreamServer:
                         "route": route,
                         "url": request.host_url.rstrip('/') + route,
                     }
+                    
                     # Добавляем информацию о текущем треке, если есть
-                    if route in self.current_tracks and self.current_tracks[route]:
+                    radio_stream = self.playlist_manager.get_radio_stream(route)
+                    if radio_stream:
+                        current_track = radio_stream.get_current_track()
+                        if current_track:
+                            stream_info["current_track"] = os.path.basename(current_track)
+                            stream_info["listeners"] = radio_stream.listeners_count
+                    elif route in self.current_tracks and self.current_tracks[route]:
                         stream_info["current_track"] = os.path.basename(self.current_tracks[route])
                     
                     streams.append(stream_info)
@@ -316,7 +330,7 @@ class AudioStreamServer:
             Response: Flask-ответ с аудиопотоком и необходимыми заголовками
         """
         return Response(
-            stream_with_context(self._generate_audio_stream(route)),
+            stream_with_context(self._generate_radio_stream(route)),
             mimetype='audio/mpeg',
             headers={
                 # Заголовки для совместимости с радиоприемниками и автоматического воспроизведения
@@ -333,9 +347,73 @@ class AudioStreamServer:
             }
         )
     
+    def _generate_radio_stream(self, route: str = '/') -> Generator[bytes, None, None]:
+        """
+        Генератор для потоковой передачи аудио из радиопотока.
+        
+        Args:
+            route (str): URL-путь, для которого генерируется поток
+            
+        Yields:
+            bytes: Чанки аудиоданных
+        """
+        # Получаем радиопоток для указанного маршрута
+        radio_stream = self.playlist_manager.get_radio_stream(route)
+        if not radio_stream:
+            self.logger.warning(f"Радиопоток для маршрута {route} не найден, используем обычный режим")
+            # Если радиопоток не найден, используем обычный режим
+            yield from self._generate_audio_stream(route)
+            return
+        
+        # Регистрируем нового слушателя
+        radio_stream.add_listener()
+        
+        # Переменные для отслеживания позиции
+        client_position = 0
+        client_address = request.remote_addr if request else "unknown"
+        disconnect_event = threading.Event()
+        
+        try:
+            self.logger.info(f"Начало трансляции радиопотока для клиента {client_address} на маршруте {route}")
+            
+            while not disconnect_event.is_set():
+                try:
+                    # Получаем данные из радиопотока с текущей позиции клиента
+                    chunks, new_position = radio_stream.get_stream_data(client_position)
+                    
+                    # Если нет новых данных, ждем немного
+                    if not chunks:
+                        # Отправляем пустой чанк, чтобы поддерживать соединение
+                        yield b""
+                        time.sleep(0.1)
+                        continue
+                    
+                    # Обновляем позицию клиента
+                    client_position = new_position
+                    
+                    # Отправляем все чанки клиенту
+                    for chunk in chunks:
+                        yield chunk
+                    
+                    # Небольшая пауза для предотвращения перегрузки CPU
+                    time.sleep(0.01)
+                
+                except (IOError, ConnectionError, BrokenPipeError) as e:
+                    self.logger.warning(f"Соединение с клиентом {client_address} прервано: {str(e)}")
+                    disconnect_event.set()
+                except Exception as e:
+                    self.logger.error(f"Ошибка при передаче радиопотока: {e}", exc_info=True)
+                    time.sleep(1.0)  # Пауза при ошибке
+        
+        finally:
+            # Удаляем слушателя при отключении
+            radio_stream.remove_listener()
+            self.logger.info(f"Завершение трансляции радиопотока для клиента {client_address} на маршруте {route}")
+    
     def _generate_audio_stream(self, route: str = '/') -> Generator[bytes, None, None]:
         """
         Генератор для потоковой передачи аудио для указанного маршрута.
+        Резервный режим, если радиопоток недоступен.
         
         Args:
             route (str): URL-путь, для которого генерируется поток
@@ -350,7 +428,10 @@ class AudioStreamServer:
         try:
             # Получаем информацию о клиенте для логирования
             client_address = request.remote_addr if request else "unknown"
-            self.logger.info(f"Начало аудиопотока для клиента {client_address} на маршруте {route}")
+            self.logger.info(f"Начало индивидуального аудиопотока для клиента {client_address} на маршруте {route}")
+            
+            from audio_streamer import AudioStreamer
+            audio_streamer = AudioStreamer()
             
             while not disconnect_event.is_set():
                 track = self.playlist_manager.get_next_track(route)
@@ -370,7 +451,7 @@ class AudioStreamServer:
                 
                 try:
                     # Создаем поток аудио для текущего трека
-                    audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
+                    audio_stream, _ = audio_streamer.create_stream_from_file(track)
                     if not audio_stream:
                         self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
                         continue
@@ -459,6 +540,9 @@ class AudioStreamServer:
             )
         except Exception as e:
             self.logger.error(f"Ошибка при запуске аудио-сервера: {e}", exc_info=True)
+        finally:
+            # Останавливаем все радиопотоки при завершении
+            self.playlist_manager.shutdown()
 
 # Если запускается непосредственно этот файл, создаем и запускаем WSGI-приложение
 def create_app(playlist_path=None, directory_routes=None):
@@ -475,7 +559,7 @@ def create_app(playlist_path=None, directory_routes=None):
     from playlist_manager import PlaylistManager
     
     # Создаем менеджер плейлистов
-    playlist_manager = PlaylistManager(playlist_path, directory_routes)
+    playlist_manager = PlaylistManager(playlist_path, directory_routes, stream_mode='radio')
     server = AudioStreamServer(playlist_manager)
     return server.app
 
