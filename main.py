@@ -9,9 +9,11 @@
 import os
 import logging
 import argparse
+import json
+from typing import Dict
 from logger import setup_logging
 from playlist_manager import PlaylistManager
-from web_server import AudioStreamServer
+from web_server import AudioStreamServer, parse_folder_route_map
 
 
 def parse_arguments():
@@ -28,6 +30,10 @@ def parse_arguments():
                         help='Порт для веб-сервера (по умолчанию: 9999)')
     parser.add_argument('--host', type=str, default='0.0.0.0',
                         help='Хост для веб-сервера (по умолчанию: 0.0.0.0)')
+    parser.add_argument('--stream-routes', type=str, default=None,
+                        help='Список URL-путей для аудиопотока, разделённых запятыми (например: "/,/humor,/science")')
+    parser.add_argument('--folder-route-map', type=str, default=None,
+                        help='Карта соответствия папок и маршрутов в формате "путь1:маршрут1,путь2:маршрут2"')
     
     return parser.parse_args()
 
@@ -45,17 +51,44 @@ def main():
         logger = setup_logging()
         logger.info("Запуск аудио стриминг-сервера")
         
-        # Проверка существования директории с аудио
-        if not os.path.exists(args.audio_dir):
-            logger.warning(f"Директория с аудиофайлами не найдена: {args.audio_dir}")
-            logger.info(f"Создание директории: {args.audio_dir}")
-            os.makedirs(args.audio_dir, exist_ok=True)
+        # Обработка аргументов командной строки и переменных окружения
+        folder_route_map = None
         
-        # Инициализация менеджера плейлиста
-        playlist_manager = PlaylistManager(args.audio_dir)
+        # Если указана карта папок и маршрутов как аргумент командной строки,
+        # устанавливаем ее в переменную окружения
+        if args.folder_route_map:
+            logger.info(f"Установка карты папок и маршрутов из аргументов командной строки: {args.folder_route_map}")
+            os.environ['FOLDER_ROUTE_MAP'] = args.folder_route_map
+        else:
+            # Если карта не указана, проверяем наличие standard_audio_dir
+            # и создаем простую карту из одной папки
+            if not os.environ.get('FOLDER_ROUTE_MAP'):
+                audio_dir = args.audio_dir
+                
+                # Проверка существования директории с аудио
+                if not os.path.exists(audio_dir):
+                    logger.warning(f"Директория с аудиофайлами не найдена: {audio_dir}")
+                    logger.info(f"Создание директории: {audio_dir}")
+                    os.makedirs(audio_dir, exist_ok=True)
+                
+                # Устанавливаем переменную окружения AUDIO_DIR для обратной совместимости
+                os.environ['AUDIO_DIR'] = audio_dir
+                logger.info(f"Установлена переменная окружения AUDIO_DIR: {audio_dir}")
+                
+                # Если указаны маршруты как аргумент командной строки, 
+                # устанавливаем их в переменную окружения
+                if args.stream_routes:
+                    logger.info(f"Установка маршрутов из аргументов командной строки: {args.stream_routes}")
+                    os.environ['AUDIO_STREAM_ROUTES'] = args.stream_routes
         
-        # Запуск аудио-сервера
-        server = AudioStreamServer(playlist_manager)
+        # Получаем карту папок и маршрутов из переменной окружения
+        folder_route_map_str = os.environ.get('FOLDER_ROUTE_MAP')
+        if folder_route_map_str:
+            folder_route_map = parse_folder_route_map(folder_route_map_str)
+            logger.info(f"Карта папок и маршрутов из переменной окружения: {folder_route_map}")
+        
+        # Запуск аудио-сервера с картой папок и маршрутов
+        server = AudioStreamServer(folder_route_map)
         server.run(host=args.host, port=args.port)
         
     except Exception as e:
