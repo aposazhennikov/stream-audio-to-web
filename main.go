@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -114,9 +115,31 @@ func main() {
 	// Используем пустой хэндлер, а позже заменим его на настоящий
 	emptyHumorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Получен запрос к временному /humor от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body><h1>Аудиопоток юмора загружается...</h1><p>Пожалуйста, подождите несколько секунд и обновите страницу.</p></body></html>"))
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудиопоток юмора</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        h1 { color: #333; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <h1>Аудиопоток юмора загружается...</h1>
+    <div class="loader"></div>
+    <p>Пожалуйста, подождите несколько секунд и обновите страницу.</p>
+    <p><small>Если страница не обновляется автоматически, проверьте наличие аудиофайлов в директории.</small></p>
+    <script>
+        setTimeout(function() { location.reload(); }, 5000);
+    </script>
+</body>
+</html>`))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -124,24 +147,145 @@ func main() {
 
 	emptyScienceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Получен запрос к временному /science от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body><h1>Аудиопоток науки загружается...</h1><p>Пожалуйста, подождите несколько секунд и обновите страницу.</p></body></html>"))
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудиопоток науки</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        h1 { color: #333; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <h1>Аудиопоток науки загружается...</h1>
+    <div class="loader"></div>
+    <p>Пожалуйста, подождите несколько секунд и обновите страницу.</p>
+    <p><small>Если страница не обновляется автоматически, проверьте наличие аудиофайлов в директории.</small></p>
+    <script>
+        setTimeout(function() { location.reload(); }, 5000);
+    </script>
+</body>
+</html>`))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 	})
 
-	// Сохраняем временные маршруты для последующей замены на постоянные
-	humorRoute = server.Handler().(*mux.Router).Path("/humor").Methods("GET").Handler(emptyHumorHandler)
-	scienceRoute = server.Handler().(*mux.Router).Path("/science").Methods("GET").Handler(emptyScienceHandler)
+	// Временная функция, которая будет использоваться для проверки и перенаправления на реальный обработчик
+	humorRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Вызван перенаправляющий обработчик для /humor от %s", r.RemoteAddr)
+		
+		// Проверяем, есть ли зарегистрированный поток
+		s := server.(*httpServer.Server)
+		if s.IsStreamRegistered("/humor") {
+			// Если поток зарегистрирован, используем его обработчик
+			audioHandler := s.StreamAudioHandler("/humor")
+			audioHandler(w, r)
+			return
+		}
+		
+		// Иначе показываем временную страницу
+		emptyHumorHandler.ServeHTTP(w, r)
+	})
+	
+	scienceRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Вызван перенаправляющий обработчик для /science от %s", r.RemoteAddr)
+		
+		// Проверяем, есть ли зарегистрированный поток
+		s := server.(*httpServer.Server)
+		if s.IsStreamRegistered("/science") {
+			// Если поток зарегистрирован, используем его обработчик
+			audioHandler := s.StreamAudioHandler("/science")
+			audioHandler(w, r)
+			return
+		}
+		
+		// Иначе показываем временную страницу
+		emptyScienceHandler.ServeHTTP(w, r)
+	})
+
+	// Регистрируем перенаправляющие обработчики
+	humorRoute = server.Handler().(*mux.Router).Path("/humor").Methods("GET").Handler(humorRedirectHandler)
+	scienceRoute = server.Handler().(*mux.Router).Path("/science").Methods("GET").Handler(scienceRedirectHandler)
 
 	// Добавляем временный обработчик для корневого маршрута
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Получен запрос / от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("<html><body><h1>Аудио-стример загружается...</h1><p>Пожалуйста, подождите несколько секунд.</p></body></html>"))
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудио-стример</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            margin-top: 50px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #2c3e50; }
+        .loader { 
+            border: 5px solid #f3f3f3; 
+            border-top: 5px solid #3498db; 
+            border-radius: 50%; 
+            width: 50px; 
+            height: 50px; 
+            animation: spin 2s linear infinite; 
+            margin: 20px auto; 
+        }
+        @keyframes spin { 
+            0% { transform: rotate(0deg); } 
+            100% { transform: rotate(360deg); } 
+        }
+        .links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .link-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .link-button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Аудио-стример загружается...</h1>
+        <div class="loader"></div>
+        <p>Пожалуйста, подождите несколько секунд, пока сервер настраивает аудиопотоки.</p>
+        <div class="links">
+            <a href="/humor" class="link-button">Юмор</a>
+            <a href="/science" class="link-button">Наука</a>
+        </div>
+    </div>
+</body>
+</html>`))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -219,6 +363,73 @@ func main() {
 	// Заменяем временный обработчик для корневого маршрута на перенаправление
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Перенаправление с / на %s", redirectTo)
+		// Проверяем, готов ли поток к которому хотим перенаправить
+		s := server.(*httpServer.Server)
+		if !s.IsStreamRegistered(redirectTo) {
+			// Если целевой поток еще не готов, выводим страницу с ссылками
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудио-стример</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            margin-top: 50px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #2c3e50; }
+        p { margin-bottom: 20px; }
+        .links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .link-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .link-button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Аудио-стример</h1>
+        <p>Выберите один из доступных потоков:</p>
+        <div class="links">
+            <a href="/humor" class="link-button">Юмор</a>
+            <a href="/science" class="link-button">Наука</a>
+        </div>
+    </div>
+</body>
+</html>`))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			return
+		}
+		
+		// Если поток готов, выполняем перенаправление
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	}).Methods("GET")
 	
@@ -303,6 +514,25 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 		}
 	}
 
+	// Проверим содержимое директории
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		log.Printf("Ошибка при чтении директории %s: %s", dir, err)
+	} else {
+		audioFiles := 0
+		for _, file := range files {
+			if !file.IsDir() && (strings.HasSuffix(strings.ToLower(file.Name()), ".mp3") || 
+								 strings.HasSuffix(strings.ToLower(file.Name()), ".ogg") || 
+								 strings.HasSuffix(strings.ToLower(file.Name()), ".aac")) {
+				audioFiles++
+			}
+		}
+		log.Printf("Директория %s содержит %d аудиофайлов", dir, audioFiles)
+		if audioFiles == 0 {
+			log.Printf("ПРЕДУПРЕЖДЕНИЕ: В директории %s нет аудиофайлов. Аудиопоток может не работать.", dir)
+		}
+	}
+
 	// Создаём менеджер плейлиста
 	pl, err := playlist.NewPlaylist(dir, nil)
 	if err != nil {
@@ -322,18 +552,11 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	server.RegisterStream(route, streamer, pl)
 	log.Printf("Аудиопоток '%s' зарегистрирован на HTTP сервере", route)
 
-	// Готовим обработчик для потока
-	audioHandler := server.StreamAudioHandler(route)
-
-	// Регистрируем маршрут в зависимости от его пути
-	if route == "/humor" && humorRoute != nil {
-		humorRoute.Handler(audioHandler)
-		log.Printf("Заменен временный обработчик на постоянный для маршрута /humor")
-	} else if route == "/science" && scienceRoute != nil {
-		scienceRoute.Handler(audioHandler)
-		log.Printf("Заменен временный обработчик на постоянный для маршрута /science")
-	} else {
-		// Для других маршрутов просто регистрируем новый обработчик
+	// Для маршрутов /humor и /science мы не регистрируем новые обработчики,
+	// так как они обрабатываются через перенаправляющие обработчики
+	if route != "/humor" && route != "/science" {
+		// Для других маршрутов регистрируем обработчики напрямую
+		audioHandler := server.StreamAudioHandler(route)
 		server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
 		log.Printf("Зарегистрирован новый обработчик для маршрута '%s'", route)
 	}
@@ -351,7 +574,7 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	if routeExists {
 		log.Printf("Маршрут '%s' успешно зарегистрирован в HTTP сервере", route)
 	} else {
-		log.Printf("ВНИМАНИЕ: Маршрут '%s' не найден в зарегистрированных маршрутах!", route)
+		log.Printf("ВНИМАНИЕ: Маршрут '%s' может отсутствовать в списке маршрутов, но поток зарегистрирован!", route)
 	}
 }
 
