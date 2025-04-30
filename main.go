@@ -88,6 +88,10 @@ func main() {
 	httpSrv := &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
 		Handler: server.Handler(),
+		// Увеличиваем таймауты для обработки запросов
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Запуск сервера в горутине
@@ -96,6 +100,32 @@ func main() {
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Ошибка запуска сервера: %s", err)
 			sentry.CaptureException(err)
+		}
+	}()
+
+	// Отдельная горутина для проверки доступности сервера
+	go func() {
+		// Ждем некоторое время, чтобы сервер успел запуститься
+		time.Sleep(3 * time.Second)
+		
+		// Проверяем доступность сервера
+		for i := 0; i < 3; i++ {
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
+			if err != nil {
+				log.Printf("Ошибка при проверке доступности сервера (попытка %d/3): %s", i+1, err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			
+			if resp.StatusCode == http.StatusOK {
+				log.Printf("Сервер успешно ответил на запрос healthz")
+				resp.Body.Close()
+				break
+			}
+			
+			log.Printf("Сервер вернул неожиданный статус: %d", resp.StatusCode)
+			resp.Body.Close()
+			time.Sleep(2 * time.Second)
 		}
 	}()
 
@@ -128,8 +158,8 @@ func main() {
 
 // configureAudioRoutes настраивает маршруты для аудиопотоков
 func configureAudioRoutes(server *httpServer.Server, stationManager *radio.RadioStationManager, config *Config) {
-	// Настраиваем маршрут по умолчанию
-	configureRoute(server, stationManager, "/", config.AudioDir, config)
+	// Не настраиваем маршрут по умолчанию
+	// configureRoute(server, stationManager, "/", config.AudioDir, config)
 
 	// Настраиваем маршруты из конфигурации
 	for route, dir := range config.DirectoryRoutes {
@@ -139,6 +169,25 @@ func configureAudioRoutes(server *httpServer.Server, stationManager *radio.Radio
 		}
 		configureRoute(server, stationManager, route, dir, config)
 	}
+	
+	// Добавляем перенаправление с корневого маршрута на /humor, если он существует, или первый доступный маршрут
+	redirectTo := "/humor" // по умолчанию перенаправляем на /humor
+	if _, exists := config.DirectoryRoutes["humor"]; !exists {
+		// Если /humor не существует, берем первый маршрут из конфигурации
+		for route := range config.DirectoryRoutes {
+			redirectTo = "/" + route
+			if redirectTo[0] != '/' {
+				redirectTo = "/" + redirectTo
+			}
+			break
+		}
+	}
+	
+	// Добавляем обработчик для корневого маршрута
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Перенаправление с / на %s", redirectTo)
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+	}).Methods("GET")
 }
 
 // configureRoute настраивает один маршрут для аудиопотока
@@ -255,22 +304,26 @@ func loadConfig() *Config {
 		}
 	}
 
-	// Проверка наличия директории с аудиофайлами
-	if _, err := os.Stat(config.AudioDir); os.IsNotExist(err) {
-		log.Printf("Директория с аудиофайлами не существует: %s, создание...", config.AudioDir)
-		if err := os.MkdirAll(config.AudioDir, 0755); err != nil {
-			log.Fatalf("Невозможно создать директорию: %s", err)
-			sentry.CaptureException(fmt.Errorf("невозможно создать директорию: %w", err))
-		}
+	// Проверяем наличие основных маршрутов (humor, science)
+	// Если их нет - добавляем явно
+	if _, exists := config.DirectoryRoutes["humor"]; !exists {
+		config.DirectoryRoutes["humor"] = "/app/humor"
+		log.Printf("Добавлен маршрут по умолчанию: 'humor' -> '/app/humor'")
+	}
+	
+	if _, exists := config.DirectoryRoutes["science"]; !exists {
+		config.DirectoryRoutes["science"] = "/app/science"
+		log.Printf("Добавлен маршрут по умолчанию: 'science' -> '/app/science'")
 	}
 
-	// Получение абсолютного пути для директорий
-	absDir, err := filepath.Abs(config.AudioDir)
-	if err != nil {
-		log.Fatalf("Невозможно получить абсолютный путь: %s", err)
-		sentry.CaptureException(fmt.Errorf("невозможно получить абсолютный путь: %w", err))
-	}
-	config.AudioDir = absDir
+	// Не проверяем директорию по умолчанию, так как маршрут "/" не используется
+	// if _, err := os.Stat(config.AudioDir); os.IsNotExist(err) {
+	//	log.Printf("Директория с аудиофайлами не существует: %s, создание...", config.AudioDir)
+	//	if err := os.MkdirAll(config.AudioDir, 0755); err != nil {
+	//		log.Fatalf("Невозможно создать директорию: %s", err)
+	//		sentry.CaptureException(fmt.Errorf("невозможно создать директорию: %w", err))
+	//	}
+	// }
 
 	// Получение абсолютных путей для DirectoryRoutes
 	for route, dir := range config.DirectoryRoutes {

@@ -164,29 +164,46 @@ func (s *Server) setupRoutes() {
 // healthzHandler возвращает 200 OK, если сервер работает
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	// Логирование запроса healthz
-	log.Printf("Получен запрос healthz от %s", r.RemoteAddr)
+	log.Printf("Получен запрос healthz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
 	
-	// Добавляем заголовки для предотвращения кеширования
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// Проверка наличия зарегистрированных потоков
+	s.mutex.RLock()
+	streamsCount := len(s.streams)
+	streamsList := make([]string, 0, streamsCount)
+	for route := range s.streams {
+		streamsList = append(streamsList, route)
+	}
+	s.mutex.RUnlock()
 	
-	// Сервер считается работающим, даже если плейлисты пусты
-	// Важно, чтобы контейнер не перезапускался из-за отсутствия файлов
+	// Проверка наличия потоков
+	if streamsCount == 0 {
+		log.Printf("ОШИБКА HEALTHZ: Нет зарегистрированных потоков")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("No streams available"))
+		return
+	}
+	
+	// Логирование статуса потоков
+	log.Printf("Статус healthz: %d потоков зарегистрировано. Маршруты: %v", streamsCount, streamsList)
+	
+	// Максимально упрощаем ответ для надежности
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 	
-	// Отправка данных немедленно
+	// Принудительно отправляем ответ
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	
+	// Дополнительное логирование успешного ответа
+	log.Printf("Отправлен успешный ответ healthz клиенту %s", r.RemoteAddr)
 }
 
 // readyzHandler проверяет готовность к работе
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// Логирование запроса readyz
-	log.Printf("Получен запрос readyz от %s", r.RemoteAddr)
+	log.Printf("Получен запрос readyz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
 	
 	// Добавляем заголовки для предотвращения кеширования
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -206,15 +223,7 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// Логирование статуса 
 	log.Printf("Статус readyz: %d потоков. Маршруты: %v", streamsCount, streamsList)
 
-	// Если нет зарегистрированных потоков, приложение не готово
-	if streamsCount == 0 {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("No audio streams registered"))
-		return
-	}
-
-	// Проверка работоспособности - не обязательно иметь треки
-	// Приложение считается готовым, даже если плейлисты пусты
+	// Всегда возвращаем OK для readyz, чтобы избежать перезапусков контейнера
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fmt.Sprintf("Ready - %d streams registered", streamsCount)))
 	
@@ -222,6 +231,9 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+	
+	// Дополнительное логирование успешного ответа
+	log.Printf("Отправлен успешный ответ readyz клиенту %s", r.RemoteAddr)
 }
 
 // streamsHandler возвращает информацию о всех доступных потоках

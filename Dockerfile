@@ -51,9 +51,9 @@ WORKDIR /app
 # Открытие порта
 EXPOSE 8000
 
-# Проверка работоспособности
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/healthz || exit 1
+# Улучшенная проверка работоспособности - больше времени и более простой подход
+HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 \
+  CMD wget -q --spider http://localhost:8000/healthz || exit 1
 
 # Точка входа - наш entrypoint-скрипт
 ENTRYPOINT ["/app/entrypoint.sh"]
