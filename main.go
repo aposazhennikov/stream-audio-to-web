@@ -369,12 +369,16 @@ func loadConfig() *Config {
 
 	// Проверяем наличие основных маршрутов (humor, science)
 	// Если их нет - добавляем явно с ведущим слешем /humor и /science
-	if _, exists := config.DirectoryRoutes["/humor"]; !exists && _, exists2 := config.DirectoryRoutes["humor"]; !exists2 {
+	_, existsWithSlash := config.DirectoryRoutes["/humor"]
+	_, existsWithoutSlash := config.DirectoryRoutes["humor"]
+	if !existsWithSlash && !existsWithoutSlash {
 		config.DirectoryRoutes["/humor"] = "/app/humor"
 		log.Printf("Добавлен маршрут по умолчанию: '/humor' -> '/app/humor'")
 	}
 	
-	if _, exists := config.DirectoryRoutes["/science"]; !exists && _, exists2 := config.DirectoryRoutes["science"]; !exists2 {
+	_, scienceWithSlash := config.DirectoryRoutes["/science"]
+	_, scienceWithoutSlash := config.DirectoryRoutes["science"]
+	if !scienceWithSlash && !scienceWithoutSlash {
 		config.DirectoryRoutes["/science"] = "/app/science"
 		log.Printf("Добавлен маршрут по умолчанию: '/science' -> '/app/science'")
 	}
