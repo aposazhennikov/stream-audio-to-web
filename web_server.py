@@ -10,8 +10,9 @@ import logging
 import threading
 import time
 import sys
+import socket
 from typing import Generator, Optional, List, Dict
-from flask import Flask, Response, render_template_string, stream_with_context, jsonify, redirect, request
+from flask import Flask, Response, render_template_string, stream_with_context, jsonify, redirect, request, abort
 from werkzeug.exceptions import BadRequest
 from werkzeug.serving import run_simple
 from playlist_manager import PlaylistManager
@@ -136,6 +137,10 @@ class AudioStreamServer:
         self.audio_streamer = AudioStreamer()
         self.app = Flask(__name__)
         self.current_tracks = {}  # Словарь {route: current_track}
+        
+        # Настройки для таймаутов и потоков
+        self.stream_chunk_size = 4096  # Размер чанка для стриминга
+        self.client_timeout = 60  # Таймаут клиента в секундах
         
         # Регистрация маршрутов и обработчиков ошибок
         self._register_routes()
@@ -276,6 +281,26 @@ class AudioStreamServer:
                                     status=400, 
                                     mimetype='text/plain')
                 return e
+            
+            @self.app.errorhandler(500)
+            def handle_server_error(e):
+                """
+                Обработчик внутренних ошибок сервера.
+                """
+                self.logger.error(f"Внутренняя ошибка сервера: {str(e)}")
+                return Response("Внутренняя ошибка сервера. Пожалуйста, повторите попытку позже.", 
+                                status=500, 
+                                mimetype='text/plain')
+            
+            @self.app.errorhandler(Exception)
+            def handle_unhandled_exception(e):
+                """
+                Обработчик необработанных исключений.
+                """
+                self.logger.error(f"Необработанное исключение: {str(e)}", exc_info=True)
+                return Response("Произошла непредвиденная ошибка. Пожалуйста, повторите попытку позже.", 
+                                status=500, 
+                                mimetype='text/plain')
         
         except Exception as e:
             self.logger.error(f"Ошибка при регистрации обработчиков ошибок: {e}", exc_info=True)
@@ -303,7 +328,8 @@ class AudioStreamServer:
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
                 'Expires': '0',
-                'X-Content-Type-Options': 'nosniff'
+                'X-Content-Type-Options': 'nosniff',
+                'Connection': 'keep-alive'  # Явно указываем keep-alive для стриминга
             }
         )
     
@@ -317,12 +343,22 @@ class AudioStreamServer:
         Yields:
             bytes: Чанки аудиоданных
         """
+        # Создаем объект для обработки разрыва соединения
+        disconnect_event = threading.Event()
+        audio_stream = None
+        
         try:
-            while True:
+            # Получаем информацию о клиенте для логирования
+            client_address = request.remote_addr if request else "unknown"
+            self.logger.info(f"Начало аудиопотока для клиента {client_address} на маршруте {route}")
+            
+            while not disconnect_event.is_set():
                 track = self.playlist_manager.get_next_track(route)
                 if not track:
                     # Если нет треков, ждем и пробуем снова
                     self.logger.warning(f"Нет доступных треков для воспроизведения на маршруте {route}, ожидание...")
+                    # Возвращаем небольшую паузу вместо бесконечного ожидания
+                    yield b"\x00" * self.stream_chunk_size
                     time.sleep(2)
                     continue
                 
@@ -332,32 +368,71 @@ class AudioStreamServer:
                 file_name = os.path.basename(track)
                 self.logger.info(f"Начало трансляции трека на маршруте {route}: {file_name}")
                 
-                audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
-                if not audio_stream:
-                    self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
-                    continue
-                
                 try:
-                    while True:
-                        chunk = audio_stream.read(self.audio_streamer.chunk_size)
-                        if not chunk:
-                            break
-                        yield chunk
+                    # Создаем поток аудио для текущего трека
+                    audio_stream, _ = self.audio_streamer.create_stream_from_file(track)
+                    if not audio_stream:
+                        self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
+                        continue
                     
-                    # Закрытие потока
-                    audio_stream.close()
+                    # Устанавливаем таймаут для сокета, если это возможно
+                    if hasattr(audio_stream, 'timeout'):
+                        audio_stream.timeout = self.client_timeout
+                    
+                    # Потоковая передача данных
+                    while not disconnect_event.is_set():
+                        try:
+                            # Читаем данные с таймаутом
+                            chunk = audio_stream.read(self.stream_chunk_size)
+                            if not chunk:
+                                # Конец файла, переходим к следующему треку
+                                break
+                            
+                            # Возвращаем чанк данных
+                            yield chunk
+                            
+                            # Небольшая пауза для предотвращения перегрузки CPU
+                            time.sleep(0.001)
+                            
+                        except socket.timeout:
+                            self.logger.warning(f"Таймаут при чтении аудиоданных для клиента {client_address}")
+                            # Отправляем пустой блок и продолжаем
+                            yield b""
+                            continue
+                        except (IOError, ConnectionError, BrokenPipeError) as e:
+                            self.logger.warning(f"Соединение с клиентом {client_address} прервано: {str(e)}")
+                            disconnect_event.set()
+                            break
+                        except Exception as e:
+                            self.logger.error(f"Ошибка при чтении аудиопотока: {e}", exc_info=True)
+                            break
+                
                 except Exception as e:
-                    self.logger.error(f"Ошибка при чтении аудиопотока: {e}", exc_info=True)
+                    self.logger.error(f"Ошибка при обработке аудиопотока для трека {file_name}: {e}", exc_info=True)
+                
+                finally:
+                    # Закрываем поток
                     if audio_stream:
                         try:
                             audio_stream.close()
-                        except:
-                            pass
+                            self.logger.debug(f"Аудиопоток для трека {file_name} закрыт")
+                        except Exception as e:
+                            self.logger.warning(f"Ошибка при закрытии аудиопотока: {e}")
         
+        except (ConnectionError, BrokenPipeError, IOError) as e:
+            self.logger.warning(f"Клиент {client_address} отключился: {str(e)}")
         except Exception as e:
             self.logger.error(f"Ошибка при генерации аудиопотока для маршрута {route}: {e}", exc_info=True)
-            # Возвращаем пустые данные, чтобы не прерывать поток
-            yield b''
+        
+        finally:
+            # Закрываем поток в случае любой ошибки
+            if audio_stream:
+                try:
+                    audio_stream.close()
+                except:
+                    pass
+            
+            self.logger.info(f"Завершение аудиопотока для клиента {client_address} на маршруте {route}")
     
     def run(self, host: str = '0.0.0.0', port: int = 9999, debug: bool = False) -> None:
         """
