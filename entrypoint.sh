@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Список директорий для проверки
-AUDIO_DIRS=("/app/audio")
+# Список директорий для проверки (через пробел)
+AUDIO_DIRS="/app/audio"
 
 # Добавление дополнительных директорий из переменной окружения DIRECTORY_ROUTES
 if [ -n "$DIRECTORY_ROUTES" ]; then
@@ -10,15 +10,15 @@ if [ -n "$DIRECTORY_ROUTES" ]; then
     DIRS_FROM_ENV=$(echo "$DIRECTORY_ROUTES" | grep -o '"/app/[^"]*"' | tr -d '"')
     for dir in $DIRS_FROM_ENV; do
         if [ -d "$dir" ]; then
-            AUDIO_DIRS+=("$dir")
+            AUDIO_DIRS="$AUDIO_DIRS $dir"
         fi
     done
 fi
 
-echo "Проверка директорий с аудио: ${AUDIO_DIRS[*]}"
+echo "Проверка директорий с аудио: $AUDIO_DIRS"
 
 # Проверка и исправление прав доступа для директорий и файлов
-for dir in "${AUDIO_DIRS[@]}"; do
+for dir in $AUDIO_DIRS; do
     if [ -d "$dir" ]; then
         echo "Проверка директории: $dir"
         
