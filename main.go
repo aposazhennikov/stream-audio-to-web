@@ -518,12 +518,12 @@ func configureAudioRoutes(server *httpServer.Server, stationManager *radio.Radio
 // configureRoute настраивает один маршрут для аудиопотока
 func configureRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) {
 	log.Printf("Начало настройки маршрута '%s'...", route)
-	
+
 	// Создаём директорию, если она не существует
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		log.Printf("Создание директории для маршрута %s: %s", route, dir)
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			log.Printf("Ошибка при создании директории %s: %s", dir, err)
+			log.Printf("ОШИБКА: При создании директории %s: %s. Маршрут '%s' НЕ НАСТРОЕН.", dir, err, route)
 			sentry.CaptureException(fmt.Errorf("ошибка при создании директории %s: %w", dir, err))
 			return
 		}
@@ -532,132 +532,110 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	// Проверим содержимое директории
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		log.Printf("Ошибка при чтении директории %s: %s", dir, err)
-	} else {
-		audioFiles := 0
-		for _, file := range files {
-			if !file.IsDir() && (strings.HasSuffix(strings.ToLower(file.Name()), ".mp3") || 
-								 strings.HasSuffix(strings.ToLower(file.Name()), ".ogg") || 
-								 strings.HasSuffix(strings.ToLower(file.Name()), ".aac")) {
-				audioFiles++
-			}
-		}
-		log.Printf("Директория %s содержит %d аудиофайлов", dir, audioFiles)
-		if audioFiles == 0 {
-			log.Printf("ПРЕДУПРЕЖДЕНИЕ: В директории %s нет аудиофайлов. Аудиопоток может не работать.", dir)
-		}
+		log.Printf("ОШИБКА: При чтении директории %s: %s. Маршрут '%s' НЕ НАСТРОЕН.", dir, err, route)
+		sentry.CaptureException(fmt.Errorf("ошибка при чтении директории %s: %w", dir, err))
+		return
 	}
 
-	log.Printf("Создание плейлиста для маршрута %s...", route)
-	// Создаём менеджер плейлиста в отдельной горутине с таймаутом
-	plChan := make(chan *playlist.Playlist, 1)
-	errChan := make(chan error, 1)
+	audioFiles := 0
+	for _, file := range files {
+		if !file.IsDir() && (strings.HasSuffix(strings.ToLower(file.Name()), ".mp3") || 
+							strings.HasSuffix(strings.ToLower(file.Name()), ".ogg") || 
+							strings.HasSuffix(strings.ToLower(file.Name()), ".aac")) {
+			audioFiles++
+		}
+	}
+	log.Printf("Директория %s содержит %d аудиофайлов", dir, audioFiles)
+	if audioFiles == 0 {
+		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: В директории %s нет аудиофайлов. Маршрут '%s' НЕ НАСТРОЕН.", dir, route)
+		sentry.CaptureMessage(fmt.Sprintf("В директории %s нет аудиофайлов для маршрута %s", dir, route))
+		return
+	}
+
+	// Вложенную функцию помещаем в переменную, чтобы можно было правильно отслеживать ошибки
+	setupSuccess := false
 	
+	// КРИТИЧЕСКИ ВАЖНО: создаем контекст с таймаутом для всех операций
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	
+	// Создаем каналы для синхронизации
+	errorChan := make(chan error, 3)
+	doneChan := make(chan bool, 1)
+	
+	// Создаем плейлист и регистрируем поток в отдельной горутине
 	go func() {
+		log.Printf("Создание плейлиста для маршрута %s...", route)
 		pl, err := playlist.NewPlaylist(dir, nil)
 		if err != nil {
-			errChan <- err
+			errorChan <- fmt.Errorf("ошибка при создании плейлиста: %w", err)
 			return
 		}
-		plChan <- pl
-	}()
-	
-	// Ждем с таймаутом
-	var pl *playlist.Playlist
-	select {
-	case err := <-errChan:
-		log.Printf("Ошибка при создании плейлиста для маршрута %s: %s", route, err)
-		sentry.CaptureException(fmt.Errorf("ошибка при создании плейлиста для маршрута %s: %w", route, err))
-		return
-	case pl = <-plChan:
+		
 		log.Printf("Плейлист для маршрута %s успешно создан", route)
-	case <-time.After(30 * time.Second):
-		log.Printf("ОШИБКА: Таймаут при создании плейлиста для маршрута %s", route)
-		sentry.CaptureMessage(fmt.Sprintf("Таймаут при создании плейлиста для маршрута %s", route))
-		return
-	}
-
-	log.Printf("Создание аудио стримера для маршрута %s...", route)
-	// Создаём аудио стример
-	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
-	log.Printf("Аудио стример для маршрута %s успешно создан", route)
-
-	log.Printf("Добавление радиостанции %s в менеджер...", route)
-	// Добавляем радиостанцию в отдельной горутине с таймаутом
-	done := make(chan bool, 1)
-	go func() {
+		
+		log.Printf("Создание аудио стримера для маршрута %s...", route)
+		streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
+		log.Printf("Аудио стример для маршрута %s успешно создан", route)
+		
+		log.Printf("Добавление радиостанции %s в менеджер...", route)
 		stationManager.AddStation(route, streamer, pl)
-		done <- true
-	}()
-	
-	// Ждем с таймаутом
-	select {
-	case <-done:
 		log.Printf("Радиостанция '%s' успешно добавлена в менеджер", route)
-	case <-time.After(10 * time.Second):
-		log.Printf("ОШИБКА: Таймаут при добавлении радиостанции %s в менеджер", route)
-		sentry.CaptureMessage(fmt.Sprintf("Таймаут при добавлении радиостанции %s в менеджер", route))
-		return
-	}
-
-	log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
-	// Регистрируем аудиопоток на HTTP сервере с таймаутом
-	regDone := make(chan bool, 1)
-	go func() {
+		
+		log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
 		server.RegisterStream(route, streamer, pl)
-		regDone <- true
+		log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
+		
+		// Для маршрутов /humor и /science не нужно регистрировать обработчики,
+		// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
+		if route != "/humor" && route != "/science" {
+			log.Printf("Создание обработчика HTTP для маршрута %s...", route)
+			audioHandler := server.StreamAudioHandler(route)
+			server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
+			log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
+		} else {
+			log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
+		}
+		
+		// Проверяем успешность регистрации потока
+		if !server.IsStreamRegistered(route) {
+			errorChan <- fmt.Errorf("поток %s не зарегистрирован после всех операций", route)
+			return
+		}
+		
+		// Сигнализируем об успешном завершении
+		doneChan <- true
 	}()
 	
-	// Ждем с таймаутом
+	// Ждем завершения или таймаута
 	select {
-	case <-regDone:
-		log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
-	case <-time.After(10 * time.Second):
-		log.Printf("ОШИБКА: Таймаут при регистрации аудиопотока %s на HTTP сервере", route)
-		sentry.CaptureMessage(fmt.Sprintf("Таймаут при регистрации аудиопотока %s на HTTP сервере", route))
-		return
-	}
-
-	// Для маршрутов /humor и /science не нужно регистрировать обработчики,
-	// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
-	if route != "/humor" && route != "/science" {
-		// Для других маршрутов регистрируем обработчики напрямую
-		log.Printf("Создание обработчика HTTP для маршрута %s...", route)
-		audioHandler := server.StreamAudioHandler(route)
-		server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
-		log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
-	} else {
-		// Для /humor и /science обновляем состояние, но обработчики уже зарегистрированы
-		log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
+	case <-ctx.Done():
+		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Таймаут при настройке маршрута %s", route)
+		sentry.CaptureMessage(fmt.Sprintf("Таймаут при настройке маршрута %s", route))
+		setupSuccess = false
+	case err := <-errorChan:
+		log.Printf("КРИТИЧЕСКАЯ ОШИБКА при настройке маршрута %s: %s", route, err)
+		sentry.CaptureException(err)
+		setupSuccess = false
+	case <-doneChan:
+		log.Printf("Маршрут '%s' успешно настроен", route)
+		setupSuccess = true
 	}
 	
-	// Проверяем, что маршрут действительно был зарегистрирован
-	log.Printf("Проверка регистрации маршрута %s...", route)
+	// Проверяем успешность настройки маршрута
+	if !setupSuccess {
+		log.Printf("ИТОГ: Маршрут '%s' НЕ НАСТРОЕН из-за ошибок", route)
+		return
+	}
+	
 	isRegistered := server.IsStreamRegistered(route)
-	if isRegistered {
-		log.Printf("УСПЕХ: Поток для маршрута '%s' успешно зарегистрирован", route)
-	} else {
-		log.Printf("ОШИБКА: Поток для маршрута '%s' НЕ зарегистрирован!", route)
-		sentry.CaptureMessage(fmt.Sprintf("Поток для маршрута '%s' не зарегистрирован", route))
+	if !isRegistered {
+		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Поток %s не зарегистрирован после всех операций", route)
+		sentry.CaptureMessage(fmt.Sprintf("Поток %s не зарегистрирован после всех операций", route))
 		return
 	}
 	
-	routes := getAllRoutes(server.Handler().(*mux.Router))
-	routeExists := false
-	for _, r := range routes {
-		if r == route {
-			routeExists = true
-			break
-		}
-	}
-	
-	if routeExists {
-		log.Printf("Маршрут '%s' успешно зарегистрирован в HTTP сервере", route)
-	} else {
-		log.Printf("ВНИМАНИЕ: Маршрут '%s' может отсутствовать в списке маршрутов, но поток зарегистрирован!", route)
-	}
-	
-	log.Printf("Настройка маршрута '%s' УСПЕШНО ЗАВЕРШЕНА", route)
+	log.Printf("ИТОГ: Настройка маршрута '%s' УСПЕШНО ЗАВЕРШЕНА", route)
 }
 
 // getAllRoutes возвращает список всех зарегистрированных маршрутов
