@@ -183,12 +183,14 @@ func main() {
 		
 		// Проверяем, есть ли зарегистрированный поток
 		if server.IsStreamRegistered("/humor") {
+			log.Printf("Поток /humor найден, запускаем аудио")
 			// Если поток зарегистрирован, используем его обработчик
 			audioHandler := server.StreamAudioHandler("/humor")
 			audioHandler(w, r)
 			return
 		}
 		
+		log.Printf("Поток /humor НЕ зарегистрирован, показываем страницу загрузки")
 		// Иначе показываем временную страницу
 		emptyHumorHandler.ServeHTTP(w, r)
 	})
@@ -198,12 +200,14 @@ func main() {
 		
 		// Проверяем, есть ли зарегистрированный поток
 		if server.IsStreamRegistered("/science") {
+			log.Printf("Поток /science найден, запускаем аудио")
 			// Если поток зарегистрирован, используем его обработчик
 			audioHandler := server.StreamAudioHandler("/science")
 			audioHandler(w, r)
 			return
 		}
 		
+		log.Printf("Поток /science НЕ зарегистрирован, показываем страницу загрузки")
 		// Иначе показываем временную страницу
 		emptyScienceHandler.ServeHTTP(w, r)
 	})
@@ -357,6 +361,20 @@ func main() {
 		configureRoute(server, stationManager, route, dir, config)
 		log.Printf("Маршрут '%s' настроен успешно", route)
 	}
+	
+	// Проверяем статус потоков
+	log.Printf("====== СТАТУС ЗАРЕГИСТРИРОВАННЫХ ПОТОКОВ ======")
+	humorRegistered := server.IsStreamRegistered("/humor")
+	scienceRegistered := server.IsStreamRegistered("/science")
+	log.Printf("Поток /humor зарегистрирован: %v", humorRegistered)
+	log.Printf("Поток /science зарегистрирован: %v", scienceRegistered)
+	
+	if !humorRegistered || !scienceRegistered {
+		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Некоторые потоки не зарегистрированы!")
+	} else {
+		log.Printf("Все потоки успешно зарегистрированы")
+	}
+	log.Printf("=============================================")
 	
 	// Заменяем временный обработчик для корневого маршрута на перенаправление
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -549,13 +567,16 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	server.RegisterStream(route, streamer, pl)
 	log.Printf("Аудиопоток '%s' зарегистрирован на HTTP сервере", route)
 
-	// Для маршрутов /humor и /science мы не регистрируем новые обработчики,
-	// так как они обрабатываются через перенаправляющие обработчики
+	// Для маршрутов /humor и /science не нужно регистрировать обработчики,
+	// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
 	if route != "/humor" && route != "/science" {
 		// Для других маршрутов регистрируем обработчики напрямую
 		audioHandler := server.StreamAudioHandler(route)
 		server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
 		log.Printf("Зарегистрирован новый обработчик для маршрута '%s'", route)
+	} else {
+		// Для /humor и /science обновляем состояние, но обработчики уже зарегистрированы
+		log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
 	}
 	
 	// Проверяем, что маршрут действительно был зарегистрирован
