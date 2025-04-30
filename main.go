@@ -81,12 +81,41 @@ func main() {
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
 
-	// Теперь настраиваем маршруты СИНХРОННО, перед запуском HTTP-сервера
-	log.Printf("Начало настройки аудио маршрутов...")
-	configureAudioRoutes(server, stationManager, config)
-	log.Printf("Аудио маршруты настроены успешно")
+	// СНАЧАЛА настраиваем базовые маршруты - healthz и корневой маршрут
+	// Добавляем временный обработчик healthz, который всегда возвращает 200 OK
+	server.Handler().(*mux.Router).HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос healthz от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Server is starting up"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}).Methods("GET")
 
-	// Создание HTTP сервера
+	// Добавляем временный обработчик readyz, который всегда возвращает 200 OK
+	server.Handler().(*mux.Router).HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос readyz от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Server is starting up"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}).Methods("GET")
+
+	// Добавляем временный обработчик для корневого маршрута
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Получен запрос / от %s", r.RemoteAddr)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html><body><h1>Аудио-стример загружается...</h1><p>Пожалуйста, подождите несколько секунд.</p></body></html>"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}).Methods("GET")
+
+	// ТЕПЕРЬ создаем и запускаем HTTP-сервер с временными маршрутами
 	httpSrv := &http.Server{
 		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
 		Handler: server.Handler(),
@@ -96,62 +125,73 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Запуск сервера в горутине ПОСЛЕ настройки всех маршрутов
+	// Запуск сервера в горутине ДО настройки маршрутов
 	go func() {
-		log.Printf("Сервер запущен и слушает на 0.0.0.0:%d", config.Port)
+		log.Printf("Запуск HTTP-сервера на адресе 0.0.0.0:%d...", config.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Ошибка запуска сервера: %s", err)
 			sentry.CaptureException(err)
 		}
 	}()
 
-	// Проверка стартовой доступности сервера
-	log.Printf("Проверка первичной доступности HTTP-сервера...")
-	time.Sleep(1 * time.Second)
-	checkServerStarted := func() bool {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
-		if err != nil {
-			log.Printf("HTTP-сервер еще не готов: %s", err)
-			return false
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}
+	// Ждем небольшую паузу, чтобы сервер успел запуститься
+	time.Sleep(500 * time.Millisecond)
+
+	// Проверяем, что сервер слушает порт
+	log.Printf("Проверка доступности HTTP-сервера...")
 	
-	// Несколько попыток проверки
+	// Попытки проверки с небольшими задержками
+	serverStarted := false
 	for i := 0; i < 5; i++ {
-		if checkServerStarted() {
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
+		if err == nil {
+			resp.Body.Close()
 			log.Printf("HTTP-сервер успешно запущен и отвечает на запросы!")
+			serverStarted = true
 			break
 		}
+		log.Printf("Попытка %d: HTTP-сервер еще не готов: %s", i+1, err)
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Отдельная горутина для проверки доступности сервера после настройки
-	go func() {
-		// Ждем некоторое время, чтобы сервер успел запуститься и настроить маршруты
-		time.Sleep(5 * time.Second)
-		
-		// Проверяем доступность сервера
-		for i := 0; i < 3; i++ {
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
-			if err != nil {
-				log.Printf("Ошибка при проверке доступности сервера (попытка %d/3): %s", i+1, err)
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			
-			if resp.StatusCode == http.StatusOK {
-				log.Printf("Сервер успешно ответил на запрос healthz")
-				resp.Body.Close()
-				break
-			}
-			
-			log.Printf("Сервер вернул неожиданный статус: %d", resp.StatusCode)
-			resp.Body.Close()
-			time.Sleep(2 * time.Second)
+	if !serverStarted {
+		log.Printf("ПРЕДУПРЕЖДЕНИЕ: HTTP-сервер не отвечает на запросы healthz после 5 попыток")
+	}
+
+	// ПОСЛЕ запуска HTTP-сервера настраиваем аудио-маршруты
+	log.Printf("Начало настройки аудио маршрутов...")
+	
+	// Перенаправление с корневого маршрута
+	redirectTo := "/humor" // по умолчанию перенаправляем на /humor
+	if _, exists := config.DirectoryRoutes["/humor"]; !exists {
+		// Если /humor не существует, берем первый маршрут из конфигурации
+		for route := range config.DirectoryRoutes {
+			redirectTo = route
+			break
 		}
-	}()
+	}
+
+	// Настраиваем маршруты из конфигурации
+	for route, dir := range config.DirectoryRoutes {
+		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
+		// Но на всякий случай проверяем
+		if route[0] != '/' {
+			route = "/" + route
+		}
+		
+		log.Printf("Настройка маршрута '%s' -> директория '%s'", route, dir)
+		configureRoute(server, stationManager, route, dir, config)
+		log.Printf("Маршрут '%s' настроен успешно", route)
+	}
+	
+	// Заменяем временный обработчик для корневого маршрута на перенаправление
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Перенаправление с / на %s", redirectTo)
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+	}).Methods("GET")
+	
+	log.Printf("Настроено перенаправление с / на %s", redirectTo)
+	log.Printf("Аудио маршруты настроены успешно")
 
 	// Настройка грациозного завершения
 	quit := make(chan os.Signal, 1)
