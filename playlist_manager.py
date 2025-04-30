@@ -206,7 +206,7 @@ class AudioStreamBuffer:
         access_lock (threading.Lock): Блокировка для многопоточного доступа
     """
     
-    def __init__(self, buffer_size: int = 10 * 1024 * 1024):  # 10MB по умолчанию
+    def __init__(self, buffer_size: int = 2 * 1024 * 1024):  # 2MB по умолчанию (было 10MB)
         """
         Инициализирует буфер аудиопотока.
         
@@ -219,6 +219,8 @@ class AudioStreamBuffer:
         self.current_position = 0
         self.access_lock = threading.Lock()
         self.logger = logging.getLogger('audio_streamer')
+        
+        self.logger.info(f"Инициализирован буфер аудиопотока размером {buffer_size / 1024 / 1024:.2f} MB")
     
     def add_chunk(self, chunk: bytes) -> None:
         """
@@ -235,9 +237,15 @@ class AudioStreamBuffer:
             self.current_position += chunk_size
             
             # Удаляем старые данные, если буфер переполнен
+            removed_bytes = 0
             while self.current_size > self.buffer_size and self.buffer:
                 old_chunk = self.buffer.popleft()
+                removed_bytes += len(old_chunk)
                 self.current_size -= len(old_chunk)
+            
+            # Логируем значительные очистки буфера для отладки OOM проблем
+            if removed_bytes > 500 * 1024:  # Если удалили больше 500KB
+                self.logger.debug(f"Очищено {removed_bytes / 1024:.2f} KB из буфера, текущий размер {self.current_size / 1024:.2f} KB")
     
     def get_chunks(self, start_pos: int = None) -> Tuple[List[bytes], int]:
         """
@@ -309,7 +317,7 @@ class RadioStream:
         current_track (str): Текущий проигрываемый трек
     """
     
-    def __init__(self, route: str, directory: str, audio_streamer, logger):
+    def __init__(self, route: str, directory: str, audio_streamer, logger, buffer_size: int = 2 * 1024 * 1024, max_preload_tracks: int = 2):
         """
         Инициализирует радиопоток для маршрута.
         
@@ -318,17 +326,20 @@ class RadioStream:
             directory (str): Путь к директории с аудиофайлами
             audio_streamer: Объект для создания аудиопотоков
             logger: Логгер для записи сообщений
+            buffer_size (int): Размер буфера в байтах (по умолчанию 2MB)
+            max_preload_tracks (int): Максимальное количество предзагружаемых треков (по умолчанию 2)
         """
         self.route = route
         self.directory = directory
         self.audio_streamer = audio_streamer
         self.logger = logger
+        self.max_preload_tracks = max_preload_tracks
         
         # Создаем плейлист для директории
         self.playlist = DirectoryPlaylist(directory, logger)
         
         # Буфер для аудиоданных
-        self.buffer = AudioStreamBuffer()
+        self.buffer = AudioStreamBuffer(buffer_size)
         
         # Флаги и объекты для многопоточности
         self.is_running = False
@@ -349,6 +360,9 @@ class RadioStream:
         self.listeners_count = 0
         self.total_bytes_streamed = 0
         self.stream_start_time = None
+        
+        # Счетчик для периодической сборки мусора
+        self.chunks_processed = 0
     
     def start(self) -> None:
         """
@@ -400,8 +414,9 @@ class RadioStream:
             try:
                 # Загружаем треки в очередь предзагрузки, если она почти пуста
                 with self.preload_lock:
-                    if len(self.preload_queue) < 3:  # Предзагружаем до 3 треков
-                        tracks_to_load = 3 - len(self.preload_queue)
+                    # Уменьшенное количество предзагружаемых треков (было 3)
+                    if len(self.preload_queue) < self.max_preload_tracks:
+                        tracks_to_load = self.max_preload_tracks - len(self.preload_queue)
                         for _ in range(tracks_to_load):
                             track = self.playlist.get_next_track()
                             if track:
@@ -411,6 +426,13 @@ class RadioStream:
                 # Ждем сигнала или таймаута
                 self.preload_event.wait(timeout=5.0)
                 self.preload_event.clear()
+                
+                # Принудительный запуск сборщика мусора каждые N итераций
+                if self.chunks_processed % 50 == 0:
+                    import gc
+                    collected = gc.collect()
+                    if collected > 0:
+                        self.logger.debug(f"Выполнена сборка мусора, удалено {collected} объектов")
                 
             except Exception as e:
                 self.logger.error(f"Ошибка в потоке предзагрузки для {self.route}: {e}", exc_info=True)
@@ -442,35 +464,49 @@ class RadioStream:
                 
                 self.current_track = next_track
                 file_name = os.path.basename(next_track)
-                self.logger.info(f"Начало трансляции трека на маршруте {self.route}: {file_name}")
+                file_size = os.path.getsize(next_track) if os.path.exists(next_track) else 0
+                self.logger.info(f"Начало трансляции трека на маршруте {self.route}: {file_name} ({file_size / 1024 / 1024:.2f} MB)")
                 
-                # Создаем аудиопоток
-                audio_stream, _ = self.audio_streamer.create_stream_from_file(next_track)
-                if not audio_stream:
-                    self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
-                    continue
+                # Создаем аудиопоток в блоке try для гарантированного закрытия
+                audio_stream = None
                 
                 try:
+                    # Создаем аудиопоток с использованием контекстного менеджера
+                    audio_stream, _ = self.audio_streamer.create_stream_from_file(next_track)
+                    if not audio_stream:
+                        self.logger.error(f"Не удалось создать аудиопоток для файла: {file_name}")
+                        continue
+                    
                     # Читаем аудиоданные из файла и добавляем в буфер
+                    bytes_read = 0
                     while not self.stop_event.is_set():
                         chunk = audio_stream.read(chunk_size)
                         if not chunk:
                             break
                         
+                        # Учет прочитанных данных
+                        bytes_read += len(chunk)
+                        
                         # Добавляем чанк в буфер
                         self.buffer.add_chunk(chunk)
                         self.total_bytes_streamed += len(chunk)
+                        self.chunks_processed += 1
+                        
+                        # Периодически логируем прогресс для больших файлов
+                        if self.chunks_processed % 1000 == 0:
+                            self.logger.debug(f"Прочитано {bytes_read / 1024 / 1024:.2f} MB из файла {file_name}")
                         
                         # Маленькая пауза для предотвращения перегрузки CPU
                         time.sleep(0.001)
                     
-                    self.logger.info(f"Трек завершен: {file_name}")
+                    self.logger.info(f"Трек завершен: {file_name}, прочитано {bytes_read / 1024 / 1024:.2f} MB")
                     
                 finally:
                     # Закрываем аудиопоток
                     if audio_stream:
                         try:
                             audio_stream.close()
+                            audio_stream = None  # Явно удаляем ссылку
                         except Exception as e:
                             self.logger.warning(f"Ошибка при закрытии аудиопотока: {e}")
             
@@ -537,7 +573,7 @@ class PlaylistManager:
     """
     
     def __init__(self, default_audio_directory: str = None, directory_routes: Dict[str, str] = None, 
-                 stream_mode: str = 'radio'):
+                 stream_mode: str = 'radio', buffer_size: int = 2 * 1024 * 1024, max_preload_tracks: int = 2):
         """
         Инициализирует менеджер плейлистов для разных маршрутов.
         
@@ -545,12 +581,19 @@ class PlaylistManager:
             default_audio_directory (str, optional): Путь к директории с аудиофайлами по умолчанию
             directory_routes (Dict[str, str], optional): Словарь маршрутов и соответствующих им директорий
             stream_mode (str): Режим работы плейлиста ('individual' или 'radio')
+            buffer_size (int): Размер буфера в байтах (по умолчанию 2MB)
+            max_preload_tracks (int): Максимальное количество предзагружаемых треков (по умолчанию 2)
         """
         self.logger = logging.getLogger('audio_streamer')
         self.playlists = {}
         self.radio_streams = {}
         self.default_audio_directory = default_audio_directory
         self.stream_mode = stream_mode
+        self.buffer_size = buffer_size
+        self.max_preload_tracks = max_preload_tracks
+        
+        self.logger.info(f"Инициализация PlaylistManager: режим={stream_mode}, размер буфера={buffer_size/1024/1024:.2f} MB, " +
+                        f"макс. предзагрузка={max_preload_tracks} треков")
         
         # Импортируем AudioStreamer здесь для предотвращения циклических импортов
         from audio_streamer import AudioStreamer
@@ -569,7 +612,8 @@ class PlaylistManager:
                 # Инициализируем и запускаем радиопоток в радиорежиме
                 if self.stream_mode == 'radio':
                     radio_route = '/' + route_key if route_key else '/'
-                    radio_stream = RadioStream(radio_route, directory, self.audio_streamer, self.logger)
+                    radio_stream = RadioStream(radio_route, directory, self.audio_streamer, self.logger, 
+                                              buffer_size=self.buffer_size, max_preload_tracks=self.max_preload_tracks)
                     radio_stream.start()
                     self.radio_streams[radio_route] = radio_stream
         
@@ -581,7 +625,8 @@ class PlaylistManager:
             
             # Инициализируем и запускаем радиопоток в радиорежиме
             if self.stream_mode == 'radio':
-                radio_stream = RadioStream('/', default_audio_directory, self.audio_streamer, self.logger)
+                radio_stream = RadioStream('/', default_audio_directory, self.audio_streamer, self.logger,
+                                          buffer_size=self.buffer_size, max_preload_tracks=self.max_preload_tracks)
                 radio_stream.start()
                 self.radio_streams['/'] = radio_stream
     

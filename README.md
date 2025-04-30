@@ -19,6 +19,7 @@
 - **Предзагрузка треков** для более плавного воспроизведения
 - **Учет слушателей** и статистика для каждого потока
 - **Улучшенная обработка ошибок** включая перехват TLS-соединений и таймаутов
+- **Оптимизация памяти** для работы с большими аудиофайлами
 
 ## Режимы работы
 
@@ -66,6 +67,8 @@
 - `--stream-routes` - Список URL-путей для аудиопотока, разделённых запятыми (например: "/,/humor,/science")
 - `--directory-routes` - JSON строка с сопоставлением директорий и маршрутов (например: '{"humor":"/app/humor","science":"/app/science"}')
 - `--stream-mode` - Режим стриминга: "radio" (все слушатели слышат один поток) или "individual" (у каждого слушателя свой поток)
+- `--buffer-size` - Размер буфера аудиопотока в байтах (по умолчанию: 2MB)
+- `--max-preload-tracks` - Максимальное количество предзагружаемых треков (по умолчанию: 2)
 
 ### Переменные окружения
 
@@ -74,6 +77,33 @@
 - `AUDIO_STREAM_ROUTES` - Список URL-путей для аудиопотока, разделенных запятыми (по умолчанию: `/`). Например: `/,/humor,/science`
 - `DIRECTORY_ROUTES` - JSON строка с сопоставлением маршрутов и директорий. Например: `{"humor":"/app/humor","science":"/app/science"}`
 - `STREAM_MODE` - Режим стриминга: "radio" или "individual" (по умолчанию: "radio")
+- `BUFFER_SIZE` - Размер буфера аудиопотока в байтах (по умолчанию: 2097152 или 2MB)
+- `MAX_PRELOAD_TRACKS` - Максимальное количество предзагружаемых треков (по умолчанию: 2)
+
+### Оптимизация использования памяти
+
+Для предотвращения проблем с нехваткой памяти при стриминге больших аудиофайлов, используйте следующие настройки:
+
+1. **Уменьшение размера буфера**:
+   ```bash
+   # Установка буфера размером 1MB (1048576 байт)
+   python main.py --buffer-size 1048576
+   ```
+
+2. **Уменьшение количества предзагружаемых треков**:
+   ```bash
+   # Предзагрузка только одного следующего трека
+   python main.py --max-preload-tracks 1
+   ```
+
+3. **Комбинированный подход для Docker**:
+   ```bash
+   docker run -d --name audio-stream-server -p 9999:9999 \
+     -v /путь/к/аудио:/app/audio \
+     -e BUFFER_SIZE=1048576 \
+     -e MAX_PRELOAD_TRACKS=1 \
+     audio-streamer
+   ```
 
 ### Локально
 
@@ -110,18 +140,24 @@ python main.py --audio-dir ~/audio/default --directory-routes '{"humor":"~/audio
 export DIRECTORY_ROUTES='{"humor":"~/audio/humor","science":"~/audio/science"}'
 export AUDIO_STREAM_ROUTES="/,/humor,/science"
 export STREAM_MODE="radio"  # или "individual" для индивидуального режима
+export BUFFER_SIZE=1048576  # 1MB для экономии памяти
+export MAX_PRELOAD_TRACKS=1  # Предзагрузка только одного трека
 python main.py --audio-dir ~/audio/default
 
 # Windows PowerShell
 $env:DIRECTORY_ROUTES='{"humor":"C:\\audio\\humor","science":"C:\\audio\\science"}'
 $env:AUDIO_STREAM_ROUTES="/,/humor,/science"
 $env:STREAM_MODE="radio"
+$env:BUFFER_SIZE=1048576
+$env:MAX_PRELOAD_TRACKS=1
 python main.py --audio-dir C:\audio\default
 
 # Windows CMD
 set DIRECTORY_ROUTES={"humor":"C:\\audio\\humor","science":"C:\\audio\\science"}
 set AUDIO_STREAM_ROUTES=/,/humor,/science
 set STREAM_MODE=radio
+set BUFFER_SIZE=1048576
+set MAX_PRELOAD_TRACKS=1
 python main.py --audio-dir C:\audio\default
 ```
 
@@ -147,7 +183,9 @@ docker build -t audio-streamer .
 docker build -t audio-streamer \
   --build-arg AUDIO_STREAM_ROUTES="/,/humor,/science,/business" \
   --build-arg DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science","business":"/app/business"}' \
-  --build-arg STREAM_MODE="radio" .
+  --build-arg STREAM_MODE="radio" \
+  --build-arg BUFFER_SIZE=1048576 \
+  --build-arg MAX_PRELOAD_TRACKS=1 .
 ```
 
 3. Запустите контейнер, примонтировав директории с аудиофайлами:
@@ -166,6 +204,8 @@ docker run -d --name audio-stream-server -p 9999:9999 \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e AUDIO_STREAM_ROUTES="/,/humor,/science" \
   -e STREAM_MODE="radio" \
+  -e BUFFER_SIZE=1048576 \
+  -e MAX_PRELOAD_TRACKS=1 \
   audio-streamer
 ```
 
