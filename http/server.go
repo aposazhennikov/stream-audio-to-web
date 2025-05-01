@@ -978,8 +978,8 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Переключаем трек
-	newTrack := playlist.NextTrack()
+	// Переключаем трек (игнорируем возвращаемое значение)
+	_ = playlist.NextTrack()
 	log.Printf("ДИАГНОСТИКА: Ручное переключение на следующий трек для маршрута %s", route)
 	
 	// Перенаправляем обратно на страницу статуса
@@ -1008,8 +1008,8 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Переключаем трек
-	newTrack := playlist.PreviousTrack()
+	// Переключаем трек (игнорируем возвращаемое значение)
+	_ = playlist.PreviousTrack()
 	log.Printf("ДИАГНОСТИКА: Ручное переключение на предыдущий трек для маршрута %s", route)
 	
 	// Перенаправляем обратно на страницу статуса
