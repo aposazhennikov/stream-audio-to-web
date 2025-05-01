@@ -5,17 +5,20 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/getsentry/sentry-go"
 	"golang.org/x/sync/errgroup"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
 	defaultBufferSize = 65536 // 64KB
-	gracePeriodMs     = 200   // 200ms буфер между треками для избежания обрезки начала
+	gracePeriodMs     = 100   // 100ms буфер между треками для избежания обрезки начала (было 200мс)
 )
 
 // Streamer управляет стримингом аудио для одного "радио" потока
@@ -116,36 +119,21 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	defer file.Close()
 	
-	log.Printf("ДИАГНОСТИКА: Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size())
-
-	// Отправляем информацию о текущем треке
-	log.Printf("ДИАГНОСТИКА: Обновление информации о текущем треке: %s", trackPath)
-	select {
-	case s.currentTrackCh <- trackPath:
-		log.Printf("ДИАГНОСТИКА: Информация о треке успешно отправлена в канал")
-	default:
-		// Если канал полон, очищаем его и отправляем новое значение
-		log.Printf("ДИАГНОСТИКА: Канал информации о треке полон, очистка...")
-		select {
-		case <-s.currentTrackCh:
-		default:
-		}
-		s.currentTrackCh <- trackPath
-		log.Printf("ДИАГНОСТИКА: Информация о треке отправлена после очистки канала")
-	}
-
-	// TODO: Реализовать транскодирование аудио если необходимо
-	// Это будет зависеть от формата входного файла и требуемого формата вывода
-
-	// Использование пула буферов для уменьшения нагрузки на GC
-	log.Printf("ДИАГНОСТИКА: Получение буфера из пула для чтения файла %s", trackPath)
+	// Инициализация буфера и счетчика
 	buffer := s.bufferPool.Get().([]byte)
 	defer s.bufferPool.Put(buffer)
-
-	// Счетчик для отслеживания прогресса
+	
+	// Для отслеживания прогресса
 	var bytesRead int64
 	
-	// Отслеживаем начало воспроизведения
+	// Отправляем информацию о текущем треке в канал
+	select {
+	case s.currentTrackCh <- filepath.Base(trackPath):
+		log.Printf("ДИАГНОСТИКА: Обновлена информация о текущем треке: %s", filepath.Base(trackPath))
+	default:
+		log.Printf("ДИАГНОСТИКА: Не удалось обновить информацию о текущем треке: канал заполнен")
+	}
+	
 	startTime := time.Now()
 	log.Printf("ДИАГНОСТИКА: Начало чтения файла %s", trackPath)
 	
@@ -163,6 +151,16 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 
 		bytesRead += int64(n)
+		
+		// ПЕРЕМЕЩАЕМ: Сохраняем копию последнего чанка для новых клиентов
+		// ПЕРЕД отправкой данных всем клиентам
+		dataCopy := make([]byte, n)
+		copy(dataCopy, buffer[:n])
+		
+		// Сохраняем копию последнего чанка для новых клиентов
+		s.lastChunkMutex.Lock()
+		s.lastChunk = dataCopy
+		s.lastChunkMutex.Unlock()
 		
 		// Отправляем данные всем клиентам
 		log.Printf("ДИАГНОСТИКА: Отправка %d байт данных клиентам", n)
@@ -186,11 +184,67 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	log.Printf("ДИАГНОСТИКА: Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
 		trackPath, bytesRead, duration.Seconds())
 
-	// Добавляем паузу между треками для избежания обрезки начала
+	// Инкрементируем метрику времени проигрывания для Prometheus
+	// Метрика должна быть определена в http/server.go
+	if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+		routeName := getRouteFromTrackPath(trackPath)
+		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
+		log.Printf("ДИАГНОСТИКА: Метрика trackSecondsTotal увеличена на %.2f сек для %s", 
+			duration.Seconds(), routeName)
+	}
+
+	// Добавляем паузу между треками для избежания обрезки начала - уменьшена с 200 до 100 мс
 	log.Printf("ДИАГНОСТИКА: Добавление паузы %d мс между треками", gracePeriodMs)
 	time.Sleep(gracePeriodMs * time.Millisecond)
 
 	return nil
+}
+
+// getRouteFromTrackPath пытается извлечь имя маршрута из пути к файлу
+func getRouteFromTrackPath(trackPath string) string {
+	// Извлекаем путь к директории
+	dir := filepath.Dir(trackPath)
+	
+	// Получаем последний компонент пути, который обычно соответствует имени маршрута
+	route := filepath.Base(dir)
+	
+	// Добавляем ведущий слеш, если его нет
+	if !strings.HasPrefix(route, "/") {
+		route = "/" + route
+	}
+	
+	return route
+}
+
+// Для обмена метриками между пакетами
+
+var (
+	trackSecondsMetric prometheus.CounterVec
+	hasTrackSeconds    bool
+	metricMutex        sync.RWMutex
+)
+
+// SetTrackSecondsMetric устанавливает метрику извне
+func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
+	metricMutex.Lock()
+	defer metricMutex.Unlock()
+	
+	if metric != nil {
+		trackSecondsMetric = *metric
+		hasTrackSeconds = true
+	}
+}
+
+// GetTrackSecondsMetric возвращает метрику, если она установлена
+func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
+	metricMutex.RLock()
+	defer metricMutex.RUnlock()
+	
+	if !hasTrackSeconds {
+		return nil, false
+	}
+	
+	return &trackSecondsMetric, true
 }
 
 // AddClient добавляет нового клиента и возвращает канал для получения данных
@@ -220,9 +274,8 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	// чтобы он не ждал следующего чтения из файла
 	s.lastChunkMutex.RLock()
 	if s.lastChunk != nil {
-		// Создаем копию буфера для нового клиента
-		dataCopy := make([]byte, len(s.lastChunk))
-		copy(dataCopy, s.lastChunk)
+		// Используем append для создания новой копии для клиента - одна аллокация вместо двух
+		dataCopy := append([]byte(nil), s.lastChunk...)
 		
 		log.Printf("ДИАГНОСТИКА: Отправка последнего буфера (%d байт) новому клиенту %d", len(dataCopy), clientID)
 		
@@ -270,15 +323,8 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		return nil
 	}
 
-	// Создаём копию данных для всех клиентов только один раз
-	// Это необходимо, потому что буфер может быть переиспользован
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
-	
 	// Сохраняем копию последнего чанка для новых клиентов
-	s.lastChunkMutex.Lock()
-	s.lastChunk = dataCopy
-	s.lastChunkMutex.Unlock()
+	// Уже сделано в StreamTrack до вызова этого метода
 	
 	log.Printf("ДИАГНОСТИКА: Отправка %d байт данных %d клиентам", len(data), clientCount)
 
@@ -296,10 +342,10 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			
 			g.Go(func() error {
 				select {
-				case clientChan <- dataCopy: // Используем одну и ту же копию для всех клиентов
+				case clientChan <- data: // Используем оригинальный буфер, а не копию
 					// Данные успешно отправлены
 					return nil
-				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут с 500 до 200 мс
+				case <-time.After(200 * time.Millisecond):
 					// Тайм-аут при отправке данных
 					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
 					s.RemoveClient(clientID)
@@ -342,9 +388,9 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			
 			for _, client := range batch {
 				select {
-				case client.ch <- dataCopy: // Используем одну и ту же копию для всех клиентов
+				case client.ch <- data: // Используем оригинальный буфер, а не копию
 					// Данные успешно отправлены
-				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут
+				case <-time.After(200 * time.Millisecond):
 					// Тайм-аут при отправке данных
 					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", client.id)
 					s.RemoveClient(client.id)

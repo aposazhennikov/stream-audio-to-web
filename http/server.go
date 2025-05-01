@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/user/stream-audio-to-web/audio"
 )
 
 var (
@@ -32,12 +33,22 @@ var (
 		},
 		[]string{"stream"},
 	)
+	
+	// Счетчик времени проигрывания аудио в секундах
+	trackSecondsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "audio_stream_track_seconds_total",
+			Help: "Total seconds of audio played",
+		},
+		[]string{"stream"},
+	)
 )
 
 func init() {
 	// Регистрация метрик Prometheus
 	prometheus.MustRegister(listenerCount)
 	prometheus.MustRegister(bytesSent)
+	prometheus.MustRegister(trackSecondsTotal)
 }
 
 // StreamHandler интерфейс для обработки аудиопотока
@@ -80,9 +91,40 @@ func NewServer(streamFormat string, maxClients int) *Server {
 
 	// Настройка маршрутов
 	server.setupRoutes()
+	
+	// Передаем метрику trackSecondsTotal в пакет audio для использования
+	if audioMetric, ok := getMetric("audio"); ok {
+		audioMetric.SetTrackSecondsMetric(trackSecondsTotal)
+	}
 
 	log.Printf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients)
 	return server
+}
+
+// Интерфейс для передачи метрики между пакетами
+type metricHandler interface {
+	SetTrackSecondsMetric(*prometheus.CounterVec)
+}
+
+// Получение обработчика метрик
+func getMetric(pkg string) (metricHandler, bool) {
+	switch pkg {
+	case "audio":
+		// Импортируем функции для установки метрики из audio
+		// Используем типовое приведение для интерфейса
+		return audioMetricHandler{}, true
+	default:
+		return nil, false
+	}
+}
+
+// Обработчик метрик для пакета audio
+type audioMetricHandler struct{}
+
+func (a audioMetricHandler) SetTrackSecondsMetric(metric *prometheus.CounterVec) {
+	// Вызываем функцию из пакета audio для установки метрики
+	audio.SetTrackSecondsMetric(metric)
+	log.Printf("ДИАГНОСТИКА: Установлена метрика trackSecondsTotal для пакета audio")
 }
 
 // Handler возвращает обработчик HTTP запросов
@@ -423,8 +465,9 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		w.Header().Set("Expires", "0")
 		// 3. Защита от угадывания типа контента
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// 4. Поддержка keep-alive соединения
-		w.Header().Set("Connection", "keep-alive")
+		// 4. Используем chunked encoding для стриминга
+		w.Header().Set("Transfer-Encoding", "chunked")
+		// Удаляем Connection: keep-alive т.к. он противоречит стандартному поведению Go HTTP
 		// 5. Для работы с другими сайтами в dev-режиме (только если нужно)
 		// w.Header().Set("Access-Control-Allow-Origin", "*")
 		
@@ -456,7 +499,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		}
 		defer stream.RemoveClient(clientID)
 
-		// Обновляем метрики
+		// Обновляем метрики ТОЛЬКО ПОСЛЕ успешного подключения и отправки заголовков
 		listenerCount.WithLabelValues(route).Inc()
 		defer listenerCount.WithLabelValues(route).Dec()
 

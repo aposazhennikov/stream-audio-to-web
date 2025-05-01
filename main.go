@@ -91,213 +91,26 @@ func main() {
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
 
-	// СНАЧАЛА настраиваем базовые маршруты - healthz и корневой маршрут
-	// Добавляем временный обработчик healthz, который всегда возвращает 200 OK
-	server.Handler().(*mux.Router).HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос healthz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Server is starting up"))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}).Methods("GET")
-
-	// Добавляем временный обработчик readyz, который всегда возвращает 200 OK
-	server.Handler().(*mux.Router).HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос readyz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Server is starting up"))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}).Methods("GET")
-
-	// Добавляем временный обработчик для /humor и /science, чтобы они не возвращали 404
-	// Используем пустой хэндлер, а позже заменим его на настоящий
-	emptyHumorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос к временному /humor от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудиопоток юмора</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        h1 { color: #333; }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 2s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body>
-    <h1>Аудиопоток юмора загружается...</h1>
-    <div class="loader"></div>
-    <p>Пожалуйста, подождите несколько секунд и обновите страницу.</p>
-    <p><small>Если страница не обновляется автоматически, проверьте наличие аудиофайлов в директории.</small></p>
-    <script>
-        setTimeout(function() { location.reload(); }, 5000);
-    </script>
-</body>
-</html>`))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	})
-
-	emptyScienceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос к временному /science от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудиопоток науки</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        h1 { color: #333; }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 2s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    </style>
-</head>
-<body>
-    <h1>Аудиопоток науки загружается...</h1>
-    <div class="loader"></div>
-    <p>Пожалуйста, подождите несколько секунд и обновите страницу.</p>
-    <p><small>Если страница не обновляется автоматически, проверьте наличие аудиофайлов в директории.</small></p>
-    <script>
-        setTimeout(function() { location.reload(); }, 5000);
-    </script>
-</body>
-</html>`))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	})
-
-	// Временная функция, которая будет использоваться для проверки и перенаправления на реальный обработчик
-	humorRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Вызван перенаправляющий обработчик для /humor от %s", r.RemoteAddr)
-		
-		// Проверяем, есть ли зарегистрированный поток
-		if server.IsStreamRegistered("/humor") {
-			log.Printf("Поток /humor найден, запускаем аудио")
-			// Если поток зарегистрирован, используем его обработчик
-			audioHandler := server.StreamAudioHandler("/humor")
-			audioHandler(w, r)
-			return
-		}
-		
-		log.Printf("Поток /humor НЕ зарегистрирован, показываем страницу загрузки")
-		// Иначе показываем временную страницу
-		emptyHumorHandler.ServeHTTP(w, r)
-	})
+	// Удаляем временные обработчики здесь, так как они уже зарегистрированы в server.setupRoutes()
 	
-	scienceRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Вызван перенаправляющий обработчик для /science от %s", r.RemoteAddr)
-		
-		// Проверяем, есть ли зарегистрированный поток
-		if server.IsStreamRegistered("/science") {
-			log.Printf("Поток /science найден, запускаем аудио")
-			// Если поток зарегистрирован, используем его обработчик
-			audioHandler := server.StreamAudioHandler("/science")
-			audioHandler(w, r)
-			return
+	// ТЕПЕРЬ создаем и запускаем HTTP-сервер ПЕРЕД настройкой потоков
+	httpSrv := &http.Server{
+		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
+		Handler: server.Handler(),
+		// Увеличиваем таймауты для обработки запросов
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 0, // Отключаем таймаут для стриминга
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Запуск сервера в горутине ДО настройки маршрутов
+	go func() {
+		log.Printf("Запуск HTTP-сервера на адресе 0.0.0.0:%d...", config.Port)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Ошибка запуска сервера: %s", err)
+			sentry.CaptureException(err)
 		}
-		
-		log.Printf("Поток /science НЕ зарегистрирован, показываем страницу загрузки")
-		// Иначе показываем временную страницу
-		emptyScienceHandler.ServeHTTP(w, r)
-	})
-
-	// Регистрируем перенаправляющие обработчики
-	humorRoute = server.Handler().(*mux.Router).Path("/humor").Methods("GET").Handler(humorRedirectHandler)
-	scienceRoute = server.Handler().(*mux.Router).Path("/science").Methods("GET").Handler(scienceRedirectHandler)
-
-	// Добавляем временный обработчик для корневого маршрута
-	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос / от %s", r.RemoteAddr)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудио-стример</title>
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            text-align: center; 
-            margin-top: 50px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 { color: #2c3e50; }
-        .loader { 
-            border: 5px solid #f3f3f3; 
-            border-top: 5px solid #3498db; 
-            border-radius: 50%; 
-            width: 50px; 
-            height: 50px; 
-            animation: spin 2s linear infinite; 
-            margin: 20px auto; 
-        }
-        @keyframes spin { 
-            0% { transform: rotate(0deg); } 
-            100% { transform: rotate(360deg); } 
-        }
-        .links {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-top: 30px;
-        }
-        .link-button {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #3498db;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-        .link-button:hover {
-            background-color: #2980b9;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Аудио-стример загружается...</h1>
-        <div class="loader"></div>
-        <p>Пожалуйста, подождите несколько секунд, пока сервер настраивает аудиопотоки.</p>
-        <div class="links">
-            <a href="/humor" class="link-button">Юмор</a>
-            <a href="/science" class="link-button">Наука</a>
-        </div>
-    </div>
-</body>
-</html>`))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}).Methods("GET")
-
-	// СИНХРОННО настраиваем аудио-маршруты перед запуском HTTP-сервера
-	log.Printf("Начало настройки аудио маршрутов...")
+	}()
 	
 	// Перенаправление с корневого маршрута
 	redirectTo := "/humor" // по умолчанию перенаправляем на /humor
@@ -308,9 +121,19 @@ func main() {
 			break
 		}
 	}
+	
+	// Заменяем временный обработчик для корневого маршрута на перенаправление
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Перенаправление с / на %s", redirectTo)
+		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+	}).Methods("GET")
+	
+	log.Printf("Настроено перенаправление с / на %s", redirectTo)
 
-	// Настраиваем маршруты из конфигурации СИНХРОННО (не в горутинах)
-	successfulRoutes := make(map[string]bool)
+	// ПОСЛЕ запуска HTTP-сервера настраиваем аудио-маршруты асинхронно
+	log.Printf("Начало настройки аудио маршрутов...")
+
+	// Настраиваем маршруты из конфигурации
 	for route, dir := range config.DirectoryRoutes {
 		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
 		// Но на всякий случай проверяем
@@ -319,15 +142,14 @@ func main() {
 		}
 		
 		log.Printf("Синхронная настройка маршрута '%s' -> директория '%s'", route, dir)
-		// Вызываем configureRoute синхронно и обрабатываем результат
+		// Вызываем configureSyncRoute синхронно и обрабатываем результат
 		if success := configureSyncRoute(server, stationManager, route, dir, config); success {
-			successfulRoutes[route] = true
 			log.Printf("Маршрут '%s' успешно настроен", route)
 		} else {
 			log.Printf("ОШИБКА: Маршрут '%s' не удалось настроить", route)
 		}
 	}
-	
+
 	// Проверяем статус потоков
 	log.Printf("====== СТАТУС ЗАРЕГИСТРИРОВАННЫХ ПОТОКОВ ======")
 	humorRegistered := server.IsStreamRegistered("/humor")
@@ -341,100 +163,6 @@ func main() {
 		log.Printf("Все потоки успешно зарегистрированы")
 	}
 	log.Printf("=============================================")
-	
-	// Заменяем временный обработчик для корневого маршрута на перенаправление
-	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Перенаправление с / на %s", redirectTo)
-		// Проверяем, готов ли поток к которому хотим перенаправить
-		if !server.IsStreamRegistered(redirectTo) {
-			// Если целевой поток еще не готов, выводим страницу с ссылками
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудио-стример</title>
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            text-align: center; 
-            margin-top: 50px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 { color: #2c3e50; }
-        p { margin-bottom: 20px; }
-        .links {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-top: 30px;
-        }
-        .link-button {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #3498db;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-        .link-button:hover {
-            background-color: #2980b9;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Аудио-стример</h1>
-        <p>Выберите один из доступных потоков:</p>
-        <div class="links">
-            <a href="/humor" class="link-button">Юмор</a>
-            <a href="/science" class="link-button">Наука</a>
-        </div>
-    </div>
-</body>
-</html>`))
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			return
-		}
-		
-		// Если поток готов, выполняем перенаправление
-		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
-	}).Methods("GET")
-	
-	log.Printf("Настроено перенаправление с / на %s", redirectTo)
-	log.Printf("Аудио маршруты настроены успешно")
-
-	// ТЕПЕРЬ создаем и запускаем HTTP-сервер ПОСЛЕ настройки всех маршрутов
-	httpSrv := &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
-		Handler: server.Handler(),
-		// Увеличиваем таймауты для обработки запросов
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 0, // Отключаем таймаут для стриминга
-		IdleTimeout:  60 * time.Second,
-	}
-
-	// Запуск сервера в горутине ПОСЛЕ настройки маршрутов
-	go func() {
-		log.Printf("Запуск HTTP-сервера на адресе 0.0.0.0:%d...", config.Port)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Ошибка запуска сервера: %s", err)
-			sentry.CaptureException(err)
-		}
-	}()
 
 	// Настройка грациозного завершения
 	quit := make(chan os.Signal, 1)
