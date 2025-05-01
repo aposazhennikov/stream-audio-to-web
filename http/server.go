@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -66,6 +68,7 @@ type PlaylistManager interface {
 	NextTrack() interface{}
 	GetHistory() []interface{} // Получение истории треков
 	GetStartTime() time.Time   // Получение времени запуска
+	PreviousTrack() interface{} // Переключение на предыдущий трек
 }
 
 // Server представляет HTTP сервер для потоковой передачи аудио
@@ -78,17 +81,22 @@ type Server struct {
 	mutex           sync.RWMutex
 	currentTracks   map[string]string
 	trackMutex      sync.RWMutex
+	statusPassword  string // Пароль для доступа к странице /status
 }
 
 // NewServer создаёт новый HTTP сервер
 func NewServer(streamFormat string, maxClients int) *Server {
+	// Получаем пароль для страницы статуса из переменной окружения
+	statusPassword := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
+	
 	server := &Server{
-		router:        mux.NewRouter(),
-		streams:       make(map[string]StreamHandler),
-		playlists:     make(map[string]PlaylistManager),
-		streamFormat:  streamFormat,
-		maxClients:    maxClients,
-		currentTracks: make(map[string]string),
+		router:         mux.NewRouter(),
+		streams:        make(map[string]StreamHandler),
+		playlists:      make(map[string]PlaylistManager),
+		streamFormat:   streamFormat,
+		maxClients:     maxClients,
+		currentTracks:  make(map[string]string),
+		statusPassword: statusPassword,
 	}
 
 	// Настройка маршрутов
@@ -100,6 +108,14 @@ func NewServer(streamFormat string, maxClients int) *Server {
 
 	log.Printf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients)
 	return server
+}
+
+// Вспомогательная функция для получения значения переменной окружения
+func getEnvOrDefault(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
 }
 
 // Handler возвращает обработчик HTTP запросов
@@ -205,8 +221,14 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
 	
-	// Добавляем страницу статуса
-	s.router.HandleFunc("/status", s.statusPageHandler).Methods("GET")
+	// Добавляем страницу статуса с проверкой пароля
+	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET")
+	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
+	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
+	
+	// Добавляем обработчики для переключения треков
+	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")
+	s.router.HandleFunc("/prev-track/{route}", s.prevTrackHandler).Methods("POST")
 
 	// Добавление статических файлов для веб-интерфейса
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
@@ -556,9 +578,202 @@ func (s *Server) ReloadPlaylist(route string) error {
 	return playlist.Reload()
 }
 
+// statusLoginHandler отображает форму для входа на страницу статуса
+func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем, есть ли cookie с правильной авторизацией
+	cookie, err := r.Cookie("status_auth")
+	if err == nil && cookie.Value == s.statusPassword {
+		// Если пользователь авторизован, перенаправляем на основную страницу
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+		return
+	}
+
+	// HTML форма для ввода пароля
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Авторизация для доступа к статусу</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .login-container {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            width: 300px;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .error-message {
+            color: #e74c3c;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Доступ к статусу потоков</h1>
+        <form method="post" action="/status">
+            <input type="password" name="password" placeholder="Введите пароль" required autofocus>
+            <button type="submit">Войти</button>
+        </form>
+    </div>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+// statusLoginSubmitHandler обрабатывает отправку формы для входа
+func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	password := r.FormValue("password")
+	
+	if password == s.statusPassword {
+		// Устанавливаем cookie с авторизацией
+		cookie := http.Cookie{
+			Name:     "status_auth",
+			Value:    s.statusPassword,
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   3600, // 1 час
+		}
+		http.SetCookie(w, &cookie)
+		
+		// Перенаправляем на страницу статуса
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+		return
+	}
+	
+	// В случае неверного пароля возвращаем страницу логина с сообщением об ошибке
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Авторизация для доступа к статусу</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .login-container {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            width: 300px;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .error-message {
+            color: #e74c3c;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Доступ к статусу потоков</h1>
+        <div class="error-message">Неверный пароль</div>
+        <form method="post" action="/status">
+            <input type="password" name="password" placeholder="Введите пароль" required autofocus>
+            <button type="submit">Войти</button>
+        </form>
+    </div>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+// checkAuth проверяет авторизацию для доступа к странице статуса
+func (s *Server) checkAuth(r *http.Request) bool {
+	cookie, err := r.Cookie("status_auth")
+	return err == nil && cookie.Value == s.statusPassword
+}
+
 // statusPageHandler отображает страницу со статусом всех потоков
 func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем авторизацию
+	if !s.checkAuth(r) {
+		http.Redirect(w, r, "/status", http.StatusFound)
+		return
+	}
+
 	s.mutex.RLock()
+	// Копируем потоки и плейлисты
 	streams := make(map[string]StreamHandler)
 	for k, v := range s.streams {
 		streams[k] = v
@@ -576,6 +791,13 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		currentTracks[k] = v
 	}
 	s.trackMutex.RUnlock()
+	
+	// Сортируем ключи маршрутов для стабильного порядка отображения
+	var routes []string
+	for route := range streams {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
 	
 	// HTML заголовок
 	html := `<!DOCTYPE html>
@@ -635,9 +857,15 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
             padding: 5px 10px;
             border-radius: 3px;
             cursor: pointer;
+            margin-right: 5px;
         }
         button:hover {
             background-color: #2980b9;
+        }
+        .button-group {
+            margin-top: 10px;
+            display: flex;
+            gap: 5px;
         }
         .error-container {
             background-color: #f8d7da;
@@ -652,8 +880,9 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
     <h1>Статус Аудио Потоков</h1>
 `
 
-	// Для каждого потока
-	for route, stream := range streams {
+	// Для каждого потока в отсортированном порядке
+	for _, route := range routes {
+		stream := streams[route]
 		playlist, exists := playlists[route]
 		if !exists {
 			continue
@@ -681,6 +910,9 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Форматируем время запуска
 		startTime := playlist.GetStartTime().Format("02.01.2006 15:04:05 MST")
 		
+		// Получаем ID маршрута для JS функций, удаляя ведущий слеш
+		routeID := route[1:]
+		
 		// HTML для потока
 		html += fmt.Sprintf(`
     <div class="stream-container">
@@ -688,11 +920,19 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
         <div class="status-info">Запущено: %s</div>
         <div class="status-info">Текущий трек: %s</div>
         <div class="status-info">Количество слушателей: %d</div>
-        <button onclick="toggleTrackList('%s')">Показать историю треков</button>
+        <div class="button-group">
+            <form method="post" action="/prev-track/%s" style="display: inline;">
+                <button type="submit">Переключить назад</button>
+            </form>
+            <form method="post" action="/next-track/%s" style="display: inline;">
+                <button type="submit">Переключить вперед</button>
+            </form>
+            <button onclick="toggleTrackList('%s')">Показать историю треков</button>
+        </div>
         <div id="track-list-%s" class="track-list">
             %s
         </div>
-    </div>`, route, startTime, currentTrack, stream.GetClientCount(), route[1:], route[1:], historyHtml)
+    </div>`, route, startTime, currentTrack, stream.GetClientCount(), routeID, routeID, routeID, routeID, historyHtml)
 	}
 	
 	// JavaScript и закрывающие HTML теги
@@ -704,8 +944,9 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
             trackList.style.display = isVisible ? 'none' : 'block';
             
             // Изменяем текст кнопки
-            const button = trackList.previousElementSibling;
-            button.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
+            const buttons = trackList.previousElementSibling.querySelectorAll('button');
+            const historyButton = buttons[buttons.length - 1];
+            historyButton.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
         }
     </script>
 </body>
@@ -713,6 +954,66 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
+}
+
+// nextTrackHandler обрабатывает запрос на переключение трека вперед
+func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем авторизацию
+	if !s.checkAuth(r) {
+		http.Redirect(w, r, "/status", http.StatusFound)
+		return
+	}
+	
+	// Получаем маршрут из URL
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	
+	// Блокировка для доступа к плейлисту
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		http.Error(w, "Маршрут не найден", http.StatusNotFound)
+		return
+	}
+	
+	// Переключаем трек
+	newTrack := playlist.NextTrack()
+	log.Printf("ДИАГНОСТИКА: Ручное переключение на следующий трек для маршрута %s", route)
+	
+	// Перенаправляем обратно на страницу статуса
+	http.Redirect(w, r, "/status-page", http.StatusFound)
+}
+
+// prevTrackHandler обрабатывает запрос на переключение трека назад
+func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем авторизацию
+	if !s.checkAuth(r) {
+		http.Redirect(w, r, "/status", http.StatusFound)
+		return
+	}
+	
+	// Получаем маршрут из URL
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	
+	// Блокировка для доступа к плейлисту
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		http.Error(w, "Маршрут не найден", http.StatusNotFound)
+		return
+	}
+	
+	// Переключаем трек
+	newTrack := playlist.PreviousTrack()
+	log.Printf("ДИАГНОСТИКА: Ручное переключение на предыдущий трек для маршрута %s", route)
+	
+	// Перенаправляем обратно на страницу статуса
+	http.Redirect(w, r, "/status-page", http.StatusFound)
 }
 
 // notFoundHandler обрабатывает запросы к несуществующим маршрутам
@@ -771,7 +1072,7 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
         <h1>404</h1>
         <p>Страница не найдена</p>
         <p>Запрошенный ресурс не существует.</p>
-        <a href="/" class="back-link">Вернуться на главную</a>
+        <a href="/status" class="back-link">Вернуться на главную</a>
     </div>
 </body>
 </html>`

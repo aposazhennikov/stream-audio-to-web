@@ -521,4 +521,8 @@ func (d *dummyPlaylistManager) GetHistory() []interface{} {
 
 func (d *dummyPlaylistManager) GetStartTime() time.Time {
 	return time.Now()
+}
+
+func (d *dummyPlaylistManager) PreviousTrack() interface{} {
+	return "dummy.mp3"
 } 

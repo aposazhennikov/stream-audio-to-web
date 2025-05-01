@@ -232,6 +232,30 @@ func (p *Playlist) NextTrack() interface{} {
 	return &p.tracks[p.current]
 }
 
+// PreviousTrack переходит к предыдущему треку и возвращает его
+func (p *Playlist) PreviousTrack() interface{} {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if len(p.tracks) == 0 {
+		return nil
+	}
+
+	// Добавляем текущий трек в историю перед переходом к предыдущему
+	currentTrack := p.tracks[p.current]
+	p.addTrackToHistory(currentTrack)
+
+	// Переход к предыдущему треку с учетом возможности уйти в отрицательный индекс
+	if p.current == 0 {
+		p.current = len(p.tracks) - 1
+	} else {
+		p.current--
+	}
+	
+	log.Printf("ДИАГНОСТИКА: Переключение на предыдущий трек: %s", p.tracks[p.current].Name)
+	return &p.tracks[p.current]
+}
+
 // addTrackToHistory добавляет трек в историю
 func (p *Playlist) addTrackToHistory(track Track) {
 	p.historyMutex.Lock()

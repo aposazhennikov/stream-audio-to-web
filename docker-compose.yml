@@ -21,6 +21,8 @@ services:
       - LOG_LEVEL=info
       - BUFFER_SIZE=65536
       - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
+      - SHUFFLE=false
+      - STATUS_PASSWORD=1234554321
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
