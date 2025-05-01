@@ -216,19 +216,23 @@ func (p *Playlist) NextTrack() interface{} {
 
 // Shuffle перемешивает список треков
 func (p *Playlist) Shuffle() {
+	log.Printf("ДИАГНОСТИКА: Начало перемешивания плейлиста директории %s...", p.directory)
+	
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
 	if len(p.tracks) <= 1 {
+		log.Printf("ДИАГНОСТИКА: Перемешивание не требуется, треков <= 1")
 		return
 	}
 
+	log.Printf("ДИАГНОСТИКА: Перемешивание %d треков...", len(p.tracks))
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Shuffle(len(p.tracks), func(i, j int) {
 		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
 	})
 
-	log.Printf("Плейлист перемешан: %s, треков: %d", p.directory, len(p.tracks))
+	log.Printf("ДИАГНОСТИКА: Плейлист успешно перемешан: %s, треков: %d", p.directory, len(p.tracks))
 }
 
 // GetTracks возвращает копию списка треков

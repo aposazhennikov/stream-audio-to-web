@@ -91,6 +91,8 @@ func (s *Server) Handler() http.Handler {
 
 // RegisterStream регистрирует новый аудиопоток
 func (s *Server) RegisterStream(route string, stream StreamHandler, playlist PlaylistManager) {
+	log.Printf("ДИАГНОСТИКА: Начало регистрации аудиопотока для маршрута '%s'", route)
+	
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -100,20 +102,23 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 		log.Printf("Поправлен маршрут при регистрации: '%s'", route)
 	}
 
+	log.Printf("ДИАГНОСТИКА: Добавление потока в map streams для маршрута '%s'", route)
 	s.streams[route] = stream
+	log.Printf("ДИАГНОСТИКА: Добавление плейлиста в map playlists для маршрута '%s'", route)
 	s.playlists[route] = playlist
 
 	// Проверяем, добавился ли поток
 	if _, exists := s.streams[route]; exists {
-		log.Printf("Поток для маршрута '%s' успешно добавлен в map streams", route)
+		log.Printf("ДИАГНОСТИКА: Поток для маршрута '%s' успешно добавлен в map streams", route)
 	} else {
 		log.Printf("ОШИБКА: Поток для маршрута '%s' не был добавлен в map streams!", route)
 	}
 
 	// Запуск горутины для отслеживания текущего трека
+	log.Printf("ДИАГНОСТИКА: Запуск горутины для отслеживания текущего трека для маршрута '%s'", route)
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	log.Printf("Зарегистрирован аудиопоток: %s", route)
+	log.Printf("ДИАГНОСТИКА: Аудиопоток для маршрута '%s' успешно зарегистрирован", route)
 }
 
 // IsStreamRegistered проверяет, зарегистрирован ли поток с указанным маршрутом

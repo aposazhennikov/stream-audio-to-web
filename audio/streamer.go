@@ -80,15 +80,19 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		return sentryErr
 	}
 
-	log.Printf("Попытка воспроизведения файла: %s", trackPath)
+	log.Printf("ДИАГНОСТИКА: Попытка воспроизведения файла: %s", trackPath)
 	
 	// Проверка существования файла
 	fileInfo, err := os.Stat(trackPath)
 	if err != nil {
+		log.Printf("ДИАГНОСТИКА: ОШИБКА при проверке файла %s: %v", trackPath, err)
 		sentryErr := fmt.Errorf("ошибка проверки файла: %w", err)
 		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
+	
+	log.Printf("ДИАГНОСТИКА: Файл %s существует, размер: %d байт, права доступа: %v", 
+		trackPath, fileInfo.Size(), fileInfo.Mode())
 	
 	// Проверка, что это не директория
 	if fileInfo.IsDir() {
@@ -98,32 +102,39 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	
 	// Открываем файл
+	log.Printf("ДИАГНОСТИКА: Попытка открыть файл: %s", trackPath)
 	file, err := os.Open(trackPath)
 	if err != nil {
+		log.Printf("ДИАГНОСТИКА: ОШИБКА при открытии файла %s: %v", trackPath, err)
 		sentryErr := fmt.Errorf("ошибка открытия файла: %w", err)
 		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 		return sentryErr
 	}
 	defer file.Close()
 	
-	log.Printf("Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size())
+	log.Printf("ДИАГНОСТИКА: Успешно открыт файл: %s (размер: %d байт)", trackPath, fileInfo.Size())
 
 	// Отправляем информацию о текущем треке
+	log.Printf("ДИАГНОСТИКА: Обновление информации о текущем треке: %s", trackPath)
 	select {
 	case s.currentTrackCh <- trackPath:
+		log.Printf("ДИАГНОСТИКА: Информация о треке успешно отправлена в канал")
 	default:
 		// Если канал полон, очищаем его и отправляем новое значение
+		log.Printf("ДИАГНОСТИКА: Канал информации о треке полон, очистка...")
 		select {
 		case <-s.currentTrackCh:
 		default:
 		}
 		s.currentTrackCh <- trackPath
+		log.Printf("ДИАГНОСТИКА: Информация о треке отправлена после очистки канала")
 	}
 
 	// TODO: Реализовать транскодирование аудио если необходимо
 	// Это будет зависеть от формата входного файла и требуемого формата вывода
 
 	// Использование пула буферов для уменьшения нагрузки на GC
+	log.Printf("ДИАГНОСТИКА: Получение буфера из пула для чтения файла %s", trackPath)
 	buffer := s.bufferPool.Get().([]byte)
 	defer s.bufferPool.Put(buffer)
 
@@ -132,13 +143,16 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	
 	// Отслеживаем начало воспроизведения
 	startTime := time.Now()
+	log.Printf("ДИАГНОСТИКА: Начало чтения файла %s", trackPath)
 	
 	for {
 		n, err := file.Read(buffer)
 		if err == io.EOF {
+			log.Printf("ДИАГНОСТИКА: Достигнут конец файла %s", trackPath)
 			break
 		}
 		if err != nil {
+			log.Printf("ДИАГНОСТИКА: ОШИБКА при чтении файла %s: %v", trackPath, err)
 			sentryErr := fmt.Errorf("ошибка чтения файла: %w", err)
 			sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
 			return sentryErr
@@ -147,7 +161,9 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		bytesRead += int64(n)
 		
 		// Отправляем данные всем клиентам
+		log.Printf("ДИАГНОСТИКА: Отправка %d байт данных клиентам", n)
 		if err := s.broadcastToClients(buffer[:n]); err != nil {
+			log.Printf("ДИАГНОСТИКА: ОШИБКА при отправке данных клиентам: %v", err)
 			sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
 			return err
 		}
@@ -155,7 +171,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		// Проверяем сигнал завершения
 		select {
 		case <-s.quit:
-			log.Printf("Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
 				trackPath, bytesRead, fileInfo.Size())
 			return nil
 		default:
@@ -163,10 +179,11 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	
 	duration := time.Since(startTime)
-	log.Printf("Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
+	log.Printf("ДИАГНОСТИКА: Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
 		trackPath, bytesRead, duration.Seconds())
 
 	// Добавляем паузу между треками для избежания обрезки начала
+	log.Printf("ДИАГНОСТИКА: Добавление паузы %d мс между треками", gracePeriodMs)
 	time.Sleep(gracePeriodMs * time.Millisecond)
 
 	return nil

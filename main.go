@@ -573,45 +573,48 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 		
 		// Создаем плейлист и регистрируем поток в отдельной горутине
 		go func() {
-			log.Printf("Создание плейлиста для маршрута %s...", route)
+			log.Printf("ДИАГНОСТИКА: Начало настройки плейлиста для маршрута %s...", route)
 			pl, err := playlist.NewPlaylist(dir, nil)
 			if err != nil {
 				errorChan <- fmt.Errorf("ошибка при создании плейлиста: %w", err)
 				return
 			}
 			
-			log.Printf("Плейлист для маршрута %s успешно создан", route)
+			log.Printf("ДИАГНОСТИКА: Плейлист для маршрута %s успешно создан", route)
 			
-			log.Printf("Создание аудио стримера для маршрута %s...", route)
+			log.Printf("ДИАГНОСТИКА: Начало создания аудио стримера для маршрута %s...", route)
 			streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
-			log.Printf("Аудио стример для маршрута %s успешно создан", route)
+			log.Printf("ДИАГНОСТИКА: Аудио стример для маршрута %s успешно создан", route)
 			
-			log.Printf("Добавление радиостанции %s в менеджер...", route)
+			log.Printf("ДИАГНОСТИКА: Начало добавления радиостанции %s в менеджер...", route)
 			stationManager.AddStation(route, streamer, pl)
-			log.Printf("Радиостанция '%s' успешно добавлена в менеджер", route)
+			log.Printf("ДИАГНОСТИКА: Радиостанция '%s' успешно добавлена в менеджер", route)
 			
-			log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
+			log.Printf("ДИАГНОСТИКА: Начало регистрации аудиопотока %s на HTTP сервере...", route)
 			server.RegisterStream(route, streamer, pl)
-			log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
+			log.Printf("ДИАГНОСТИКА: Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
 			
 			// Для маршрутов /humor и /science не нужно регистрировать обработчики,
 			// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
 			if route != "/humor" && route != "/science" {
-				log.Printf("Создание обработчика HTTP для маршрута %s...", route)
+				log.Printf("ДИАГНОСТИКА: Создание обработчика HTTP для маршрута %s...", route)
 				audioHandler := server.StreamAudioHandler(route)
 				server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
-				log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
+				log.Printf("ДИАГНОСТИКА: Обработчик HTTP для маршрута '%s' зарегистрирован", route)
 			} else {
-				log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
+				log.Printf("ДИАГНОСТИКА: Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
 			}
 			
 			// Проверяем успешность регистрации потока
+			log.Printf("ДИАГНОСТИКА: Проверка регистрации потока для маршрута %s...", route)
 			if !server.IsStreamRegistered(route) {
+				log.Printf("ДИАГНОСТИКА: ОШИБКА! Поток %s не зарегистрирован после всех операций", route)
 				errorChan <- fmt.Errorf("поток %s не зарегистрирован после всех операций", route)
 				return
 			}
 			
 			// Сигнализируем об успешном завершении
+			log.Printf("ДИАГНОСТИКА: Все операции для маршрута %s успешно выполнены, отправка сигнала...", route)
 			doneChan <- true
 		}()
 		

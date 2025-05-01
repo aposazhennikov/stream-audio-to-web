@@ -42,7 +42,7 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 
 // Start запускает радиостанцию
 func (rs *RadioStation) Start() {
-	log.Printf("Начало запуска радиостанции %s...", rs.route)
+	log.Printf("ДИАГНОСТИКА: Начало запуска радиостанции %s...", rs.route)
 	
 	// Создаем новый канал остановки
 	rs.stop = make(chan struct{})
@@ -50,9 +50,12 @@ func (rs *RadioStation) Start() {
 	rs.waitGroup.Add(1)
 	
 	// Запускаем основной цикл воспроизведения в отдельной горутине
-	go rs.streamLoop()
+	go func() {
+		log.Printf("ДИАГНОСТИКА: Запуск streamLoop для станции %s", rs.route)
+		rs.streamLoop()
+	}()
 	
-	log.Printf("Радиостанция %s успешно запущена", rs.route)
+	log.Printf("ДИАГНОСТИКА: Радиостанция %s успешно запущена", rs.route)
 }
 
 // Stop останавливает радиостанцию
@@ -65,6 +68,8 @@ func (rs *RadioStation) Stop() {
 // streamLoop основной цикл воспроизведения треков
 func (rs *RadioStation) streamLoop() {
 	defer rs.waitGroup.Done()
+	
+	log.Printf("ДИАГНОСТИКА: Запущен основной цикл воспроизведения для станции %s", rs.route)
 
 	consecutiveEmptyTracks := 0
 	maxEmptyAttempts := 5 // Максимальное количество попыток проверки пустого плейлиста
@@ -76,10 +81,12 @@ func (rs *RadioStation) streamLoop() {
 			return
 		default:
 			// Получаем текущий трек
+			log.Printf("ДИАГНОСТИКА: Получение текущего трека для станции %s", rs.route)
 			track := rs.playlist.GetCurrentTrack()
 			
 			if track == nil {
 				consecutiveEmptyTracks++
+				log.Printf("ДИАГНОСТИКА: Нет трека для станции %s (попытка %d/%d)", rs.route, consecutiveEmptyTracks, maxEmptyAttempts)
 				if consecutiveEmptyTracks <= maxEmptyAttempts {
 					log.Printf("Нет треков в плейлисте для %s (попытка %d/%d), ожидание 5 секунд...", 
 						rs.route, consecutiveEmptyTracks, maxEmptyAttempts)
@@ -104,9 +111,12 @@ func (rs *RadioStation) streamLoop() {
 			
 			// Сбрасываем счетчик пустых попыток, если трек найден
 			consecutiveEmptyTracks = 0
+			log.Printf("ДИАГНОСТИКА: Трек найден для станции %s", rs.route)
 
 			// Стриминг текущего трека
 			trackPath := getTrackPath(track)
+			log.Printf("ДИАГНОСТИКА: Получен путь к треку для станции %s: %s", rs.route, trackPath)
+			
 			if trackPath == "" {
 				log.Printf("Невозможно получить путь к треку для станции %s, переход к следующему", rs.route)
 				sentry.CaptureMessage(fmt.Sprintf("Невозможно получить путь к треку для станции %s", rs.route)) // Это ошибка, отправляем в Sentry
@@ -114,9 +124,7 @@ func (rs *RadioStation) streamLoop() {
 				continue
 			}
 			
-			log.Printf("Воспроизведение трека %s на станции %s", trackPath, rs.route)
-			// Не отправляем в Sentry - это информационное сообщение
-			
+			log.Printf("ДИАГНОСТИКА: Начало воспроизведения трека %s на станции %s", trackPath, rs.route)
 			err := rs.streamer.StreamTrack(trackPath)
 			if err != nil {
 				log.Printf("Ошибка при воспроизведении трека %s: %s", trackPath, err)
@@ -126,7 +134,10 @@ func (rs *RadioStation) streamLoop() {
 				continue
 			}
 
+			log.Printf("ДИАГНОСТИКА: Завершено воспроизведение трека %s на станции %s", trackPath, rs.route)
+			
 			// Переход к следующему треку
+			log.Printf("ДИАГНОСТИКА: Переход к следующему треку для станции %s", rs.route)
 			rs.playlist.NextTrack()
 		}
 	}
@@ -150,7 +161,7 @@ func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, 
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
-	log.Printf("Начало добавления радиостанции %s в менеджер...", route)
+	log.Printf("ДИАГНОСТИКА: Начало добавления радиостанции %s в менеджер...", route)
 
 	if _, exists := rm.stations[route]; exists {
 		// Если станция уже существует, останавливаем её перед заменой
@@ -160,18 +171,19 @@ func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, 
 	}
 
 	// Создаём новую станцию
-	log.Printf("Создание новой радиостанции %s...", route)
+	log.Printf("ДИАГНОСТИКА: Создание новой радиостанции %s...", route)
 	station := NewRadioStation(route, streamer, playlist)
 	rm.stations[route] = station
 
 	// Запускаем станцию асинхронно, чтобы не блокировать основной поток
-	log.Printf("Запуск радиостанции %s в отдельной горутине...", route)
+	log.Printf("ДИАГНОСТИКА: Запуск радиостанции %s в отдельной горутине...", route)
 	go func() {
+		log.Printf("ДИАГНОСТИКА: Начинаем запуск станции %s внутри горутины", route)
 		station.Start()
-		log.Printf("Горутина радиостанции %s успешно запущена", route)
+		log.Printf("ДИАГНОСТИКА: Горутина радиостанции %s успешно запущена", route)
 	}()
 
-	log.Printf("Радиостанция %s запущена", route)
+	log.Printf("ДИАГНОСТИКА: Радиостанция %s добавлена в менеджер", route)
 }
 
 // RemoveStation удаляет радиостанцию
