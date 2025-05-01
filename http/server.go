@@ -470,7 +470,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		log.Printf("Начало отправки данных клиенту %d для потока %s", clientID, route)
 
 		// Счетчик для отслеживания переданных данных
-		var bytesSent int64
+		var totalBytesSent int64
 		var lastLogTime time.Time = time.Now()
 		const logEveryBytes = 1024 * 1024 // Логировать каждый переданный мегабайт
 		
@@ -480,13 +480,13 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			case <-clientClosed:
 				// Клиент отключился
 				log.Printf("Клиент отключился от потока %s: %s (ID: %d). Всего отправлено: %d байт", 
-					route, remoteAddr, clientID, bytesSent)
+					route, remoteAddr, clientID, totalBytesSent)
 				return
 			case data, ok := <-clientCh:
 				if !ok {
 					// Канал закрыт
 					log.Printf("Канал закрыт для клиента %s (ID: %d). Всего отправлено: %d байт", 
-						remoteAddr, clientID, bytesSent)
+						remoteAddr, clientID, totalBytesSent)
 					return
 				}
 				
@@ -494,19 +494,19 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				n, err := w.Write(data)
 				if err != nil {
 					log.Printf("Ошибка при отправке данных клиенту %d: %s. Всего отправлено: %d байт", 
-						clientID, err, bytesSent)
+						clientID, err, totalBytesSent)
 					sentry.CaptureException(fmt.Errorf("ошибка при отправке данных клиенту %d: %w", clientID, err))
 					return
 				}
 				
 				// Обновляем счетчик и метрики
-				bytesSent += int64(n)
+				totalBytesSent += int64(n)
 				bytesSent.WithLabelValues(route).Add(float64(n))
 				
 				// Периодически логируем количество отправленных данных
-				if bytesSent >= logEveryBytes && time.Since(lastLogTime) > 5*time.Second {
+				if totalBytesSent >= logEveryBytes && time.Since(lastLogTime) > 5*time.Second {
 					log.Printf("Клиенту %d (IP: %s) отправлено %d Мб данных", 
-						clientID, remoteAddr, bytesSent/1024/1024)
+						clientID, remoteAddr, totalBytesSent/1024/1024)
 					lastLogTime = time.Now()
 				}
 				
