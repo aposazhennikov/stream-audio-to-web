@@ -92,39 +92,12 @@ func NewServer(streamFormat string, maxClients int) *Server {
 	// Настройка маршрутов
 	server.setupRoutes()
 	
-	// Передаем метрику trackSecondsTotal в пакет audio для использования
-	if audioMetric, ok := getMetric("audio"); ok {
-		audioMetric.SetTrackSecondsMetric(trackSecondsTotal)
-	}
+	// Передаем метрику trackSecondsTotal напрямую в пакет audio
+	audio.SetTrackSecondsMetric(trackSecondsTotal)
+	log.Printf("ДИАГНОСТИКА: Метрика trackSecondsTotal передана в пакет audio")
 
 	log.Printf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients)
 	return server
-}
-
-// Интерфейс для передачи метрики между пакетами
-type metricHandler interface {
-	SetTrackSecondsMetric(*prometheus.CounterVec)
-}
-
-// Получение обработчика метрик
-func getMetric(pkg string) (metricHandler, bool) {
-	switch pkg {
-	case "audio":
-		// Импортируем функции для установки метрики из audio
-		// Используем типовое приведение для интерфейса
-		return audioMetricHandler{}, true
-	default:
-		return nil, false
-	}
-}
-
-// Обработчик метрик для пакета audio
-type audioMetricHandler struct{}
-
-func (a audioMetricHandler) SetTrackSecondsMetric(metric *prometheus.CounterVec) {
-	// Вызываем функцию из пакета audio для установки метрики
-	audio.SetTrackSecondsMetric(metric)
-	log.Printf("ДИАГНОСТИКА: Установлена метрика trackSecondsTotal для пакета audio")
 }
 
 // Handler возвращает обработчик HTTP запросов
@@ -156,6 +129,10 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	} else {
 		log.Printf("ОШИБКА: Поток для маршрута '%s' не был добавлен в map streams!", route)
 	}
+	
+	// ВАЖНО: Регистрируем обработчик маршрута в роутере
+	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET")
+	log.Printf("ДИАГНОСТИКА: Зарегистрирован HTTP обработчик для маршрута '%s'", route)
 
 	// Запуск горутины для отслеживания текущего трека
 	log.Printf("ДИАГНОСТИКА: Запуск горутины для отслеживания текущего трека для маршрута '%s'", route)
@@ -465,11 +442,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		w.Header().Set("Expires", "0")
 		// 3. Защита от угадывания типа контента
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// 4. Используем chunked encoding для стриминга
-		w.Header().Set("Transfer-Encoding", "chunked")
-		// Удаляем Connection: keep-alive т.к. он противоречит стандартному поведению Go HTTP
-		// 5. Для работы с другими сайтами в dev-режиме (только если нужно)
-		// w.Header().Set("Access-Control-Allow-Origin", "*")
+		// НЕ устанавливаем Transfer-Encoding: chunked, Go сделает это сам
+		// НЕ устанавливаем Connection: keep-alive, это базовое поведение HTTP/1.1
 		
 		// ВАЖНО: НЕ устанавливать Content-Length для стримов, иначе браузер будет ждать точное количество байт
 

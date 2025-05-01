@@ -91,6 +91,12 @@ func main() {
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
 
+	// Создаем минимальные заглушки для потоков, чтобы /healthz сразу находил хотя бы один маршрут
+	dummyStream, dummyPlaylist := createDummyStreamAndPlaylist()
+	server.RegisterStream("/humor", dummyStream, dummyPlaylist)
+	server.RegisterStream("/science", dummyStream, dummyPlaylist)
+	log.Printf("Зарегистрированы временные заглушки потоков для быстрого прохождения healthcheck")
+
 	// Удаляем временные обработчики здесь, так как они уже зарегистрированы в server.setupRoutes()
 	
 	// ТЕПЕРЬ создаем и запускаем HTTP-сервер ПЕРЕД настройкой потоков
@@ -133,7 +139,7 @@ func main() {
 	// ПОСЛЕ запуска HTTP-сервера настраиваем аудио-маршруты асинхронно
 	log.Printf("Начало настройки аудио маршрутов...")
 
-	// Настраиваем маршруты из конфигурации
+	// Настраиваем маршруты из конфигурации АСИНХРОННО
 	for route, dir := range config.DirectoryRoutes {
 		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
 		// Но на всякий случай проверяем
@@ -141,13 +147,19 @@ func main() {
 			route = "/" + route
 		}
 		
-		log.Printf("Синхронная настройка маршрута '%s' -> директория '%s'", route, dir)
-		// Вызываем configureSyncRoute синхронно и обрабатываем результат
-		if success := configureSyncRoute(server, stationManager, route, dir, config); success {
-			log.Printf("Маршрут '%s' успешно настроен", route)
-		} else {
-			log.Printf("ОШИБКА: Маршрут '%s' не удалось настроить", route)
-		}
+		// Копируем переменные для горутины
+		routeCopy := route
+		dirCopy := dir
+		
+		// Запускаем настройку КАЖДОГО потока в отдельной горутине
+		go func(route, dir string) {
+			log.Printf("Асинхронная настройка маршрута '%s' -> директория '%s'", route, dir)
+			if success := configureSyncRoute(server, stationManager, route, dir, config); success {
+				log.Printf("Маршрут '%s' успешно настроен", route)
+			} else {
+				log.Printf("ОШИБКА: Маршрут '%s' не удалось настроить", route)
+			}
+		}(routeCopy, dirCopy)
 	}
 
 	// Проверяем статус потоков
@@ -447,4 +459,58 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// createDummyStreamAndPlaylist создает минимальные заглушки для потоков
+// Это необходимо для быстрого прохождения healthcheck до загрузки настоящих потоков
+func createDummyStreamAndPlaylist() (httpServer.StreamHandler, httpServer.PlaylistManager) {
+	// Заглушка для StreamHandler
+	dummyStream := &dummyStreamHandler{
+		clientCounter: 0,
+		clientCh:      make(chan string, 1),
+	}
+	
+	// Заглушка для PlaylistManager
+	dummyPlaylist := &dummyPlaylistManager{}
+	
+	return dummyStream, dummyPlaylist
+}
+
+// Минимальная реализация StreamHandler для заглушки
+type dummyStreamHandler struct {
+	clientCounter int32
+	clientCh      chan string
+}
+
+func (d *dummyStreamHandler) AddClient() (<-chan []byte, int, error) {
+	// Пустой канал, который будет заменен настоящим потоком позже
+	ch := make(chan []byte, 1)
+	return ch, 0, nil
+}
+
+func (d *dummyStreamHandler) RemoveClient(clientID int) {
+	// Ничего не делаем
+}
+
+func (d *dummyStreamHandler) GetClientCount() int {
+	return 0
+}
+
+func (d *dummyStreamHandler) GetCurrentTrackChannel() <-chan string {
+	return d.clientCh
+}
+
+// Минимальная реализация PlaylistManager для заглушки
+type dummyPlaylistManager struct{}
+
+func (d *dummyPlaylistManager) Reload() error {
+	return nil
+}
+
+func (d *dummyPlaylistManager) GetCurrentTrack() interface{} {
+	return "dummy.mp3"
+}
+
+func (d *dummyPlaylistManager) NextTrack() interface{} {
+	return "dummy.mp3"
 } 

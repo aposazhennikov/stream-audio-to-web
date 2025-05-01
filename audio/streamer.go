@@ -219,8 +219,7 @@ func getRouteFromTrackPath(trackPath string) string {
 // Для обмена метриками между пакетами
 
 var (
-	trackSecondsMetric prometheus.CounterVec
-	hasTrackSeconds    bool
+	trackSecondsMetric *prometheus.CounterVec
 	metricMutex        sync.RWMutex
 )
 
@@ -229,10 +228,8 @@ func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
 	metricMutex.Lock()
 	defer metricMutex.Unlock()
 	
-	if metric != nil {
-		trackSecondsMetric = *metric
-		hasTrackSeconds = true
-	}
+	trackSecondsMetric = metric
+	log.Printf("ДИАГНОСТИКА: SetTrackSecondsMetric сохранила указатель на метрику")
 }
 
 // GetTrackSecondsMetric возвращает метрику, если она установлена
@@ -240,11 +237,11 @@ func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
 	metricMutex.RLock()
 	defer metricMutex.RUnlock()
 	
-	if !hasTrackSeconds {
+	if trackSecondsMetric == nil {
 		return nil, false
 	}
 	
-	return &trackSecondsMetric, true
+	return trackSecondsMetric, true
 }
 
 // AddClient добавляет нового клиента и возвращает канал для получения данных
