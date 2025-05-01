@@ -155,14 +155,14 @@ func (p *Playlist) Reload() error {
 	// Логирование найденных треков
 	log.Printf("Найдено %d треков в %s:", len(p.tracks), p.directory)
 	
-	// Показываем только первые 5 треков
-	trackNames := make([]string, 0, min(5, len(p.tracks)))
+	// Показываем максимум 3 трека (было 5) для уменьшения объема вывода
+	trackNames := make([]string, 0, min(3, len(p.tracks)))
 	for i, track := range p.tracks {
-		if i < 5 { // Показываем только первые 5 треков
+		if i < 3 { // Показываем только первые 3 трека
 			log.Printf("  %d. %s", i+1, track.Name)
 			trackNames = append(trackNames, track.Name)
-		} else if i == 5 {
-			log.Printf("  ... и ещё %d треков", len(p.tracks)-5)
+		} else if i == 3 {
+			log.Printf("  ... и ещё %d треков", len(p.tracks)-3)
 			break
 		}
 	}

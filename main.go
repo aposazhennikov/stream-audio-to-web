@@ -555,76 +555,96 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	// Вложенную функцию помещаем в переменную, чтобы можно было правильно отслеживать ошибки
 	setupSuccess := false
 	
-	// КРИТИЧЕСКИ ВАЖНО: создаем контекст с таймаутом для всех операций
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	// Максимальное количество попыток настройки
+	maxRetries := 3
+	retryCount := 0
 	
-	// Создаем каналы для синхронизации
-	errorChan := make(chan error, 3)
-	doneChan := make(chan bool, 1)
+	for retryCount < maxRetries && !setupSuccess {
+		if retryCount > 0 {
+			log.Printf("Повторная попытка настройки маршрута %s (%d/%d)...", route, retryCount+1, maxRetries)
+		}
 	
-	// Создаем плейлист и регистрируем поток в отдельной горутине
-	go func() {
-		log.Printf("Создание плейлиста для маршрута %s...", route)
-		pl, err := playlist.NewPlaylist(dir, nil)
-		if err != nil {
-			errorChan <- fmt.Errorf("ошибка при создании плейлиста: %w", err)
-			return
+		// КРИТИЧЕСКИ ВАЖНО: создаем контекст с таймаутом для всех операций
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		
+		// Создаем каналы для синхронизации
+		errorChan := make(chan error, 3)
+		doneChan := make(chan bool, 1)
+		
+		// Создаем плейлист и регистрируем поток в отдельной горутине
+		go func() {
+			log.Printf("Создание плейлиста для маршрута %s...", route)
+			pl, err := playlist.NewPlaylist(dir, nil)
+			if err != nil {
+				errorChan <- fmt.Errorf("ошибка при создании плейлиста: %w", err)
+				return
+			}
+			
+			log.Printf("Плейлист для маршрута %s успешно создан", route)
+			
+			log.Printf("Создание аудио стримера для маршрута %s...", route)
+			streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
+			log.Printf("Аудио стример для маршрута %s успешно создан", route)
+			
+			log.Printf("Добавление радиостанции %s в менеджер...", route)
+			stationManager.AddStation(route, streamer, pl)
+			log.Printf("Радиостанция '%s' успешно добавлена в менеджер", route)
+			
+			log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
+			server.RegisterStream(route, streamer, pl)
+			log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
+			
+			// Для маршрутов /humor и /science не нужно регистрировать обработчики,
+			// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
+			if route != "/humor" && route != "/science" {
+				log.Printf("Создание обработчика HTTP для маршрута %s...", route)
+				audioHandler := server.StreamAudioHandler(route)
+				server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
+				log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
+			} else {
+				log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
+			}
+			
+			// Проверяем успешность регистрации потока
+			if !server.IsStreamRegistered(route) {
+				errorChan <- fmt.Errorf("поток %s не зарегистрирован после всех операций", route)
+				return
+			}
+			
+			// Сигнализируем об успешном завершении
+			doneChan <- true
+		}()
+		
+		// Ждем завершения или таймаута
+		select {
+		case <-ctx.Done():
+			log.Printf("ПРЕДУПРЕЖДЕНИЕ: Таймаут при настройке маршрута %s (попытка %d/%d)", route, retryCount+1, maxRetries)
+			setupSuccess = false
+		case err := <-errorChan:
+			log.Printf("ОШИБКА при настройке маршрута %s (попытка %d/%d): %s", route, retryCount+1, maxRetries, err)
+			setupSuccess = false
+		case <-doneChan:
+			log.Printf("Маршрут '%s' успешно настроен (попытка %d/%d)", route, retryCount+1, maxRetries)
+			setupSuccess = true
 		}
 		
-		log.Printf("Плейлист для маршрута %s успешно создан", route)
+		// Освобождаем ресурсы контекста
+		cancel()
 		
-		log.Printf("Создание аудио стримера для маршрута %s...", route)
-		streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
-		log.Printf("Аудио стример для маршрута %s успешно создан", route)
-		
-		log.Printf("Добавление радиостанции %s в менеджер...", route)
-		stationManager.AddStation(route, streamer, pl)
-		log.Printf("Радиостанция '%s' успешно добавлена в менеджер", route)
-		
-		log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
-		server.RegisterStream(route, streamer, pl)
-		log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
-		
-		// Для маршрутов /humor и /science не нужно регистрировать обработчики,
-		// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
-		if route != "/humor" && route != "/science" {
-			log.Printf("Создание обработчика HTTP для маршрута %s...", route)
-			audioHandler := server.StreamAudioHandler(route)
-			server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
-			log.Printf("Обработчик HTTP для маршрута '%s' зарегистрирован", route)
-		} else {
-			log.Printf("Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
+		// Если настройка не удалась и есть еще попытки - ждем перед повторением
+		if !setupSuccess && retryCount < maxRetries-1 {
+			retryDelay := 5 * time.Second
+			log.Printf("Ожидание %v перед повторной попыткой настройки маршрута %s...", retryDelay, route)
+			time.Sleep(retryDelay)
 		}
 		
-		// Проверяем успешность регистрации потока
-		if !server.IsStreamRegistered(route) {
-			errorChan <- fmt.Errorf("поток %s не зарегистрирован после всех операций", route)
-			return
-		}
-		
-		// Сигнализируем об успешном завершении
-		doneChan <- true
-	}()
-	
-	// Ждем завершения или таймаута
-	select {
-	case <-ctx.Done():
-		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Таймаут при настройке маршрута %s", route)
-		sentry.CaptureMessage(fmt.Sprintf("Таймаут при настройке маршрута %s", route))
-		setupSuccess = false
-	case err := <-errorChan:
-		log.Printf("КРИТИЧЕСКАЯ ОШИБКА при настройке маршрута %s: %s", route, err)
-		sentry.CaptureException(err)
-		setupSuccess = false
-	case <-doneChan:
-		log.Printf("Маршрут '%s' успешно настроен", route)
-		setupSuccess = true
+		retryCount++
 	}
 	
 	// Проверяем успешность настройки маршрута
 	if !setupSuccess {
-		log.Printf("ИТОГ: Маршрут '%s' НЕ НАСТРОЕН из-за ошибок", route)
+		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Маршрут '%s' НЕ НАСТРОЕН после %d попыток", route, maxRetries)
+		sentry.CaptureMessage(fmt.Sprintf("Маршрут %s не настроен после %d попыток", route, maxRetries))
 		return
 	}
 	

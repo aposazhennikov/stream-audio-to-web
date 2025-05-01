@@ -222,35 +222,87 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 	defer s.clientMutex.RUnlock()
 
 	// Если нет клиентов, просто возвращаемся
-	if len(s.clientChannels) == 0 {
+	clientCount := len(s.clientChannels)
+	if clientCount == 0 {
 		return nil
 	}
 
-	// Создаём копию данных для каждого клиента
+	// Создаём копию данных для всех клиентов только один раз
 	// Это необходимо, потому что буфер может быть переиспользован
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
 
-	var g errgroup.Group
-
-	// Отправляем данные каждому клиенту в отдельной горутине
-	for clientID, clientChan := range s.clientChannels {
-		clientID := clientID
-		clientChan := clientChan
+	// Если клиентов очень много, используем пакетный подход
+	const batchSize = 50
+	
+	// Для небольшого количества клиентов используем прямую отправку
+	if clientCount <= batchSize {
+		var g errgroup.Group
 		
-		g.Go(func() error {
-			select {
-			case clientChan <- dataCopy:
-				// Данные успешно отправлены
-				return nil
-			case <-time.After(500 * time.Millisecond):
-				// Тайм-аут при отправке данных
-				log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
-				s.RemoveClient(clientID)
-				return nil
-			}
-		})
-	}
+		// Отправляем данные каждому клиенту в отдельной горутине
+		for clientID, clientChan := range s.clientChannels {
+			clientID := clientID
+			clientChan := clientChan
+			
+			g.Go(func() error {
+				select {
+				case clientChan <- dataCopy:
+					// Данные успешно отправлены
+					return nil
+				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут с 500 до 200 мс
+					// Тайм-аут при отправке данных
+					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
+					s.RemoveClient(clientID)
+					return nil
+				}
+			})
+		}
 
-	return g.Wait()
+		return g.Wait()
+	}
+	
+	// Для большого количества клиентов используем пакетную обработку
+	// Создаем список всех клиентов
+	clients := make([]struct {
+		id  int
+		ch  chan []byte
+	}, 0, clientCount)
+	
+	for id, ch := range s.clientChannels {
+		clients = append(clients, struct {
+			id  int
+			ch  chan []byte
+		}{id, ch})
+	}
+	
+	// Обрабатываем клиентов пакетами
+	var wg sync.WaitGroup
+	for i := 0; i < clientCount; i += batchSize {
+		end := i + batchSize
+		if end > clientCount {
+			end = clientCount
+		}
+		
+		wg.Add(1)
+		go func(batch []struct {
+			id  int
+			ch  chan []byte
+		}) {
+			defer wg.Done()
+			
+			for _, client := range batch {
+				select {
+				case client.ch <- dataCopy:
+					// Данные успешно отправлены
+				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут
+					// Тайм-аут при отправке данных
+					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", client.id)
+					s.RemoveClient(client.id)
+				}
+			}
+		}(clients[i:end])
+	}
+	
+	wg.Wait()
+	return nil
 } 
