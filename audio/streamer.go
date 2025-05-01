@@ -163,7 +163,6 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		s.lastChunkMutex.Unlock()
 		
 		// Отправляем данные всем клиентам
-		log.Printf("ДИАГНОСТИКА: Отправка %d байт данных клиентам", n)
 		if err := s.broadcastToClients(buffer[:n]); err != nil {
 			log.Printf("ДИАГНОСТИКА: ОШИБКА при отправке данных клиентам: %v", err)
 			sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
@@ -244,6 +243,12 @@ func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
 	return trackSecondsMetric, true
 }
 
+// Для отслеживания логов при отправке данных
+var (
+	lastClientCount int
+	lastLogTime     time.Time
+)
+
 // AddClient добавляет нового клиента и возвращает канал для получения данных
 func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	// Проверяем, не превышено ли максимальное количество клиентов
@@ -320,10 +325,17 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		return nil
 	}
 
-	// Сохраняем копию последнего чанка для новых клиентов
-	// Уже сделано в StreamTrack до вызова этого метода
-	
-	log.Printf("ДИАГНОСТИКА: Отправка %d байт данных %d клиентам", len(data), clientCount)
+	// Сократим число диагностических сообщений - выводим только когда меняется количество клиентов
+	// или раз в 10 секунд
+	if clientCount > 0 {
+		// Выводим сообщение только при изменении количества клиентов 
+		// или не чаще раза в 10 секунд
+		if clientCount != lastClientCount || time.Since(lastLogTime) > 10*time.Second {
+			log.Printf("ДИАГНОСТИКА: Отправка %d байт данных %d клиентам", len(data), clientCount)
+			lastClientCount = clientCount
+			lastLogTime = time.Now()
+		}
+	}
 
 	// Если клиентов очень много, используем пакетный подход
 	const batchSize = 50

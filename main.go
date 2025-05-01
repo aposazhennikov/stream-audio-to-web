@@ -32,7 +32,7 @@ const (
 	defaultMaxClients   = 500
 	defaultLogLevel     = "info"
 	defaultBufferSize   = 65536 // 64KB
-	defaultShuffle      = true  // Перемешивание треков по умолчанию включено
+	defaultShuffle      = false  // Перемешивание треков по умолчанию включено
 )
 
 // Конфигурация приложения
