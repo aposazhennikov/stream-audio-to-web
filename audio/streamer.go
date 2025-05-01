@@ -19,6 +19,8 @@ import (
 const (
 	defaultBufferSize = 65536 // 64KB
 	gracePeriodMs     = 100   // 100ms буфер между треками для избежания обрезки начала (было 200мс)
+	// Минимальная задержка между отправками буферов
+	minPlaybackDelayMs = 20   // Минимальная задержка между отправками буферов
 )
 
 // Streamer управляет стримингом аудио для одного "радио" потока
@@ -169,6 +171,27 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			return err
 		}
 
+		// Вычисляем задержку на основе битрейта и размера буфера
+		// Формула: (размер буфера в байтах * 8) / (битрейт в кбит/с * 1000) * 1000 мс
+		// Упрощаем: (размер буфера в байтах * 8 * 1000) / (битрейт в кбит/с * 1000)
+		// Итоговая формула: (размер буфера в байтах * 8) / битрейт в кбит/с
+		delayMs := (n * 8) / s.bitrate
+		
+		// Ограничиваем минимальную задержку
+		if delayMs < minPlaybackDelayMs {
+			delayMs = minPlaybackDelayMs
+		}
+		
+		// Логируем информацию о задержке раз в 10 секунд
+		if time.Since(lastDelayLogTime) > 10*time.Second {
+			log.Printf("ДИАГНОСТИКА: Рассчитанная задержка: %d мс для %d байт данных при битрейте %d кбит/с", 
+				delayMs, n, s.bitrate)
+			lastDelayLogTime = time.Now()
+		}
+		
+		// Добавляем задержку для имитации реальной скорости воспроизведения
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+
 		// Проверяем сигнал завершения
 		select {
 		case <-s.quit:
@@ -247,6 +270,7 @@ func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
 var (
 	lastClientCount int
 	lastLogTime     time.Time
+	lastDelayLogTime time.Time
 )
 
 // AddClient добавляет нового клиента и возвращает канал для получения данных
