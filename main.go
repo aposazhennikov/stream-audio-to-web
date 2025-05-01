@@ -513,4 +513,12 @@ func (d *dummyPlaylistManager) GetCurrentTrack() interface{} {
 
 func (d *dummyPlaylistManager) NextTrack() interface{} {
 	return "dummy.mp3"
+}
+
+func (d *dummyPlaylistManager) GetHistory() []interface{} {
+	return []interface{}{}
+}
+
+func (d *dummyPlaylistManager) GetStartTime() time.Time {
+	return time.Now()
 } 

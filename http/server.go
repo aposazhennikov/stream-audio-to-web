@@ -64,6 +64,8 @@ type PlaylistManager interface {
 	Reload() error
 	GetCurrentTrack() interface{}
 	NextTrack() interface{}
+	GetHistory() []interface{} // Получение истории треков
+	GetStartTime() time.Time   // Получение времени запуска
 }
 
 // Server представляет HTTP сервер для потоковой передачи аудио
@@ -202,9 +204,15 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
+	
+	// Добавляем страницу статуса
+	s.router.HandleFunc("/status", s.statusPageHandler).Methods("GET")
 
 	// Добавление статических файлов для веб-интерфейса
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
+	
+	// Настройка обработчика 404
+	s.router.NotFoundHandler = http.HandlerFunc(s.notFoundHandler)
 
 	log.Printf("HTTP маршруты настроены")
 }
@@ -546,4 +554,229 @@ func (s *Server) ReloadPlaylist(route string) error {
 	}
 
 	return playlist.Reload()
+}
+
+// statusPageHandler отображает страницу со статусом всех потоков
+func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
+	s.mutex.RLock()
+	streams := make(map[string]StreamHandler)
+	for k, v := range s.streams {
+		streams[k] = v
+	}
+	
+	playlists := make(map[string]PlaylistManager)
+	for k, v := range s.playlists {
+		playlists[k] = v
+	}
+	s.mutex.RUnlock()
+	
+	s.trackMutex.RLock()
+	currentTracks := make(map[string]string)
+	for k, v := range s.currentTracks {
+		currentTracks[k] = v
+	}
+	s.trackMutex.RUnlock()
+	
+	// HTML заголовок
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Аудио Стример - Статус</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .stream-container {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            padding: 15px;
+        }
+        .stream-header {
+            font-size: 1.5em;
+            color: #2980b9;
+            margin-bottom: 10px;
+        }
+        .status-info {
+            margin-bottom: 10px;
+        }
+        .track-list {
+            display: none;
+            margin-top: 10px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .track-list ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        .track-list li {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .error-container {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Статус Аудио Потоков</h1>
+`
+
+	// Для каждого потока
+	for route, stream := range streams {
+		playlist, exists := playlists[route]
+		if !exists {
+			continue
+		}
+		
+		currentTrack := "Неизвестно"
+		if track, exists := currentTracks[route]; exists {
+			currentTrack = track
+		}
+		
+		// Получаем историю треков
+		history := playlist.GetHistory()
+		historyHtml := "<ul>"
+		// История треков в обратном порядке (новые сверху)
+		for i := len(history) - 1; i >= 0; i-- {
+			// Используем type assertion для получения имени трека
+			if track, ok := history[i].(interface{ GetPath() string }); ok {
+				trackPath := track.GetPath()
+				trackName := filepath.Base(trackPath)
+				historyHtml += "<li>" + trackName + "</li>"
+			}
+		}
+		historyHtml += "</ul>"
+		
+		// Форматируем время запуска
+		startTime := playlist.GetStartTime().Format("02.01.2006 15:04:05 MST")
+		
+		// HTML для потока
+		html += fmt.Sprintf(`
+    <div class="stream-container">
+        <div class="stream-header">%s</div>
+        <div class="status-info">Запущено: %s</div>
+        <div class="status-info">Текущий трек: %s</div>
+        <div class="status-info">Количество слушателей: %d</div>
+        <button onclick="toggleTrackList('%s')">Показать историю треков</button>
+        <div id="track-list-%s" class="track-list">
+            %s
+        </div>
+    </div>`, route, startTime, currentTrack, stream.GetClientCount(), route[1:], route[1:], historyHtml)
+	}
+	
+	// JavaScript и закрывающие HTML теги
+	html += `
+    <script>
+        function toggleTrackList(id) {
+            const trackList = document.getElementById('track-list-' + id);
+            const isVisible = trackList.style.display === 'block';
+            trackList.style.display = isVisible ? 'none' : 'block';
+            
+            // Изменяем текст кнопки
+            const button = trackList.previousElementSibling;
+            button.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
+        }
+    </script>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+// notFoundHandler обрабатывает запросы к несуществующим маршрутам
+func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("404 - маршрут не найден: %s", r.URL.Path)
+	
+	// HTML для страницы 404
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>404 - Страница не найдена</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+            text-align: center;
+        }
+        .error-container {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin: 50px auto;
+            padding: 30px;
+            max-width: 500px;
+        }
+        h1 {
+            color: #e74c3c;
+            font-size: 4em;
+            margin: 0;
+        }
+        p {
+            font-size: 1.2em;
+            margin: 20px 0;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            background-color: #3498db;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 3px;
+        }
+        .back-link:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h1>404</h1>
+        <p>Страница не найдена</p>
+        <p>Запрошенный ресурс не существует.</p>
+        <a href="/" class="back-link">Вернуться на главную</a>
+    </div>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	w.Write([]byte(html))
 } 

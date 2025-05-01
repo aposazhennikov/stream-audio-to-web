@@ -35,13 +35,16 @@ func (t *Track) GetPath() string {
 
 // Playlist управляет списком треков для аудиопотока
 type Playlist struct {
-	directory string
-	tracks    []Track
-	current   int
-	mutex     sync.RWMutex
-	watcher   *fsnotify.Watcher
-	onChange  func()
-	shuffle   bool // Флаг, определяющий перемешивать ли треки
+	directory      string
+	tracks         []Track
+	current        int
+	mutex          sync.RWMutex
+	watcher        *fsnotify.Watcher
+	onChange       func()
+	shuffle        bool  // Флаг, определяющий перемешивать ли треки
+	history        []Track // История воспроизведенных треков
+	startTime      time.Time // Время запуска плейлиста
+	historyMutex   sync.RWMutex // Мьютекс для истории
 }
 
 // NewPlaylist создаёт новый плейлист из указанной директории
@@ -49,9 +52,11 @@ func NewPlaylist(directory string, onChange func(), shuffle bool) (*Playlist, er
 	pl := &Playlist{
 		directory: directory,
 		tracks:    []Track{},
+		history:   []Track{},
 		current:   0,
 		onChange:  onChange,
 		shuffle:   shuffle, // Сохраняем параметр перемешивания
+		startTime: time.Now(), // Запоминаем время запуска
 	}
 
 	// Инициализация watcher для отслеживания изменений в директории
@@ -219,8 +224,44 @@ func (p *Playlist) NextTrack() interface{} {
 		return nil
 	}
 
+	// Добавляем текущий трек в историю перед переходом к следующему
+	currentTrack := p.tracks[p.current]
+	p.addTrackToHistory(currentTrack)
+
 	p.current = (p.current + 1) % len(p.tracks)
 	return &p.tracks[p.current]
+}
+
+// addTrackToHistory добавляет трек в историю
+func (p *Playlist) addTrackToHistory(track Track) {
+	p.historyMutex.Lock()
+	defer p.historyMutex.Unlock()
+	
+	// Добавляем трек в историю
+	p.history = append(p.history, track)
+	
+	// Ограничиваем размер истории - сохраняем последние 100 треков
+	const maxHistorySize = 100
+	if len(p.history) > maxHistorySize {
+		p.history = p.history[len(p.history)-maxHistorySize:]
+	}
+}
+
+// GetHistory возвращает историю воспроизведенных треков
+func (p *Playlist) GetHistory() []interface{} {
+	p.historyMutex.RLock()
+	defer p.historyMutex.RUnlock()
+	
+	history := make([]interface{}, len(p.history))
+	for i, track := range p.history {
+		history[i] = &track
+	}
+	return history
+}
+
+// GetStartTime возвращает время запуска плейлиста
+func (p *Playlist) GetStartTime() time.Time {
+	return p.startTime
 }
 
 // Shuffle перемешивает список треков
