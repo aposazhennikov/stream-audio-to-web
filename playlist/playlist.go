@@ -41,15 +41,17 @@ type Playlist struct {
 	mutex     sync.RWMutex
 	watcher   *fsnotify.Watcher
 	onChange  func()
+	shuffle   bool // Флаг, определяющий перемешивать ли треки
 }
 
 // NewPlaylist создаёт новый плейлист из указанной директории
-func NewPlaylist(directory string, onChange func()) (*Playlist, error) {
+func NewPlaylist(directory string, onChange func(), shuffle bool) (*Playlist, error) {
 	pl := &Playlist{
 		directory: directory,
 		tracks:    []Track{},
 		current:   0,
 		onChange:  onChange,
+		shuffle:   shuffle, // Сохраняем параметр перемешивания
 	}
 
 	// Инициализация watcher для отслеживания изменений в директории
@@ -85,6 +87,8 @@ func (p *Playlist) Close() error {
 func (p *Playlist) Reload() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+	
+	log.Printf("ДИАГНОСТИКА: Начало перезагрузки плейлиста в директории %s", p.directory)
 
 	p.tracks = []Track{}
 	p.current = 0
@@ -167,8 +171,13 @@ func (p *Playlist) Reload() error {
 		}
 	}
 
-	// Перемешивание треков
-	p.Shuffle()
+	// Перемешивание треков только если включен соответствующий флаг
+	if p.shuffle {
+		log.Printf("ДИАГНОСТИКА: Перемешивание включено для плейлиста %s", p.directory)
+		p.Shuffle()
+	} else {
+		log.Printf("ДИАГНОСТИКА: Перемешивание отключено для плейлиста %s", p.directory)
+	}
 
 	// Добавление директории в watcher
 	if err := p.watcher.Add(p.directory); err != nil {

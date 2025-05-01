@@ -32,6 +32,7 @@ const (
 	defaultMaxClients   = 500
 	defaultLogLevel     = "info"
 	defaultBufferSize   = 65536 // 64KB
+	defaultShuffle      = true  // Перемешивание треков по умолчанию включено
 )
 
 // Конфигурация приложения
@@ -44,6 +45,7 @@ type Config struct {
 	MaxClients     int
 	LogLevel       string
 	BufferSize     int
+	Shuffle        bool // Перемешивать треки в плейлисте
 }
 
 // Глобальные переменные для маршрутов
@@ -76,6 +78,7 @@ func main() {
 	log.Printf("Битрейт: %d", config.Bitrate)
 	log.Printf("Макс. клиентов: %d", config.MaxClients)
 	log.Printf("Размер буфера: %d", config.BufferSize)
+	log.Printf("Перемешивание треков: %v", config.Shuffle)
 	log.Printf("Дополнительные директории маршрутов:")
 	for route, dir := range config.DirectoryRoutes {
 		log.Printf("  - Маршрут '%s' -> Директория '%s'", route, dir)
@@ -293,50 +296,7 @@ func main() {
 		}
 	}).Methods("GET")
 
-	// ТЕПЕРЬ создаем и запускаем HTTP-сервер с временными маршрутами
-	httpSrv := &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
-		Handler: server.Handler(),
-		// Увеличиваем таймауты для обработки запросов
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	// Запуск сервера в горутине ДО настройки маршрутов
-	go func() {
-		log.Printf("Запуск HTTP-сервера на адресе 0.0.0.0:%d...", config.Port)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Ошибка запуска сервера: %s", err)
-			sentry.CaptureException(err)
-		}
-	}()
-
-	// Ждем небольшую паузу, чтобы сервер успел запуститься
-	time.Sleep(500 * time.Millisecond)
-
-	// Проверяем, что сервер слушает порт
-	log.Printf("Проверка доступности HTTP-сервера...")
-	
-	// Попытки проверки с небольшими задержками
-	serverStarted := false
-	for i := 0; i < 5; i++ {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthz", config.Port))
-		if err == nil {
-			resp.Body.Close()
-			log.Printf("HTTP-сервер успешно запущен и отвечает на запросы!")
-			serverStarted = true
-			break
-		}
-		log.Printf("Попытка %d: HTTP-сервер еще не готов: %s", i+1, err)
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if !serverStarted {
-		log.Printf("ПРЕДУПРЕЖДЕНИЕ: HTTP-сервер не отвечает на запросы healthz после 5 попыток")
-	}
-
-	// ПОСЛЕ запуска HTTP-сервера настраиваем аудио-маршруты
+	// СИНХРОННО настраиваем аудио-маршруты перед запуском HTTP-сервера
 	log.Printf("Начало настройки аудио маршрутов...")
 	
 	// Перенаправление с корневого маршрута
@@ -349,7 +309,8 @@ func main() {
 		}
 	}
 
-	// Настраиваем маршруты из конфигурации
+	// Настраиваем маршруты из конфигурации СИНХРОННО (не в горутинах)
+	successfulRoutes := make(map[string]bool)
 	for route, dir := range config.DirectoryRoutes {
 		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
 		// Но на всякий случай проверяем
@@ -357,9 +318,14 @@ func main() {
 			route = "/" + route
 		}
 		
-		log.Printf("Настройка маршрута '%s' -> директория '%s'", route, dir)
-		configureRoute(server, stationManager, route, dir, config)
-		log.Printf("Маршрут '%s' настроен успешно", route)
+		log.Printf("Синхронная настройка маршрута '%s' -> директория '%s'", route, dir)
+		// Вызываем configureRoute синхронно и обрабатываем результат
+		if success := configureSyncRoute(server, stationManager, route, dir, config); success {
+			successfulRoutes[route] = true
+			log.Printf("Маршрут '%s' успешно настроен", route)
+		} else {
+			log.Printf("ОШИБКА: Маршрут '%s' не удалось настроить", route)
+		}
 	}
 	
 	// Проверяем статус потоков
@@ -451,6 +417,25 @@ func main() {
 	log.Printf("Настроено перенаправление с / на %s", redirectTo)
 	log.Printf("Аудио маршруты настроены успешно")
 
+	// ТЕПЕРЬ создаем и запускаем HTTP-сервер ПОСЛЕ настройки всех маршрутов
+	httpSrv := &http.Server{
+		Addr:    fmt.Sprintf("0.0.0.0:%d", config.Port), // Явно указываем, что слушаем на всех интерфейсах
+		Handler: server.Handler(),
+		// Увеличиваем таймауты для обработки запросов
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 0, // Отключаем таймаут для стриминга
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Запуск сервера в горутине ПОСЛЕ настройки маршрутов
+	go func() {
+		log.Printf("Запуск HTTP-сервера на адресе 0.0.0.0:%d...", config.Port)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Ошибка запуска сервера: %s", err)
+			sentry.CaptureException(err)
+		}
+	}()
+
 	// Настройка грациозного завершения
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
@@ -461,7 +446,30 @@ func main() {
 	// Обработка SIGHUP для перезагрузки плейлистов
 	if sig == syscall.SIGHUP {
 		log.Println("Получен SIGHUP, перезагрузка плейлистов...")
-		// TODO: Реализовать перезагрузку плейлистов без остановки сервера
+		
+		// Получаем список всех плейлистов
+		server.Handler().(*mux.Router).Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+			path, err := route.GetPathTemplate()
+			if err != nil {
+				return nil
+			}
+			
+			// Перезагружаем только для зарегистрированных потоков
+			if server.IsStreamRegistered(path) {
+				log.Printf("Перезагрузка плейлиста для %s", path)
+				if err := server.ReloadPlaylist(path); err != nil {
+					log.Printf("Ошибка при перезагрузке плейлиста для %s: %s", path, err)
+					sentry.CaptureException(err)
+				} else {
+					log.Printf("Плейлист для %s успешно перезагружен", path)
+				}
+			}
+			
+			return nil
+		})
+		
+		log.Println("Перезагрузка плейлистов завершена")
+		return // Продолжаем работу
 	}
 
 	// Останавливаем все радиостанции
@@ -478,46 +486,9 @@ func main() {
 	log.Println("Сервер успешно остановлен")
 }
 
-// configureAudioRoutes настраивает маршруты для аудиопотоков
-func configureAudioRoutes(server *httpServer.Server, stationManager *radio.RadioStationManager, config *Config) {
-	// Не настраиваем маршрут по умолчанию
-	// configureRoute(server, stationManager, "/", config.AudioDir, config)
-
-	// Настраиваем маршруты из конфигурации
-	for route, dir := range config.DirectoryRoutes {
-		// Маршрут уже должен быть нормализован с ведущим слешем в loadConfig
-		// Но на всякий случай проверяем
-		if route[0] != '/' {
-			route = "/" + route
-		}
-		
-		log.Printf("Настройка маршрута '%s' -> директория '%s'", route, dir)
-		configureRoute(server, stationManager, route, dir, config)
-		log.Printf("Маршрут '%s' настроен успешно", route)
-	}
-	
-	// Добавляем перенаправление с корневого маршрута на /humor, если он существует, или первый доступный маршрут
-	redirectTo := "/humor" // по умолчанию перенаправляем на /humor
-	if _, exists := config.DirectoryRoutes["/humor"]; !exists {
-		// Если /humor не существует, берем первый маршрут из конфигурации
-		for route := range config.DirectoryRoutes {
-			redirectTo = route
-			break
-		}
-	}
-	
-	// Добавляем обработчик для корневого маршрута
-	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Перенаправление с / на %s", redirectTo)
-		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
-	}).Methods("GET")
-	
-	log.Printf("Настроено перенаправление с / на %s", redirectTo)
-}
-
-// configureRoute настраивает один маршрут для аудиопотока
-func configureRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) {
-	log.Printf("Начало настройки маршрута '%s'...", route)
+// configureSyncRoute настраивает один маршрут для аудиопотока синхронно
+func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) bool {
+	log.Printf("Начало синхронной настройки маршрута '%s'...", route)
 
 	// Создаём директорию, если она не существует
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -525,7 +496,7 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			log.Printf("ОШИБКА: При создании директории %s: %s. Маршрут '%s' НЕ НАСТРОЕН.", dir, err, route)
 			sentry.CaptureException(fmt.Errorf("ошибка при создании директории %s: %w", dir, err))
-			return
+			return false
 		}
 	}
 
@@ -534,7 +505,7 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	if err != nil {
 		log.Printf("ОШИБКА: При чтении директории %s: %s. Маршрут '%s' НЕ НАСТРОЕН.", dir, err, route)
 		sentry.CaptureException(fmt.Errorf("ошибка при чтении директории %s: %w", dir, err))
-		return
+		return false
 	}
 
 	audioFiles := 0
@@ -549,116 +520,41 @@ func configureRoute(server *httpServer.Server, stationManager *radio.RadioStatio
 	if audioFiles == 0 {
 		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: В директории %s нет аудиофайлов. Маршрут '%s' НЕ НАСТРОЕН.", dir, route)
 		sentry.CaptureMessage(fmt.Sprintf("В директории %s нет аудиофайлов для маршрута %s", dir, route))
-		return
+		return false
 	}
 
-	// Вложенную функцию помещаем в переменную, чтобы можно было правильно отслеживать ошибки
-	setupSuccess := false
-	
-	// Максимальное количество попыток настройки
-	maxRetries := 3
-	retryCount := 0
-	
-	for retryCount < maxRetries && !setupSuccess {
-		if retryCount > 0 {
-			log.Printf("Повторная попытка настройки маршрута %s (%d/%d)...", route, retryCount+1, maxRetries)
-		}
-	
-		// КРИТИЧЕСКИ ВАЖНО: создаем контекст с таймаутом для всех операций
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		
-		// Создаем каналы для синхронизации
-		errorChan := make(chan error, 3)
-		doneChan := make(chan bool, 1)
-		
-		// Создаем плейлист и регистрируем поток в отдельной горутине
-		go func() {
-			log.Printf("ДИАГНОСТИКА: Начало настройки плейлиста для маршрута %s...", route)
-			pl, err := playlist.NewPlaylist(dir, nil)
-			if err != nil {
-				errorChan <- fmt.Errorf("ошибка при создании плейлиста: %w", err)
-				return
-			}
-			
-			log.Printf("ДИАГНОСТИКА: Плейлист для маршрута %s успешно создан", route)
-			
-			log.Printf("ДИАГНОСТИКА: Начало создания аудио стримера для маршрута %s...", route)
-			streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
-			log.Printf("ДИАГНОСТИКА: Аудио стример для маршрута %s успешно создан", route)
-			
-			log.Printf("ДИАГНОСТИКА: Начало добавления радиостанции %s в менеджер...", route)
-			stationManager.AddStation(route, streamer, pl)
-			log.Printf("ДИАГНОСТИКА: Радиостанция '%s' успешно добавлена в менеджер", route)
-			
-			log.Printf("ДИАГНОСТИКА: Начало регистрации аудиопотока %s на HTTP сервере...", route)
-			server.RegisterStream(route, streamer, pl)
-			log.Printf("ДИАГНОСТИКА: Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
-			
-			// Для маршрутов /humor и /science не нужно регистрировать обработчики,
-			// так как они уже обрабатываются через humorRedirectHandler и scienceRedirectHandler
-			if route != "/humor" && route != "/science" {
-				log.Printf("ДИАГНОСТИКА: Создание обработчика HTTP для маршрута %s...", route)
-				audioHandler := server.StreamAudioHandler(route)
-				server.Handler().(*mux.Router).HandleFunc(route, audioHandler).Methods("GET")
-				log.Printf("ДИАГНОСТИКА: Обработчик HTTP для маршрута '%s' зарегистрирован", route)
-			} else {
-				log.Printf("ДИАГНОСТИКА: Маршрут '%s' использует уже зарегистрированный redirect-обработчик", route)
-			}
-			
-			// Проверяем успешность регистрации потока
-			log.Printf("ДИАГНОСТИКА: Проверка регистрации потока для маршрута %s...", route)
-			if !server.IsStreamRegistered(route) {
-				log.Printf("ДИАГНОСТИКА: ОШИБКА! Поток %s не зарегистрирован после всех операций", route)
-				errorChan <- fmt.Errorf("поток %s не зарегистрирован после всех операций", route)
-				return
-			}
-			
-			// Сигнализируем об успешном завершении
-			log.Printf("ДИАГНОСТИКА: Все операции для маршрута %s успешно выполнены, отправка сигнала...", route)
-			doneChan <- true
-		}()
-		
-		// Ждем завершения или таймаута
-		select {
-		case <-ctx.Done():
-			log.Printf("ПРЕДУПРЕЖДЕНИЕ: Таймаут при настройке маршрута %s (попытка %d/%d)", route, retryCount+1, maxRetries)
-			setupSuccess = false
-		case err := <-errorChan:
-			log.Printf("ОШИБКА при настройке маршрута %s (попытка %d/%d): %s", route, retryCount+1, maxRetries, err)
-			setupSuccess = false
-		case <-doneChan:
-			log.Printf("Маршрут '%s' успешно настроен (попытка %d/%d)", route, retryCount+1, maxRetries)
-			setupSuccess = true
-		}
-		
-		// Освобождаем ресурсы контекста
-		cancel()
-		
-		// Если настройка не удалась и есть еще попытки - ждем перед повторением
-		if !setupSuccess && retryCount < maxRetries-1 {
-			retryDelay := 5 * time.Second
-			log.Printf("Ожидание %v перед повторной попыткой настройки маршрута %s...", retryDelay, route)
-			time.Sleep(retryDelay)
-		}
-		
-		retryCount++
+	// Создаем плейлист и настраиваем поток синхронно
+	log.Printf("Создание плейлиста для маршрута %s...", route)
+	pl, err := playlist.NewPlaylist(dir, nil, config.Shuffle)
+	if err != nil {
+		log.Printf("ОШИБКА при создании плейлиста: %s", err)
+		sentry.CaptureException(fmt.Errorf("ошибка при создании плейлиста: %w", err))
+		return false
 	}
 	
-	// Проверяем успешность настройки маршрута
-	if !setupSuccess {
-		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Маршрут '%s' НЕ НАСТРОЕН после %d попыток", route, maxRetries)
-		sentry.CaptureMessage(fmt.Sprintf("Маршрут %s не настроен после %d попыток", route, maxRetries))
-		return
-	}
+	log.Printf("Плейлист для маршрута %s успешно создан", route)
 	
-	isRegistered := server.IsStreamRegistered(route)
-	if !isRegistered {
+	log.Printf("Создание аудио стримера для маршрута %s...", route)
+	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
+	log.Printf("Аудио стример для маршрута %s успешно создан", route)
+	
+	log.Printf("Добавление радиостанции %s в менеджер...", route)
+	stationManager.AddStation(route, streamer, pl)
+	log.Printf("Радиостанция '%s' успешно добавлена в менеджер", route)
+	
+	log.Printf("Регистрация аудиопотока %s на HTTP сервере...", route)
+	server.RegisterStream(route, streamer, pl)
+	log.Printf("Аудиопоток '%s' успешно зарегистрирован на HTTP сервере", route)
+	
+	// Проверяем успешность регистрации потока
+	if !server.IsStreamRegistered(route) {
 		log.Printf("КРИТИЧЕСКАЯ ОШИБКА: Поток %s не зарегистрирован после всех операций", route)
 		sentry.CaptureMessage(fmt.Sprintf("Поток %s не зарегистрирован после всех операций", route))
-		return
+		return false
 	}
 	
 	log.Printf("ИТОГ: Настройка маршрута '%s' УСПЕШНО ЗАВЕРШЕНА", route)
+	return true
 }
 
 // getAllRoutes возвращает список всех зарегистрированных маршрутов
@@ -688,6 +584,7 @@ func loadConfig() *Config {
 	flag.IntVar(&config.MaxClients, "max-clients", defaultMaxClients, "Максимальное количество одновременных подключений")
 	flag.StringVar(&config.LogLevel, "log-level", defaultLogLevel, "Уровень логирования: debug, info, warn, error")
 	flag.IntVar(&config.BufferSize, "buffer-size", defaultBufferSize, "Размер буфера для чтения аудиофайлов в байтах")
+	flag.BoolVar(&config.Shuffle, "shuffle", defaultShuffle, "Перемешивать треки в плейлисте")
 
 	// Для сопоставления директорий и маршрутов используем JSON
 	var directoryRoutesJSON string
@@ -754,6 +651,14 @@ func loadConfig() *Config {
 		} else {
 			log.Printf("Ошибка при парсинге JSON из переменной окружения DIRECTORY_ROUTES: %s", err)
 			sentry.CaptureException(fmt.Errorf("ошибка при парсинге JSON из переменной окружения DIRECTORY_ROUTES: %w", err))
+		}
+	}
+
+	if envShuffle := os.Getenv("SHUFFLE"); envShuffle != "" {
+		if shuffle, err := strconv.ParseBool(envShuffle); err == nil {
+			config.Shuffle = shuffle
+		} else {
+			sentry.CaptureException(fmt.Errorf("ошибка при парсинге SHUFFLE: %w", err))
 		}
 	}
 

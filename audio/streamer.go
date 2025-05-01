@@ -30,6 +30,8 @@ type Streamer struct {
 	clientMutex     sync.RWMutex
 	transcodeFormat string
 	bitrate         int
+	lastChunk       []byte       // Последний отправленный кусок аудиоданных
+	lastChunkMutex  sync.RWMutex // Мьютекс для защиты lastChunk
 }
 
 // NewStreamer создаёт новый аудио стример
@@ -52,6 +54,8 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		clientMutex:     sync.RWMutex{},
 		transcodeFormat: transcodeFormat,
 		bitrate:         bitrate,
+		lastChunk:       nil,
+		lastChunkMutex:  sync.RWMutex{},
 	}
 }
 
@@ -207,10 +211,32 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	// Создаём канал для клиента с буфером
 	// Буферизованный канал нужен для предотвращения блокировки 
 	// при медленных клиентах
-	clientChannel := make(chan []byte, 10)
+	clientChannel := make(chan []byte, 32) // Увеличен размер буфера с 10 до 32
 	s.clientChannels[clientID] = clientChannel
 
 	log.Printf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+
+	// ВАЖНО: Если у нас есть последний буфер данных, отправляем его сразу новому клиенту
+	// чтобы он не ждал следующего чтения из файла
+	s.lastChunkMutex.RLock()
+	if s.lastChunk != nil {
+		// Создаем копию буфера для нового клиента
+		dataCopy := make([]byte, len(s.lastChunk))
+		copy(dataCopy, s.lastChunk)
+		
+		log.Printf("ДИАГНОСТИКА: Отправка последнего буфера (%d байт) новому клиенту %d", len(dataCopy), clientID)
+		
+		// Отправляем данные в канал нового клиента
+		select {
+		case clientChannel <- dataCopy:
+			log.Printf("ДИАГНОСТИКА: Последний буфер успешно отправлен клиенту %d", clientID)
+		default:
+			log.Printf("ДИАГНОСТИКА: Невозможно отправить последний буфер клиенту %d, канал заполнен", clientID)
+		}
+	} else {
+		log.Printf("ДИАГНОСТИКА: Нет последнего буфера для отправки клиенту %d", clientID)
+	}
+	s.lastChunkMutex.RUnlock()
 
 	return clientChannel, clientID, nil
 }
@@ -248,6 +274,13 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 	// Это необходимо, потому что буфер может быть переиспользован
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
+	
+	// Сохраняем копию последнего чанка для новых клиентов
+	s.lastChunkMutex.Lock()
+	s.lastChunk = dataCopy
+	s.lastChunkMutex.Unlock()
+	
+	log.Printf("ДИАГНОСТИКА: Отправка %d байт данных %d клиентам", len(data), clientCount)
 
 	// Если клиентов очень много, используем пакетный подход
 	const batchSize = 50
@@ -263,7 +296,7 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			
 			g.Go(func() error {
 				select {
-				case clientChan <- dataCopy:
+				case clientChan <- dataCopy: // Используем одну и ту же копию для всех клиентов
 					// Данные успешно отправлены
 					return nil
 				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут с 500 до 200 мс
@@ -309,7 +342,7 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			
 			for _, client := range batch {
 				select {
-				case client.ch <- dataCopy:
+				case client.ch <- dataCopy: // Используем одну и ту же копию для всех клиентов
 					// Данные успешно отправлены
 				case <-time.After(200 * time.Millisecond): // Уменьшен таймаут
 					// Тайм-аут при отправке данных

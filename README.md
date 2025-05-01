@@ -14,6 +14,7 @@
 - **Мониторинг производительности** через Prometheus и Sentry
 - **Грациозное завершение работы** при получении сигналов
 - **Автоматическая обработка прав доступа** — работает даже с файлами, принадлежащими root
+- **Опциональное перемешивание треков** — можно включить или отключить
 
 ## Требования
 
@@ -83,6 +84,7 @@
 | `--log-level` / `LOG_LEVEL` | Уровень логирования (debug, info, warn, error) | `info` |
 | `--buffer-size` / `BUFFER_SIZE` | Размер буфера для чтения в байтах  | `65536` (64KB) |
 | `--directory-routes` / `DIRECTORY_ROUTES` | JSON строка с сопоставлением маршрутов и директорий | `{}` |
+| `--shuffle` / `SHUFFLE` | Включить/отключить перемешивание треков | `true` |
 
 ## Мониторинг и наблюдаемость
 
@@ -145,6 +147,7 @@ docker run -d --name audio-streamer \
   -v /путь/к/юмору:/app/humor \
   -v /путь/к/науке:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
+  -e SHUFFLE=true \
   audio-streamer:latest
 ```
 
@@ -189,6 +192,7 @@ services:
       - LOG_LEVEL=info
       - BUFFER_SIZE=65536
       - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
+      - SHUFFLE=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -255,6 +259,7 @@ docker run -d -p 8000:8000 \
   -v /home/humor:/app/humor \
   -v /home/science:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
+  -e SHUFFLE=true \
   audio-streamer:latest
 ```
 

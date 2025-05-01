@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
@@ -413,14 +414,23 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		
 		log.Printf("Поток %s найден, настройка заголовков для стриминга", route)
 
-		// Настройка заголовков для стриминга
+		// Настройка заголовков для стриминга - ВАЖНО!
+		// 1. Content-Type должен соответствовать формату аудиопотока
 		w.Header().Set("Content-Type", contentType)
+		// 2. Отключаем кеширование для live-стрима
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
+		// 3. Защита от угадывания типа контента
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// 4. Поддержка keep-alive соединения
+		w.Header().Set("Connection", "keep-alive")
+		// 5. Для работы с другими сайтами в dev-режиме (только если нужно)
+		// w.Header().Set("Access-Control-Allow-Origin", "*")
+		
+		// ВАЖНО: НЕ устанавливать Content-Length для стримов, иначе браузер будет ждать точное количество байт
 
-		// Флаги для контроля состояния соединения
+		// Проверка поддержки Flusher
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			errorMsg := "Streaming not supported"
@@ -429,6 +439,10 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
+		
+		// Немедленно сбрасываем заголовки - КРИТИЧЕСКИ ВАЖНО!
+		// Это сигнализирует браузеру, что начинается поток
+		flusher.Flush()
 		
 		log.Printf("Добавление клиента к потоку %s...", route)
 
@@ -455,34 +469,64 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		
 		log.Printf("Начало отправки данных клиенту %d для потока %s", clientID, route)
 
+		// Счетчик для отслеживания переданных данных
+		var bytesSent int64
+		var lastLogTime time.Time = time.Now()
+		const logEveryBytes = 1024 * 1024 // Логировать каждый переданный мегабайт
+		
 		// Отправляем данные клиенту
 		for {
 			select {
 			case <-clientClosed:
 				// Клиент отключился
-				log.Printf("Клиент отключился от потока %s: %s (ID: %d)", route, remoteAddr, clientID)
+				log.Printf("Клиент отключился от потока %s: %s (ID: %d). Всего отправлено: %d байт", 
+					route, remoteAddr, clientID, bytesSent)
 				return
 			case data, ok := <-clientCh:
 				if !ok {
 					// Канал закрыт
-					log.Printf("Канал закрыт для клиента %s (ID: %d)", remoteAddr, clientID)
+					log.Printf("Канал закрыт для клиента %s (ID: %d). Всего отправлено: %d байт", 
+						remoteAddr, clientID, bytesSent)
 					return
 				}
 				
 				// Отправка данных клиенту
-				_, err := w.Write(data)
+				n, err := w.Write(data)
 				if err != nil {
-					log.Printf("Ошибка при отправке данных клиенту %d: %s", clientID, err)
+					log.Printf("Ошибка при отправке данных клиенту %d: %s. Всего отправлено: %d байт", 
+						clientID, err, bytesSent)
 					sentry.CaptureException(fmt.Errorf("ошибка при отправке данных клиенту %d: %w", clientID, err))
 					return
 				}
 				
-				// Обновляем метрики
-				bytesSent.WithLabelValues(route).Add(float64(len(data)))
+				// Обновляем счетчик и метрики
+				bytesSent += int64(n)
+				bytesSent.WithLabelValues(route).Add(float64(n))
 				
-				// Отправляем данные немедленно
+				// Периодически логируем количество отправленных данных
+				if bytesSent >= logEveryBytes && time.Since(lastLogTime) > 5*time.Second {
+					log.Printf("Клиенту %d (IP: %s) отправлено %d Мб данных", 
+						clientID, remoteAddr, bytesSent/1024/1024)
+					lastLogTime = time.Now()
+				}
+				
+				// ОБЯЗАТЕЛЬНО вызываем Flush после КАЖДОЙ отправки данных!
+				// Это гарантирует, что данные немедленно отправляются клиенту
 				flusher.Flush()
 			}
 		}
 	}
+}
+
+// ReloadPlaylist перезагружает плейлист для указанного маршрута
+func (s *Server) ReloadPlaylist(route string) error {
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("плейлист для маршрута %s не найден", route)
+	}
+
+	return playlist.Reload()
 } 
