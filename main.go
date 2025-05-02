@@ -90,6 +90,9 @@ func main() {
 
 	// Создание менеджера радиостанций
 	stationManager := radio.NewRadioStationManager()
+	
+	// Устанавливаем менеджер радиостанций для HTTP сервера
+	server.SetStationManager(stationManager)
 
 	// Создаем минимальные заглушки для потоков, чтобы /healthz сразу находил хотя бы один маршрут
 	dummyStream, dummyPlaylist := createDummyStreamAndPlaylist()

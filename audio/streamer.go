@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	defaultBufferSize = 65536 // 64KB
-	gracePeriodMs     = 100   // 100ms буфер между треками для избежания обрезки начала (было 200мс)
+	defaultBufferSize = 32768 // 32KB (уменьшен с 64KB для более частого обновления буфера)
+	gracePeriodMs     = 50    // 50ms буфер между треками (уменьшен со 100ms)
 	// Минимальная задержка между отправками буферов
-	minPlaybackDelayMs = 20   // Минимальная задержка между отправками буферов
+	minPlaybackDelayMs = 10   // 10ms (уменьшен с 20ms)
 )
 
 // Streamer управляет стримингом аудио для одного "радио" потока
@@ -66,13 +66,51 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 
 // Close закрывает стример и все клиентские соединения
 func (s *Streamer) Close() {
+	// Сигнализируем о закрытии
 	close(s.quit)
+	
+	// Очищаем последний буфер
+	s.lastChunkMutex.Lock()
+	s.lastChunk = nil
+	s.lastChunkMutex.Unlock()
+	
+	// Закрываем все каналы клиентов
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
 
-	for _, ch := range s.clientChannels {
+	for clientID, ch := range s.clientChannels {
 		close(ch)
+		log.Printf("ДИАГНОСТИКА: Закрыт канал клиента %d при закрытии стримера", clientID)
 	}
+	
+	// Очищаем карту каналов
+	s.clientChannels = make(map[int]chan []byte)
+	
+	log.Printf("ДИАГНОСТИКА: Стример полностью закрыт")
+}
+
+// StopCurrentTrack немедленно останавливает воспроизведение текущего трека
+// Используется при переключении треков вручную
+func (s *Streamer) StopCurrentTrack() {
+	// Сначала сигнализируем о необходимости остановки
+	close(s.quit)
+	
+	// Очищаем последний буфер - это критически важно для предотвращения 
+	// отправки данных из старого трека новым клиентам
+	s.lastChunkMutex.Lock()
+	s.lastChunk = nil
+	s.lastChunkMutex.Unlock()
+	
+	// НЕ закрываем каналы клиентов, чтобы сохранить соединения
+	// s.clientMutex.Lock()
+	// вместо закрытия каналов просто логируем
+	log.Printf("ДИАГНОСТИКА: Остановка текущего трека без закрытия клиентских соединений")
+	// s.clientMutex.Unlock()
+	
+	// Создаем новый канал для следующего трека
+	s.quit = make(chan struct{})
+	
+	log.Printf("ДИАГНОСТИКА: Текущий трек остановлен, буфер очищен")
 }
 
 // GetCurrentTrackChannel возвращает канал с информацией о текущем треке
@@ -140,6 +178,16 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	log.Printf("ДИАГНОСТИКА: Начало чтения файла %s", trackPath)
 	
 	for {
+		// ВАЖНО: Проверяем сигнал завершения перед чтением и отправкой данных
+		select {
+		case <-s.quit:
+			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+				trackPath, bytesRead, fileInfo.Size())
+			return nil
+		default:
+			// Продолжаем выполнение
+		}
+		
 		n, err := file.Read(buffer)
 		if err == io.EOF {
 			log.Printf("ДИАГНОСТИКА: Достигнут конец файла %s", trackPath)
@@ -154,8 +202,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 
 		bytesRead += int64(n)
 		
-		// ПЕРЕМЕЩАЕМ: Сохраняем копию последнего чанка для новых клиентов
-		// ПЕРЕД отправкой данных всем клиентам
+		// Сохраняем копию последнего чанка для новых клиентов
 		dataCopy := make([]byte, n)
 		copy(dataCopy, buffer[:n])
 		
@@ -189,16 +236,14 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			lastDelayLogTime = time.Now()
 		}
 		
-		// Добавляем задержку для имитации реальной скорости воспроизведения
-		time.Sleep(time.Duration(delayMs) * time.Millisecond)
-
-		// Проверяем сигнал завершения
+		// Используем time.After для проверки сигнала завершения во время ожидания
 		select {
+		case <-time.After(time.Duration(delayMs) * time.Millisecond):
+			// Продолжаем обработку
 		case <-s.quit:
-			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s во время задержки (прочитано %d байт из %d)", 
 				trackPath, bytesRead, fileInfo.Size())
 			return nil
-		default:
 		}
 	}
 	

@@ -53,7 +53,7 @@ docs/
 *.md
 
 # Не игнорировать README.md
-!README.md
+# !README.md
 
 # Локальные файлы
 *.log
@@ -70,4 +70,9 @@ examples/
 
 # Временные файлы Docker
 .dockerignore
-docker-compose*.yml 
+docker-compose*.yml
+Dockerfile
+kubernetes.yaml
+
+
+LISENCE

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,6 +83,7 @@ type Server struct {
 	currentTracks   map[string]string
 	trackMutex      sync.RWMutex
 	statusPassword  string // Пароль для доступа к странице /status
+	stationManager  interface { RestartPlayback(string) bool } // Интерфейс для перезапуска воспроизведения
 }
 
 // NewServer создаёт новый HTTP сервер
@@ -428,6 +430,18 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// isConnectionClosedError проверяет, является ли ошибка результатом закрытия соединения клиентом
+func isConnectionClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "broken pipe") || 
+		   strings.Contains(errMsg, "connection reset by peer") || 
+		   strings.Contains(errMsg, "use of closed network connection")
+}
+
 // StreamAudioHandler создаёт HTTP обработчик для стриминга аудио
 func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	log.Printf("Создание обработчика аудиопотока для маршрута %s", route)
@@ -540,9 +554,16 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				// Отправка данных клиенту
 				n, err := w.Write(data)
 				if err != nil {
-					log.Printf("Ошибка при отправке данных клиенту %d: %s. Всего отправлено: %d байт", 
-						clientID, err, totalBytesSent)
-					sentry.CaptureException(fmt.Errorf("ошибка при отправке данных клиенту %d: %w", clientID, err))
+					if isConnectionClosedError(err) {
+						// Только логируем, но не отправляем в Sentry
+						log.Printf("Клиент %d отключился: %s. Всего отправлено: %d байт", 
+							clientID, err, totalBytesSent)
+					} else {
+						// Отправляем в Sentry только необычные ошибки
+						log.Printf("Ошибка при отправке данных клиенту %d: %s. Всего отправлено: %d байт", 
+							clientID, err, totalBytesSent)
+						sentry.CaptureException(fmt.Errorf("ошибка при отправке данных клиенту %d: %w", clientID, err))
+					}
 					return
 				}
 				
@@ -916,7 +937,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// HTML для потока
 		html += fmt.Sprintf(`
     <div class="stream-container">
-        <div class="stream-header">%s</div>
+        <div class="stream-header"><a href="%s" target="_blank" style="text-decoration:none; color:inherit;">%s</a></div>
         <div class="status-info">Запущено: %s</div>
         <div class="status-info">Текущий трек: %s</div>
         <div class="status-info">Количество слушателей: %d</div>
@@ -932,7 +953,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
         <div id="track-list-%s" class="track-list">
             %s
         </div>
-    </div>`, route, startTime, currentTrack, stream.GetClientCount(), routeID, routeID, routeID, routeID, historyHtml)
+    </div>`, route, route, startTime, currentTrack, stream.GetClientCount(), routeID, routeID, routeID, routeID, historyHtml)
 	}
 	
 	// JavaScript и закрывающие HTML теги
@@ -948,6 +969,55 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
             const historyButton = buttons[buttons.length - 1];
             historyButton.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
         }
+
+        // Функция для автоматического обновления плеера при изменении трека
+        const audioPlayers = {};
+        const currentTracks = {};
+
+        // Функция для получения текущего трека для каждого маршрута
+        function checkCurrentTracks() {
+            fetch('/now-playing')
+                .then(response => response.json())
+                .then(tracks => {
+                    Object.keys(tracks).forEach(route => {
+                        // Если трек изменился, перезагружаем плеер
+                        if (currentTracks[route] !== tracks[route]) {
+                            console.log('Трек изменился на маршруте ' + route + ': ' + tracks[route]);
+                            currentTracks[route] = tracks[route];
+                            
+                            // Если у нас открыт этот маршрут, перезагружаем плеер
+                            if (window.location.pathname === route) {
+                                console.log('Перезагрузка аудиоплеера для ' + route);
+                                const audio = document.querySelector('audio');
+                                if (audio) {
+                                    // Сохраняем текущую громкость
+                                    const volume = audio.volume;
+                                    // Запоминаем URL для дальнейшего использования
+                                    const originalSrc = audio.src;
+                                    // Останавливаем текущий плеер
+                                    audio.pause();
+                                    // Перезагружаем источник с новым временным параметром для обхода кеширования
+                                    audio.src = originalSrc + '?t=' + new Date().getTime();
+                                    // Восстанавливаем громкость
+                                    audio.volume = volume;
+                                    // Запускаем воспроизведение
+                                    audio.play().catch(e => console.error('Ошибка воспроизведения:', e));
+                                }
+                            }
+                        }
+                    });
+                })
+                .catch(error => console.error('Ошибка при проверке текущего трека:', error));
+        }
+
+        // Проверяем текущий трек каждые 2 секунды
+        setInterval(checkCurrentTracks, 2000);
+        
+        // Инициализация при загрузке страницы
+        window.addEventListener('DOMContentLoaded', () => {
+            // Начальная загрузка информации о треках
+            checkCurrentTracks();
+        });
     </script>
 </body>
 </html>`
@@ -979,11 +1049,45 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Переключаем трек (игнорируем возвращаемое значение)
-	_ = playlist.NextTrack()
+	nextTrack := playlist.NextTrack()
 	log.Printf("ДИАГНОСТИКА: Ручное переключение на следующий трек для маршрута %s", route)
 	
-	// Перенаправляем обратно на страницу статуса
-	http.Redirect(w, r, "/status-page", http.StatusFound)
+	// Вызываем перезапуск воспроизведения, если менеджер станций доступен
+	success := false
+	newTrackName := "Неизвестно"
+	
+	if s.stationManager != nil {
+		success = s.stationManager.RestartPlayback(route)
+		if success {
+			log.Printf("ДИАГНОСТИКА: Перезапуск воспроизведения для маршрута %s выполнен успешно", route)
+			
+			// Получаем имя нового трека
+			if track, ok := nextTrack.(interface{ GetPath() string }); ok {
+				newTrackName = filepath.Base(track.GetPath())
+			}
+		} else {
+			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
+		}
+	} else {
+		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Менеджер станций не установлен, перезапуск воспроизведения невозможен")
+	}
+	
+	// Определяем, является ли запрос AJAX-запросом
+	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+	
+	if isAjax {
+		// Отправляем JSON-ответ для AJAX-запросов
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"success": success,
+			"route":   route,
+			"track":   newTrackName,
+		}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		// Перенаправляем обратно на страницу статуса для обычных запросов
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
 }
 
 // prevTrackHandler обрабатывает запрос на переключение трека назад
@@ -1009,11 +1113,45 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Переключаем трек (игнорируем возвращаемое значение)
-	_ = playlist.PreviousTrack()
+	prevTrack := playlist.PreviousTrack()
 	log.Printf("ДИАГНОСТИКА: Ручное переключение на предыдущий трек для маршрута %s", route)
 	
-	// Перенаправляем обратно на страницу статуса
-	http.Redirect(w, r, "/status-page", http.StatusFound)
+	// Вызываем перезапуск воспроизведения, если менеджер станций доступен
+	success := false
+	newTrackName := "Неизвестно"
+	
+	if s.stationManager != nil {
+		success = s.stationManager.RestartPlayback(route)
+		if success {
+			log.Printf("ДИАГНОСТИКА: Перезапуск воспроизведения для маршрута %s выполнен успешно", route)
+			
+			// Получаем имя нового трека
+			if track, ok := prevTrack.(interface{ GetPath() string }); ok {
+				newTrackName = filepath.Base(track.GetPath())
+			}
+		} else {
+			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
+		}
+	} else {
+		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Менеджер станций не установлен, перезапуск воспроизведения невозможен")
+	}
+	
+	// Определяем, является ли запрос AJAX-запросом
+	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+	
+	if isAjax {
+		// Отправляем JSON-ответ для AJAX-запросов
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"success": success,
+			"route":   route,
+			"track":   newTrackName,
+		}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		// Перенаправляем обратно на страницу статуса для обычных запросов
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
 }
 
 // notFoundHandler обрабатывает запросы к несуществующим маршрутам
@@ -1080,4 +1218,9 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
 	w.Write([]byte(html))
+}
+
+// SetStationManager устанавливает менеджер радиостанций для перезапуска воспроизведения
+func (s *Server) SetStationManager(manager interface { RestartPlayback(string) bool }) {
+	s.stationManager = manager
 } 

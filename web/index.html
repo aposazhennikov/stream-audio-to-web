@@ -98,6 +98,7 @@
                     data.streams.forEach(stream => {
                         const streamItem = document.createElement('div');
                         streamItem.className = 'stream-item';
+                        streamItem.dataset.route = stream.route;
                         
                         // Форматируем название потока
                         let streamName = stream.route === '/' ? 'Основной поток' : 
@@ -107,13 +108,32 @@
                         // Создаем содержимое элемента
                         streamItem.innerHTML = `
                             <div class="stream-title">${streamName}</div>
-                            <div class="now-playing">Сейчас играет: ${stream.current_track || 'Нет данных'}</div>
-                            <audio controls autoplay="false">
+                            <div class="now-playing" data-track="${stream.current_track || ''}">Сейчас играет: ${stream.current_track || 'Нет данных'}</div>
+                            <audio controls autoplay>
                                 <source src="${stream.route}" type="audio/mpeg">
                                 Ваш браузер не поддерживает аудио элемент.
                             </audio>
+                            <div class="autoplay-message" style="display: none; color: #e74c3c; margin-top: 5px; font-size: 14px;">
+                                Автоматическое воспроизведение заблокировано браузером. Пожалуйста, нажмите кнопку Play.
+                            </div>
                             <div class="listeners">Слушателей: ${stream.listeners}</div>
                         `;
+                        
+                        // Добавляем обработчик для автоматического воспроизведения
+                        const audioElement = streamItem.querySelector('audio');
+                        const autoplayMessage = streamItem.querySelector('.autoplay-message');
+                        
+                        // Пробуем запустить воспроизведение
+                        audioElement.play().catch(error => {
+                            console.log(`Автоматическое воспроизведение заблокировано: ${error.message}`);
+                            // Показываем сообщение о блокировке автоматического воспроизведения
+                            autoplayMessage.style.display = 'block';
+                            
+                            // Скрываем сообщение после начала воспроизведения
+                            audioElement.addEventListener('play', () => {
+                                autoplayMessage.style.display = 'none';
+                            });
+                        });
                         
                         streamsContainer.appendChild(streamItem);
                     });
@@ -127,13 +147,184 @@
             }
         }
         
+        // Функция для получения текущего трека для каждого маршрута
+        async function checkCurrentTracks() {
+            try {
+                const response = await fetch('/now-playing?t=' + new Date().getTime());
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки информации о треках');
+                }
+                
+                const tracksData = await response.json();
+                const streamItems = document.querySelectorAll('.stream-item');
+                
+                streamItems.forEach(item => {
+                    const route = item.dataset.route;
+                    const currentTrackElement = item.querySelector('.now-playing');
+                    const audioElement = item.querySelector('audio');
+                    
+                    // Если получен новый трек и он отличается от текущего
+                    if (route && tracksData[route] && currentTrackElement.dataset.track !== tracksData[route]) {
+                        console.log(`Трек изменился на ${route}: ${tracksData[route]}`);
+                        
+                        // Обновляем отображение текущего трека
+                        currentTrackElement.textContent = `Сейчас играет: ${tracksData[route]}`;
+                        currentTrackElement.dataset.track = tracksData[route];
+                        
+                        // Принудительно заменяем аудиоплеер полностью
+                        if (audioElement) {
+                            const streamItem = audioElement.closest('.stream-item');
+                            const volume = audioElement.volume || 0.5;
+                            
+                            // Создаем новый аудио элемент
+                            const newAudio = document.createElement('audio');
+                            newAudio.controls = true;
+                            newAudio.autoplay = true;
+                            newAudio.volume = volume;
+                            
+                            // Добавляем временную метку к URL для обхода кеширования
+                            const timestamp = new Date().getTime();
+                            const source = document.createElement('source');
+                            source.src = `${route}?t=${timestamp}`;
+                            source.type = 'audio/mpeg';
+                            
+                            newAudio.appendChild(source);
+                            newAudio.appendChild(document.createTextNode('Ваш браузер не поддерживает аудио элемент.'));
+                            
+                            // Останавливаем старый плеер и заменяем его новым
+                            audioElement.pause();
+                            audioElement.parentNode.replaceChild(newAudio, audioElement);
+                            
+                            // Добавляем обработчики событий для нового плеера
+                            newAudio.addEventListener('error', function(e) {
+                                console.error('Ошибка воспроизведения:', e);
+                                // Пробуем перезагрузить через 1 секунду
+                                setTimeout(() => reloadAudioPlayer(newAudio, route), 1000);
+                            });
+                            
+                            // Запускаем воспроизведение
+                            newAudio.play().catch(error => {
+                                console.error('Ошибка воспроизведения:', error);
+                                // Показываем сообщение о блокировке автовоспроизведения
+                                const autoplayMessage = streamItem.querySelector('.autoplay-message') || 
+                                    document.createElement('div');
+                                
+                                autoplayMessage.className = 'autoplay-message';
+                                autoplayMessage.style.cssText = 'color: #e74c3c; margin-top: 5px; font-size: 14px;';
+                                autoplayMessage.textContent = 'Автоматическое воспроизведение заблокировано. Пожалуйста, нажмите кнопку Play.';
+                                
+                                if (!streamItem.querySelector('.autoplay-message')) {
+                                    newAudio.parentNode.insertBefore(autoplayMessage, newAudio.nextSibling);
+                                }
+                                
+                                // Скрываем сообщение после начала воспроизведения
+                                newAudio.addEventListener('play', () => {
+                                    autoplayMessage.style.display = 'none';
+                                });
+                            });
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Ошибка при проверке текущих треков:', error);
+            }
+        }
+        
         // Загружаем потоки при загрузке страницы
         window.addEventListener('DOMContentLoaded', () => {
             loadStreams();
             
-            // Обновляем информацию каждые 30 секунд
+            // Обновляем информацию о списке потоков каждые 30 секунд
             setInterval(loadStreams, 30000);
+            
+            // Проверяем изменение текущего трека каждые 500 мс (вместо 1000)
+            setInterval(checkCurrentTracks, 500);
+            
+            // Добавляем обработку событий для плееров
+            setupAudioPlayerEvents();
         });
+        
+        // Функция для настройки обработчиков событий для аудиоплееров
+        function setupAudioPlayerEvents() {
+            // Периодически проверяем наличие плееров и добавляем обработчики
+            setInterval(() => {
+                document.querySelectorAll('audio').forEach(audio => {
+                    if (!audio.dataset.eventsBound) {
+                        // Добавляем обработчик ошибок
+                        audio.addEventListener('error', (e) => {
+                            console.log(`Ошибка аудио: ${e.target.error?.message || 'Неизвестная ошибка'}`);
+                            const route = audio.closest('.stream-item')?.dataset.route;
+                            if (route) {
+                                // Автоматически перезагружаем плеер с новым временным параметром
+                                setTimeout(() => {
+                                    reloadAudioPlayer(audio, route);
+                                }, 1000);
+                            }
+                        });
+                        
+                        // Добавляем обработчик приостановки воспроизведения
+                        audio.addEventListener('stalled', () => {
+                            console.log('Воспроизведение приостановлено');
+                            const route = audio.closest('.stream-item')?.dataset.route;
+                            if (route) {
+                                // Попытка перезапустить через 2 секунды
+                                setTimeout(() => {
+                                    reloadAudioPlayer(audio, route);
+                                }, 2000);
+                            }
+                        });
+                        
+                        // Помечаем, что обработчики уже добавлены
+                        audio.dataset.eventsBound = 'true';
+                    }
+                });
+            }, 1000);
+        }
+        
+        // Функция для перезагрузки аудиоплеера
+        function reloadAudioPlayer(audioElement, route) {
+            console.log(`Перезагрузка плеера для ${route}`);
+            const streamItem = audioElement.closest('.stream-item');
+            const volume = audioElement.volume || 0.5;
+            
+            // Создаем новый аудио элемент
+            const newAudio = document.createElement('audio');
+            newAudio.controls = true;
+            newAudio.autoplay = true;
+            newAudio.volume = volume;
+            
+            // Добавляем временную метку к URL для обхода кеширования
+            const timestamp = new Date().getTime();
+            const source = document.createElement('source');
+            source.src = `${route}?t=${timestamp}`;
+            source.type = 'audio/mpeg';
+            
+            newAudio.appendChild(source);
+            newAudio.appendChild(document.createTextNode('Ваш браузер не поддерживает аудио элемент.'));
+            
+            // Заменяем старый элемент новым
+            audioElement.parentNode.replaceChild(newAudio, audioElement);
+            
+            // Запускаем воспроизведение
+            newAudio.play().catch(error => {
+                console.error('Ошибка воспроизведения:', error);
+                const autoplayMessage = streamItem.querySelector('.autoplay-message') || 
+                    document.createElement('div');
+                
+                autoplayMessage.className = 'autoplay-message';
+                autoplayMessage.style.cssText = 'color: #e74c3c; margin-top: 5px; font-size: 14px;';
+                autoplayMessage.textContent = 'Автоматическое воспроизведение заблокировано. Пожалуйста, нажмите кнопку Play.';
+                
+                if (!streamItem.querySelector('.autoplay-message')) {
+                    newAudio.parentNode.insertBefore(autoplayMessage, newAudio.nextSibling);
+                }
+                
+                // Скрываем сообщение после начала воспроизведения
+                newAudio.addEventListener('play', () => {
+                    autoplayMessage.style.display = 'none';
+                });
+            });
+        }
     </script>
 </body>
 </html> 
