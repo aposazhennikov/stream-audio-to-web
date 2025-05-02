@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultBufferSize = 32768 // 32KB (уменьшен с 64KB для более частого обновления буфера)
+	defaultBufferSize = 16384 // 16KB (уменьшен с 32KB для минимизации разрыва при переключении треков)
 	gracePeriodMs     = 50    // 50ms буфер между треками (уменьшен со 100ms)
 	// Минимальная задержка между отправками буферов
 	minPlaybackDelayMs = 10   // 10ms (уменьшен с 20ms)
@@ -93,7 +93,15 @@ func (s *Streamer) Close() {
 // Используется при переключении треков вручную
 func (s *Streamer) StopCurrentTrack() {
 	// Сначала сигнализируем о необходимости остановки
-	close(s.quit)
+	// Безопасная проверка на уже закрытый канал
+	select {
+	case <-s.quit:
+		// Канал уже закрыт, создаем новый
+		log.Printf("ДИАГНОСТИКА: Канал quit уже закрыт, пропускаем закрытие")
+	default:
+		// Канал еще не закрыт, закрываем его
+		close(s.quit)
+	}
 	
 	// Очищаем последний буфер - это критически важно для предотвращения 
 	// отправки данных из старого трека новым клиентам
@@ -159,6 +167,49 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	defer file.Close()
 	
+	// пропустить ID3v2, если он есть
+	header := make([]byte, 10)
+	if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
+		// размер хранится в 4 sync-safe byte (6..9)
+		tagSize := int(header[6]&0x7F)<<21 | int(header[7]&0x7F)<<14 | int(header[8]&0x7F)<<7 | int(header[9]&0x7F)
+		log.Printf("ДИАГНОСТИКА: Обнаружен ID3v2-тег размером %d байт, пропускаем", tagSize)
+		if _, err := file.Seek(int64(tagSize), io.SeekCurrent); err != nil {
+			log.Printf("ПРЕДУПРЕЖДЕНИЕ: Ошибка при пропуске ID3-тега: %v", err)
+		}
+	} else {
+		// тега нет – откатываемся в начало
+		file.Seek(0, io.SeekStart)
+		log.Printf("ДИАГНОСТИКА: ID3v2-тег не обнаружен, начинаем чтение с начала файла")
+	}
+	
+	// Проверяем наличие ID3v1-тега (128 байт в конце файла)
+	fileSize := fileInfo.Size()
+	hasID3v1 := false
+	if fileSize > 128 {
+		// Сохраняем текущую позицию
+		currentPos, err := file.Seek(0, io.SeekCurrent)
+		if err == nil {
+			// Переходим к концу файла минус 128 байт
+			_, err = file.Seek(fileSize-128, io.SeekStart)
+			if err == nil {
+				// Читаем 3 байта для проверки тега
+				tagCheck := make([]byte, 3)
+				if _, err := io.ReadFull(file, tagCheck); err == nil && string(tagCheck) == "TAG" {
+					hasID3v1 = true
+					log.Printf("ДИАГНОСТИКА: Обнаружен ID3v1-тег в конце файла, будем игнорировать последние 128 байт")
+				}
+			}
+			// Возвращаем указатель на прежнюю позицию
+			file.Seek(currentPos, io.SeekStart)
+		}
+	}
+	
+	// Устанавливаем эффективный размер файла (без ID3v1-тега)
+	effectiveFileSize := fileSize
+	if hasID3v1 {
+		effectiveFileSize -= 128
+	}
+	
 	// Инициализация буфера и счетчика
 	buffer := s.bufferPool.Get().([]byte)
 	defer s.bufferPool.Put(buffer)
@@ -182,7 +233,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		select {
 		case <-s.quit:
 			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
-				trackPath, bytesRead, fileInfo.Size())
+				trackPath, bytesRead, effectiveFileSize)
 			return nil
 		default:
 			// Продолжаем выполнение
@@ -242,7 +293,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			// Продолжаем обработку
 		case <-s.quit:
 			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s во время задержки (прочитано %d байт из %d)", 
-				trackPath, bytesRead, fileInfo.Size())
+				trackPath, bytesRead, effectiveFileSize)
 			return nil
 		}
 	}
@@ -424,10 +475,19 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 					// Данные успешно отправлены
 					return nil
 				case <-time.After(200 * time.Millisecond):
-					// Тайм-аут при отправке данных
-					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
-					s.RemoveClient(clientID)
-					return nil
+					// Тайм-аут при отправке данных - делаем еще одну попытку
+					log.Printf("Первый тайм-аут при отправке данных клиенту %d, повторная попытка...", clientID)
+					
+					select {
+					case clientChan <- data:
+						log.Printf("Повторная отправка данных клиенту %d успешна", clientID)
+						return nil
+					case <-time.After(200 * time.Millisecond):
+						// Второй тайм-аут, теперь отключаем клиента
+						log.Printf("Второй тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
+						s.RemoveClient(clientID)
+						return nil
+					}
 				}
 			})
 		}
@@ -469,9 +529,17 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 				case client.ch <- data: // Используем оригинальный буфер, а не копию
 					// Данные успешно отправлены
 				case <-time.After(200 * time.Millisecond):
-					// Тайм-аут при отправке данных
-					log.Printf("Тайм-аут при отправке данных клиенту %d, отключаем...", client.id)
-					s.RemoveClient(client.id)
+					// Тайм-аут при отправке данных - делаем еще одну попытку
+					log.Printf("Первый тайм-аут при отправке данных клиенту %d, повторная попытка...", client.id)
+					
+					select {
+					case client.ch <- data:
+						log.Printf("Повторная отправка данных клиенту %d успешна", client.id)
+					case <-time.After(200 * time.Millisecond):
+						// Второй тайм-аут, теперь отключаем клиента
+						log.Printf("Второй тайм-аут при отправке данных клиенту %d, отключаем...", client.id)
+						s.RemoveClient(client.id)
+					}
 				}
 			}
 		}(clients[i:end])

@@ -87,6 +87,9 @@ func (rs *RadioStation) RestartPlayback() {
 	// Немедленно остановить стример (прерывает текущее воспроизведение)
 	rs.streamer.StopCurrentTrack()
 	
+	// Добавляем короткую задержку для завершения операций со стримером
+	time.Sleep(50 * time.Millisecond)
+	
 	// Прерываем текущее воспроизведение, если оно идет
 	select {
 	case <-rs.currentTrack: // Канал уже закрыт

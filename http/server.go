@@ -1064,6 +1064,13 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 			// Получаем имя нового трека
 			if track, ok := nextTrack.(interface{ GetPath() string }); ok {
 				newTrackName = filepath.Base(track.GetPath())
+				
+				// Немедленно обновляем информацию о текущем треке
+				s.trackMutex.Lock()
+				s.currentTracks[route] = newTrackName
+				s.trackMutex.Unlock()
+				
+				log.Printf("ДИАГНОСТИКА: Немедленно обновлена информация о текущем треке для %s: %s", route, newTrackName)
 			}
 		} else {
 			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
@@ -1128,6 +1135,13 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 			// Получаем имя нового трека
 			if track, ok := prevTrack.(interface{ GetPath() string }); ok {
 				newTrackName = filepath.Base(track.GetPath())
+				
+				// Немедленно обновляем информацию о текущем треке
+				s.trackMutex.Lock()
+				s.currentTracks[route] = newTrackName
+				s.trackMutex.Unlock()
+				
+				log.Printf("ДИАГНОСТИКА: Немедленно обновлена информация о текущем треке для %s: %s", route, newTrackName)
 			}
 		} else {
 			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
