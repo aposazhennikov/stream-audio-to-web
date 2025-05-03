@@ -63,7 +63,7 @@ var (
 		0x00, 0x00, 0x00, 0x00, // Bitrate maximum
 		0x00, 0x00, 0x00, 0x00, // Bitrate nominal
 		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
-		0x00                    // Blocksize
+		0x00,                   // Blocksize
 	}
 )
 
@@ -267,7 +267,7 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 
 	// Check that the previous track matches the original track
 	if previousTrackPath != currentTrackPath {
-		t.Fatalf("Expected previous track path (%s) to be the same as original track path (%s)", 
+		t.Fatalf("Expected previous track path (%s) to be the same as original track path (%s)",
 			previousTrackPath, currentTrackPath)
 	}
 
@@ -364,7 +364,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 
 	// Check that both playlists have the same number of tracks
 	if len(regularTracks) != len(shuffleTracks) {
-		t.Fatalf("Expected both playlists to have the same number of tracks, but got %d and %d", 
+		t.Fatalf("Expected both playlists to have the same number of tracks, but got %d and %d",
 			len(regularTracks), len(shuffleTracks))
 	}
 
