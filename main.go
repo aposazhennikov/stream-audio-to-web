@@ -57,7 +57,7 @@ var (
 func main() {
 	// Sentry initialization
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn: "https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176",
+		Dsn: getEnvOrDefault("SENTRY_DSN", ""),
 		Environment: getEnvOrDefault("ENV", "development"),
 		Release:     "stream-audio-to-web@1.0.0",
 	})

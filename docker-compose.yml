@@ -26,6 +26,7 @@ services:
       - "DIRECTORY_ROUTES={\"test_audio\":\"/app/test_audio\",\"humor\":\"/app/humor\",\"science\":\"/app/science\",\"politics\":\"/app/politics\",\"nature\":\"/app/nature\", \"shaov\":\"/app/shaov\", \"troshin\":\"/app/troshin\"}"
       - SHUFFLE=false
       - STATUS_PASSWORD=1234554321
+      - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s

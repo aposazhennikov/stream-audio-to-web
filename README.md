@@ -91,6 +91,7 @@ The server can be configured through command line flags or environment variables
 | `--directory-routes` / `DIRECTORY_ROUTES` | JSON string with route-directory mapping | `{}` |
 | `--shuffle` / `SHUFFLE` | Enable/disable track shuffling         | `false`   |
 | (no flag) / `STATUS_PASSWORD` | Password for accessing the status page | `1234554321` |
+| (no flag) / `SENTRY_DSN` | Sentry DSN for error tracking | Empty (disabled) |
 
 ## Monitoring and Observability
 
@@ -156,6 +157,7 @@ docker run -d --name audio-streamer \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
   -e STATUS_PASSWORD=your_password \
+  -e SENTRY_DSN=your_sentry_dsn \
   audio-streamer:latest
 ```
 
@@ -202,6 +204,7 @@ services:
       - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
       - SHUFFLE=false
       - STATUS_PASSWORD=your_password
+      - SENTRY_DSN=your_sentry_dsn
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -295,6 +298,7 @@ docker run -d -p 8000:8000 \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
   -e STATUS_PASSWORD=your_password \
+  -e SENTRY_DSN=your_sentry_dsn \
   audio-streamer:latest
 ```
 
