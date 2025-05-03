@@ -888,6 +888,22 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
+		// Determine if this is AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return JSON error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   "",
+				"error":   "Authentication required",
+			})
+			return
+		}
+		
+		// Redirect to login page for regular requests
 		http.Redirect(w, r, "/status", http.StatusFound)
 		return
 	}
@@ -902,6 +918,21 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 	s.mutex.RUnlock()
 	
 	if !exists {
+		// Check if AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return JSON error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Route not found",
+			})
+			return
+		}
+		
 		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
@@ -984,6 +1015,22 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
+		// Determine if this is AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return JSON error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   "",
+				"error":   "Authentication required",
+			})
+			return
+		}
+		
+		// Redirect to login page for regular requests
 		http.Redirect(w, r, "/status", http.StatusFound)
 		return
 	}
@@ -998,6 +1045,21 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 	s.mutex.RUnlock()
 	
 	if !exists {
+		// Check if AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return JSON error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Route not found",
+			})
+			return
+		}
+		
 		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
@@ -1117,6 +1179,23 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Check authentication (same as for status page)
 	if !s.checkAuth(r) {
+		// Проверяем, является ли запрос AJAX
+		ajax := r.URL.Query().Get("ajax")
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || ajax == "1"
+		
+		if isAjax {
+			// Для AJAX запросов отправляем JSON с ошибкой
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Authentication required",
+				"route":   "",
+			})
+			return
+		}
+		
+		// Для обычных запросов делаем редирект
 		s.redirectToLogin(w, r)
 		return
 	}
