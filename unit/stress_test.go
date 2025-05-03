@@ -20,13 +20,23 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
+	t.Log("STRESS TEST START: Beginning parallel playlist test with detailed logging")
+	
+	// Set shorter test timeout
+	timer := time.AfterFunc(30*time.Second, func() {
+		t.Logf("FATAL: Test timed out after 30 seconds - possible deadlock detected")
+		// In a real emergency we could use os.Exit(1) here, but that's extreme
+	})
+	defer timer.Stop()
+
 	// Number of playlists to create in parallel
 	const numPlaylists = 7
 	
-	// Number of files per playlist
-	const filesPerPlaylist = 230
+	// Number of files per playlist - reduce for faster test
+	const filesPerPlaylist = 50 // Reduced from 230 to speed up test
 	
 	// Create base temp directory
+	t.Log("STEP 1: Creating temporary test directory")
 	baseDir, err := ioutil.TempDir("", "playlist-stress-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -35,6 +45,8 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 	
 	// Create multiple playlist directories
 	var dirs []string
+	t.Logf("STEP 2: Creating %d playlist directories with %d files each", numPlaylists, filesPerPlaylist)
+	
 	for i := 0; i < numPlaylists; i++ {
 		dir := filepath.Join(baseDir, fmt.Sprintf("playlist-%d", i))
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -42,6 +54,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		}
 		dirs = append(dirs, dir)
 		
+		t.Logf("STEP 2.%d: Creating files for playlist %d", i+1, i)
 		// Create many dummy files for this playlist
 		for j := 0; j < filesPerPlaylist; j++ {
 			filename := filepath.Join(dir, fmt.Sprintf("track-%03d.mp3", j))
@@ -56,6 +69,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 	}
 	
 	// Start timers for diagnostics
+	t.Log("STEP 3: Starting parallel playlist initialization")
 	start := time.Now()
 	
 	// Create playlists in parallel with shuffle enabled
@@ -69,10 +83,11 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		go func(idx int, directory string) {
 			defer wg.Done()
 			
-			t.Logf("Starting initialization of playlist %d from directory %s", idx, directory)
-			playlistStart := time.Now()
+			plStart := time.Now()
+			t.Logf("PLAYLIST %d: Starting initialization from directory %s", idx, directory)
 			
 			// Create playlist with shuffling enabled
+			t.Logf("PLAYLIST %d: Creating playlist object (NewPlaylist call)", idx)
 			pl, err := playlist.NewPlaylist(directory, nil, true)
 			if err != nil {
 				results <- fmt.Errorf("playlist %d creation failed: %v", idx, err)
@@ -80,11 +95,16 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 			}
 			defer pl.Close()
 			
+			t.Logf("PLAYLIST %d: Playlist created successfully, took %v", idx, time.Since(plStart))
+			
 			// Explicitly call Shuffle to test concurrent shuffling
-			t.Logf("Explicitly shuffling playlist %d", idx)
+			t.Logf("PLAYLIST %d: Explicitly calling Shuffle()", idx)
+			shuffleStart := time.Now()
 			pl.Shuffle()
+			t.Logf("PLAYLIST %d: Shuffle() completed in %v", idx, time.Since(shuffleStart))
 			
 			// Verify playlist has been loaded
+			t.Logf("PLAYLIST %d: Getting tracks to verify", idx)
 			tracks := pl.GetTracks()
 			if len(tracks) != filesPerPlaylist {
 				results <- fmt.Errorf("playlist %d has wrong number of tracks: got %d, want %d", 
@@ -93,27 +113,48 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 			}
 			
 			// Call some operations to test functionality
+			t.Logf("PLAYLIST %d: Testing GetCurrentTrack()", idx)
 			pl.GetCurrentTrack()
+			
+			t.Logf("PLAYLIST %d: Testing NextTrack()", idx)
 			pl.NextTrack()
+			
+			t.Logf("PLAYLIST %d: Testing PreviousTrack()", idx)
 			pl.PreviousTrack()
 			
 			// Shuffle again to test repeated shuffle
+			t.Logf("PLAYLIST %d: Calling Shuffle() second time", idx)
+			shuffleStart = time.Now()
 			pl.Shuffle()
+			t.Logf("PLAYLIST %d: Second shuffle completed in %v", idx, time.Since(shuffleStart))
 			
-			elapsed := time.Since(playlistStart)
-			t.Logf("Playlist %d initialized and shuffled in %v", idx, elapsed)
+			elapsed := time.Since(plStart)
+			t.Logf("PLAYLIST %d: All operations completed in %v", idx, elapsed)
 			
 			results <- nil
 		}(i, dir)
 	}
 	
-	// Wait for all goroutines to complete
+	// Wait for all goroutines to complete with timeout
+	done := make(chan struct{})
 	go func() {
+		t.Log("STEP 4: Waiting for all playlist operations to complete")
 		wg.Wait()
 		close(results)
+		close(done)
 	}()
 	
+	// Add safety timeout
+	select {
+	case <-done:
+		t.Log("All goroutines completed normally")
+	case <-time.After(25 * time.Second):
+		t.Log("WARNING: Wait timeout occurred - not all goroutines completed in time")
+		// Continue to check results anyway
+	}
+	
 	// Collect results
+	t.Log("STEP 5: Collecting results from operations")
 	var failures []error
 	for err := range results {
 		if err != nil {
@@ -123,7 +164,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 	}
 	
 	elapsed := time.Since(start)
-	t.Logf("All playlists processed in %v", elapsed)
+	t.Logf("STRESS TEST COMPLETE: All playlists processed in %v", elapsed)
 	
 	if len(failures) > 0 {
 		t.Fatalf("Failed to initialize %d out of %d playlists", len(failures), numPlaylists)

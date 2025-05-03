@@ -357,7 +357,8 @@ func (p *Playlist) GetStartTime() time.Time {
 
 // Shuffle randomizes the track list
 func (p *Playlist) Shuffle() {
-	log.Printf("DIAGNOSTICS: Starting playlist shuffle for directory %s...", p.directory)
+	callerID := fmt.Sprintf("%p", p) // Unique ID for this playlist instance
+	log.Printf("SHUFFLE-%s: Starting playlist shuffle for directory %s...", callerID, p.directory)
 	
 	// Create a copy of tracks slice to avoid long mutex locking
 	var tracksToShuffle []Track
@@ -365,39 +366,54 @@ func (p *Playlist) Shuffle() {
 	// Get a snapshot of tracks with a short lock
 	func() {
 		// Try to acquire the lock (short operation)
+		lockStart := time.Now()
+		log.Printf("SHUFFLE-%s: Attempting to acquire mutex lock", callerID)
 		p.mutex.Lock()
-		defer p.mutex.Unlock()
+		lockTime := time.Since(lockStart)
+		log.Printf("SHUFFLE-%s: Mutex lock acquired in %v", callerID, lockTime)
+		defer func() {
+			unlockStart := time.Now()
+			p.mutex.Unlock()
+			log.Printf("SHUFFLE-%s: Mutex lock released in %v", callerID, time.Since(unlockStart))
+		}()
 		
-		log.Printf("DIAGNOSTICS: Acquired lock to make a copy of tracks list (%d tracks)", len(p.tracks))
+		// Measure the time of the copy operation
+		copyStart := time.Now()
+		log.Printf("SHUFFLE-%s: Making a copy of tracks list (%d tracks)", callerID, len(p.tracks))
 		
 		// Make a copy of the tracks
 		tracksToShuffle = make([]Track, len(p.tracks))
 		copy(tracksToShuffle, p.tracks)
 		
+		copyTime := time.Since(copyStart)
+		log.Printf("SHUFFLE-%s: Track list copied in %v", callerID, copyTime)
+		
 		// Save current track pointer for restoration
 		if len(p.tracks) > 0 && p.current < len(p.tracks) {
-			log.Printf("DIAGNOSTICS: Current track is %s (position: %d)", 
-				p.tracks[p.current].Name, p.current)
+			log.Printf("SHUFFLE-%s: Current track is %s (position: %d)", 
+				callerID, p.tracks[p.current].Name, p.current)
 		}
 	}()
 	
 	// Check if we have enough tracks to shuffle
 	if len(tracksToShuffle) <= 1 {
-		log.Printf("DIAGNOSTICS: Not enough tracks to shuffle (%d)", len(tracksToShuffle))
+		log.Printf("SHUFFLE-%s: Not enough tracks to shuffle (%d)", callerID, len(tracksToShuffle))
 		return
 	}
 	
 	// Create a new random source (independent of global state)
+	randomStart := time.Now()
+	log.Printf("SHUFFLE-%s: Creating random number generator", callerID)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
 	// Shuffle the copy outside of lock
-	log.Printf("DIAGNOSTICS: Shuffling %d tracks outside of lock", len(tracksToShuffle)) 
+	log.Printf("SHUFFLE-%s: Starting to shuffle %d tracks outside of lock", callerID, len(tracksToShuffle)) 
 	
 	// Use memory-efficient shuffling for large playlists
 	trackCount := len(tracksToShuffle)
 	if trackCount > 500 {
 		// For very large playlists, just shuffle a portion to be efficient
-		log.Printf("DIAGNOSTICS: Using optimized shuffling for large playlist (%d tracks)", trackCount)
+		log.Printf("SHUFFLE-%s: Using optimized shuffling for large playlist (%d tracks)", callerID, trackCount)
 		for i := 0; i < min(100, trackCount-1); i++ {
 			j := r.Intn(trackCount-i) + i
 			tracksToShuffle[i], tracksToShuffle[j] = tracksToShuffle[j], tracksToShuffle[i]
@@ -410,13 +426,23 @@ func (p *Playlist) Shuffle() {
 		}
 	}
 	
+	shuffleTime := time.Since(randomStart)
+	log.Printf("SHUFFLE-%s: Tracks shuffled in %v", callerID, shuffleTime)
+	
 	// Apply shuffled tracks with a short lock
 	func() {
+		applyStart := time.Now()
+		log.Printf("SHUFFLE-%s: Attempting to acquire mutex lock to apply shuffled tracks", callerID)
 		// Try to acquire the lock again (short operation)
+		lockStart := time.Now()
 		p.mutex.Lock()
-		defer p.mutex.Unlock()
-		
-		log.Printf("DIAGNOSTICS: Acquired lock to apply shuffled tracks")
+		lockTime := time.Since(lockStart)
+		log.Printf("SHUFFLE-%s: Mutex lock for applying changes acquired in %v", callerID, lockTime)
+		defer func() {
+			unlockStart := time.Now()
+			p.mutex.Unlock()
+			log.Printf("SHUFFLE-%s: Final mutex lock released in %v", callerID, time.Since(unlockStart))
+		}()
 		
 		// Get current track before replacing
 		var currentTrackPath string
@@ -433,7 +459,7 @@ func (p *Playlist) Shuffle() {
 			for i, track := range p.tracks {
 				if track.Path == currentTrackPath {
 					p.current = i
-					log.Printf("DIAGNOSTICS: Restored current track position to %d", i)
+					log.Printf("SHUFFLE-%s: Restored current track position to %d", callerID, i)
 					found = true
 					break
 				}
@@ -441,12 +467,16 @@ func (p *Playlist) Shuffle() {
 			
 			if !found && len(p.tracks) > 0 {
 				p.current = 0
-				log.Printf("DIAGNOSTICS: Could not find original track after shuffle, reset to beginning")
+				log.Printf("SHUFFLE-%s: Could not find original track after shuffle, reset to beginning", callerID)
 			}
 		}
+		
+		applyTime := time.Since(applyStart)
+		log.Printf("SHUFFLE-%s: Applied shuffled tracks in %v", callerID, applyTime)
 	}()
 	
-	log.Printf("DIAGNOSTICS: Playlist shuffle completed for %s", p.directory)
+	totalTime := time.Since(randomStart)
+	log.Printf("SHUFFLE-%s: Playlist shuffle completed for %s in total %v", callerID, p.directory, totalTime)
 }
 
 // GetTracks returns a copy of the track list
