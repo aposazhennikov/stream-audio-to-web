@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// getEnvOrDefault возвращает значение переменной окружения или значение по умолчанию
+// getEnvOrDefault returns the value of environment variable or the default value
 func getEnvOrDefault(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -19,22 +19,22 @@ func getEnvOrDefault(key, defaultValue string) string {
 }
 
 func TestHealthzEndpoint(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// Отправляем GET-запрос к /healthz
+	// Send GET request to /healthz
 	resp, err := http.Get(fmt.Sprintf("%s/healthz", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /healthz: %v", err)
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 	
-	// Проверяем тело ответа
+	// Check response body
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
@@ -46,22 +46,22 @@ func TestHealthzEndpoint(t *testing.T) {
 }
 
 func TestReadyzEndpoint(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// Отправляем GET-запрос к /readyz
+	// Send GET request to /readyz
 	resp, err := http.Get(fmt.Sprintf("%s/readyz", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /readyz: %v", err)
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 	
-	// Проверяем, что тело ответа содержит "Ready"
+	// Check that response body contains "Ready"
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
@@ -73,22 +73,22 @@ func TestReadyzEndpoint(t *testing.T) {
 }
 
 func TestStreamsEndpoint(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// Отправляем GET-запрос к /streams
+	// Send GET request to /streams
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /streams: %v", err)
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 	
-	// Проверяем, что тело ответа не пустое и содержит "streams"
+	// Check that response body is not empty and contains "streams"
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
@@ -104,10 +104,10 @@ func TestStreamsEndpoint(t *testing.T) {
 }
 
 func TestAudioStreamEndpoint(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// Получаем список маршрутов из /streams
+	// Get list of routes from /streams
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /streams: %v", err)
@@ -119,14 +119,14 @@ func TestAudioStreamEndpoint(t *testing.T) {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
 	
-	// Простая проверка - если не удалось получить маршруты из /streams, 
-	// используем маршрут по умолчанию
+	// Simple check - if routes couldn't be obtained from /streams,
+	// use default route
 	testRoute := "/humor"
 	if strings.Contains(string(body), "/science") {
 		testRoute = "/science"
 	}
 	
-	// Отправляем HEAD-запрос к аудио-стриму
+	// Send HEAD request to audio stream
 	req, err := http.NewRequest("HEAD", fmt.Sprintf("%s%s", baseURL, testRoute), nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
@@ -142,12 +142,12 @@ func TestAudioStreamEndpoint(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for %s, got %d", http.StatusOK, testRoute, resp.StatusCode)
 	}
 	
-	// Проверяем заголовок Content-Type
+	// Check Content-Type header
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "audio/") {
 		t.Errorf("Expected Content-Type to contain 'audio/', got '%s'", contentType)

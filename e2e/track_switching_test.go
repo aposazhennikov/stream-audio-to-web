@@ -13,37 +13,37 @@ import (
 )
 
 func TestTrackSwitchingEndpoints(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	
-	// Получаем информацию о доступных стримах
+	// Get information about available streams
 	streamsResp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to get streams info: %v", err)
 	}
 	defer streamsResp.Body.Close()
 	
-	// Декодируем JSON ответ
+	// Decode JSON response
 	var streamsData map[string]interface{}
 	if err := json.NewDecoder(streamsResp.Body).Decode(&streamsData); err != nil {
 		t.Fatalf("Failed to decode streams response: %v", err)
 		return
 	}
 	
-	// Находим первый доступный маршрут
+	// Find first available route
 	streams, ok := streamsData["streams"].([]interface{})
 	if !ok || len(streams) == 0 {
 		t.Skip("No streams available for testing")
 		return
 	}
 	
-	// Берем первый доступный стрим для теста
+	// Take first available stream for test
 	var routeName string
 	if stream, ok := streams[0].(map[string]interface{}); ok {
 		if route, ok := stream["route"].(string); ok {
 			routeName = route
-			// Удаляем ведущий слеш, если есть
+			// Remove leading slash if present
 			if routeName[0] == '/' {
 				routeName = routeName[1:]
 			}
@@ -57,14 +57,14 @@ func TestTrackSwitchingEndpoints(t *testing.T) {
 	
 	t.Logf("Using stream route: %s for track switching tests", routeName)
 	
-	// Создаем клиент с поддержкой cookies для аутентификации
+	// Create client with cookie support for authentication
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
 		Jar: jar,
 		Timeout: 10 * time.Second,
 	}
 	
-	// Аутентифицируемся
+	// Authenticate
 	form := url.Values{}
 	form.Add("password", password)
 	
@@ -73,21 +73,21 @@ func TestTrackSwitchingEndpoints(t *testing.T) {
 		t.Fatalf("Failed to authenticate: %v", err)
 	}
 	
-	// Тест 1: Проверка API переключения треков вперед
+	// Test 1: Check next track API
 	testNextTrackAPI(t, client, baseURL, routeName)
 	
-	// Тест 2: Проверка API переключения треков назад
+	// Test 2: Check previous track API
 	testPrevTrackAPI(t, client, baseURL, routeName)
 }
 
 func testNextTrackAPI(t *testing.T, client *http.Client, baseURL, routeName string) {
-	// Получаем информацию о текущем треке
+	// Get current track information
 	initialTrackInfo := getCurrentTrackInfo(t, client, baseURL, routeName)
 	initialTrackName := initialTrackInfo["track"].(string)
 	
 	t.Logf("Initial track: %s", initialTrackName)
 	
-	// Вызываем API для переключения на следующий трек (используем AJAX=1 для получения JSON)
+	// Call API to switch to next track (use AJAX=1 to get JSON)
 	nextTrackURL := fmt.Sprintf("%s/next-track/%s?ajax=1", baseURL, routeName)
 	resp, err := client.Post(nextTrackURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
@@ -95,7 +95,7 @@ func testNextTrackAPI(t *testing.T, client *http.Client, baseURL, routeName stri
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for next-track API, got %d", http.StatusOK, resp.StatusCode)
 		body, _ := ioutil.ReadAll(resp.Body)
@@ -103,48 +103,48 @@ func testNextTrackAPI(t *testing.T, client *http.Client, baseURL, routeName stri
 		return
 	}
 	
-	// Проверяем, что тип контента JSON
+	// Check that content type is JSON
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
 		t.Errorf("Expected Content-Type to be application/json, got %s", contentType)
 	}
 	
-	// Декодируем JSON ответ
+	// Decode JSON response
 	var responseData map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&responseData); err != nil {
 		t.Errorf("Failed to decode JSON response: %v", err)
 		return
 	}
 	
-	// Проверяем, что в ответе есть данные об успешном переключении
+	// Check that response contains data about successful switching
 	success, ok := responseData["success"].(bool)
 	if !ok || !success {
 		t.Errorf("Next track API did not report success")
 	}
 	
-	// Даем время серверу на переключение
+	// Give server time to switch
 	time.Sleep(500 * time.Millisecond)
 	
-	// Получаем информацию о новом текущем треке
+	// Get information about new current track
 	newTrackInfo := getCurrentTrackInfo(t, client, baseURL, routeName)
 	newTrackName := newTrackInfo["track"].(string)
 	
 	t.Logf("New track after next: %s", newTrackName)
 	
-	// Проверяем, что трек действительно изменился
+	// Check that track has actually changed
 	if newTrackName == initialTrackName {
 		t.Errorf("Track did not change after calling next-track API")
 	}
 }
 
 func testPrevTrackAPI(t *testing.T, client *http.Client, baseURL, routeName string) {
-	// Получаем информацию о текущем треке
+	// Get current track information
 	initialTrackInfo := getCurrentTrackInfo(t, client, baseURL, routeName)
 	initialTrackName := initialTrackInfo["track"].(string)
 	
 	t.Logf("Initial track before prev: %s", initialTrackName)
 	
-	// Вызываем API для переключения на предыдущий трек
+	// Call API to switch to previous track
 	prevTrackURL := fmt.Sprintf("%s/prev-track/%s?ajax=1", baseURL, routeName)
 	resp, err := client.Post(prevTrackURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
@@ -152,28 +152,28 @@ func testPrevTrackAPI(t *testing.T, client *http.Client, baseURL, routeName stri
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for prev-track API, got %d", http.StatusOK, resp.StatusCode)
 		return
 	}
 	
-	// Даем время серверу на переключение
+	// Give server time to switch
 	time.Sleep(500 * time.Millisecond)
 	
-	// Получаем информацию о новом текущем треке
+	// Get information about new current track
 	newTrackInfo := getCurrentTrackInfo(t, client, baseURL, routeName)
 	newTrackName := newTrackInfo["track"].(string)
 	
 	t.Logf("New track after prev: %s", newTrackName)
 	
-	// Проверяем, что трек действительно изменился
+	// Check that track has actually changed
 	if newTrackName == initialTrackName {
 		t.Errorf("Track did not change after calling prev-track API")
 	}
 }
 
-// Вспомогательная функция для получения информации о текущем треке
+// Helper function to get current track information
 func getCurrentTrackInfo(t *testing.T, client *http.Client, baseURL, routeName string) map[string]interface{} {
 	trackInfoURL := fmt.Sprintf("%s/now-playing?route=/%s", baseURL, routeName)
 	resp, err := client.Get(trackInfoURL)

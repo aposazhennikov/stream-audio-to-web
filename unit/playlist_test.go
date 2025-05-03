@@ -10,64 +10,64 @@ import (
 	"github.com/user/stream-audio-to-web/playlist"
 )
 
-// Минимальные валидные аудиофайлы для тестирования
+// Minimal valid audio files for testing
 var (
-	// Минимальный валидный MP3 файл (фрейм данных)
+	// Minimal valid MP3 file (data frame)
 	minimumMP3Data = []byte{
 		0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Минимальные данные
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Minimal data
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	}
 
-	// Минимальный валидный WAV файл (44 байта заголовок + минимальные данные)
+	// Minimal valid WAV file (44 bytes header + minimal data)
 	minimumWAVData = []byte{
-		// RIFF заголовок
+		// RIFF header
 		0x52, 0x49, 0x46, 0x46, // "RIFF"
-		0x24, 0x00, 0x00, 0x00, // Размер чанка (36 + размер данных)
+		0x24, 0x00, 0x00, 0x00, // Chunk size (36 + data size)
 		0x57, 0x41, 0x56, 0x45, // "WAVE"
-		// fmt субчанк
+		// fmt subchunk
 		0x66, 0x6D, 0x74, 0x20, // "fmt "
-		0x10, 0x00, 0x00, 0x00, // Размер подчанка (16 байт)
-		0x01, 0x00,             // Аудио формат (1 = PCM)
-		0x01, 0x00,             // Число каналов (1 = моно)
-		0x44, 0xAC, 0x00, 0x00, // Частота дискретизации (44100 Гц)
-		0x88, 0x58, 0x01, 0x00, // Байтрейт (44100 * 1 * 16/8)
-		0x02, 0x00,             // Выравнивание блока (каналы * битность / 8)
-		0x10, 0x00,             // Битность (16 бит)
-		// data субчанк
+		0x10, 0x00, 0x00, 0x00, // Subchunk size (16 bytes)
+		0x01, 0x00,             // Audio format (1 = PCM)
+		0x01, 0x00,             // Number of channels (1 = mono)
+		0x44, 0xAC, 0x00, 0x00, // Sample rate (44100 Hz)
+		0x88, 0x58, 0x01, 0x00, // Byte rate (44100 * 1 * 16/8)
+		0x02, 0x00,             // Block align (channels * bits/sample / 8)
+		0x10, 0x00,             // Bits per sample (16 bits)
+		// data subchunk
 		0x64, 0x61, 0x74, 0x61, // "data"
-		0x00, 0x00, 0x00, 0x00, // Размер данных (0 байт)
-		// Минимальные данные (1 сэмпл)
+		0x00, 0x00, 0x00, 0x00, // Data size (0 bytes)
+		// Minimal data (1 sample)
 		0x00, 0x00,
 	}
 
-	// Минимальный валидный OGG файл (только заголовок без данных)
+	// Minimal valid OGG file (header only without data)
 	minimumOGGData = []byte{
-		// OGG заголовок
+		// OGG header
 		0x4F, 0x67, 0x67, 0x53, // "OggS"
-		0x00,                   // Версия
-		0x02,                   // Тип заголовка
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Гранульная позиция (0)
-		0x01, 0x02, 0x03, 0x04, // Серийный номер (произвольный)
-		0x00, 0x00, 0x00, 0x00, // Номер страницы
-		0x01, 0x00, 0x00, 0x00, // CRC контрольная сумма
-		0x01,                   // Количество сегментов
-		0x1E,                   // Размер сегмента (30 байт)
-		// Vorbis заголовок (упрощенный)
+		0x00,                   // Version
+		0x02,                   // Header type
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Granule position (0)
+		0x01, 0x02, 0x03, 0x04, // Serial number (arbitrary)
+		0x00, 0x00, 0x00, 0x00, // Page number
+		0x01, 0x00, 0x00, 0x00, // CRC checksum
+		0x01,                   // Number of segments
+		0x1E,                   // Segment size (30 bytes)
+		// Vorbis header (simplified)
 		0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73, // "\x01vorbis"
-		0x00, 0x00, 0x00, 0x00, // Версия Vorbis
-		0x01,                   // Каналы (1)
-		0x44, 0xAC, 0x00, 0x00, // Частота дискретизации (44100 Гц)
-		0x00, 0x00, 0x00, 0x00, // Битрейт максимальный
-		0x00, 0x00, 0x00, 0x00, // Битрейт номинальный
-		0x00, 0x00, 0x00, 0x00, // Битрейт минимальный
+		0x00, 0x00, 0x00, 0x00, // Vorbis version
+		0x01,                   // Channels (1)
+		0x44, 0xAC, 0x00, 0x00, // Sample rate (44100 Hz)
+		0x00, 0x00, 0x00, 0x00, // Bitrate maximum
+		0x00, 0x00, 0x00, 0x00, // Bitrate nominal
+		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
 		0x00                    // Blocksize
 	}
 )
 
-// Создание различных типов аудиофайлов для тестирования
+// Creating different audio file types for testing
 func createTestAudioFiles(dir string) error {
 	files := []struct {
 		name string
@@ -90,39 +90,39 @@ func createTestAudioFiles(dir string) error {
 }
 
 func TestPlaylist_GetCurrentTrack(t *testing.T) {
-	// Создаем временную директорию для тестов
+	// Create a temporary directory for tests
 	tmpDir, err := ioutil.TempDir("", "playlist-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Создаем разнообразные аудиофайлы для тестирования
+	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Инициализируем плейлист
+	// Initialize playlist
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Даем время на инициализацию плейлиста
+	// Allow time for playlist initialization
 	time.Sleep(200 * time.Millisecond)
 
-	// Проверяем, что текущий трек не пустой
+	// Check that the current track is not empty
 	track := pl.GetCurrentTrack()
 	if track == nil {
 		t.Fatalf("Expected current track to not be nil")
 	}
 
-	// Проверяем, что трек имеет путь
+	// Check that the track has a path
 	if track, ok := track.(interface{ GetPath() string }); !ok || track.GetPath() == "" {
 		t.Fatalf("Expected track to have a valid path")
 	}
 
-	// Проверяем, что история начинается с текущего трека
+	// Check that history starts with the current track
 	history := pl.GetHistory()
 	if len(history) == 0 {
 		t.Fatalf("Expected history to contain at least one item")
@@ -133,54 +133,54 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 }
 
 func TestPlaylist_NextTrack(t *testing.T) {
-	// Создаем временную директорию для тестов
+	// Create a temporary directory for tests
 	tmpDir, err := ioutil.TempDir("", "playlist-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Создаем разнообразные аудиофайлы для тестирования
+	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Инициализируем плейлист
+	// Initialize playlist
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Даем время на инициализацию плейлиста
+	// Allow time for playlist initialization
 	time.Sleep(200 * time.Millisecond)
 
-	// Получаем текущий трек
+	// Get current track
 	currentTrack := pl.GetCurrentTrack()
 	if currentTrack == nil {
 		t.Fatalf("Expected current track to not be nil before switching")
 	}
 
-	// Логируем текущее состояние для отладки
+	// Log current state for debugging
 	t.Logf("Initial track: %v", currentTrack)
 	t.Logf("Initial history: %v", pl.GetHistory())
 
-	// Переходим к следующему треку
+	// Move to next track
 	nextTrack := pl.NextTrack()
 
-	// Даем время на обновление истории
+	// Allow time for history to update
 	time.Sleep(200 * time.Millisecond)
 
-	// Проверяем, что следующий трек не пустой
+	// Check that the next track is not empty
 	if nextTrack == nil {
 		t.Fatalf("Expected next track to not be nil")
 	}
 
-	// Проверяем, что трек имеет путь
+	// Check that the track has a path
 	if track, ok := nextTrack.(interface{ GetPath() string }); !ok || track.GetPath() == "" {
 		t.Fatalf("Expected next track to have a valid path")
 	}
 
-	// Проверяем, что следующий трек отличается от текущего
+	// Check that the next track is different from the current track
 	if nextTrack == currentTrack {
 		if currentTrackPath, ok := currentTrack.(interface{ GetPath() string }); ok {
 			if nextTrackPath, ok := nextTrack.(interface{ GetPath() string }); ok {
@@ -191,41 +191,41 @@ func TestPlaylist_NextTrack(t *testing.T) {
 		}
 	}
 
-	// Проверяем, что история обновилась
+	// Check that history has been updated
 	history := pl.GetHistory()
 	if len(history) < 2 {
 		t.Fatalf("Expected history to contain at least two items, but got %d", len(history))
 	}
 
-	// Логируем результаты для отладки
+	// Log results for debugging
 	t.Logf("After next track operation:")
 	t.Logf("Next track: %v", nextTrack)
 	t.Logf("Updated history: %v", history)
 }
 
 func TestPlaylist_PreviousTrack(t *testing.T) {
-	// Создаем временную директорию для тестов
+	// Create a temporary directory for tests
 	tmpDir, err := ioutil.TempDir("", "playlist-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Создаем разнообразные аудиофайлы для тестирования
+	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Инициализируем плейлист
+	// Initialize playlist
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Даем время на инициализацию плейлиста
+	// Allow time for playlist initialization
 	time.Sleep(200 * time.Millisecond)
 
-	// Запоминаем текущий трек
+	// Remember current track
 	currentTrack := pl.GetCurrentTrack()
 	currentTrackPath := ""
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
@@ -233,13 +233,13 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 		t.Logf("Initial track path: %s", currentTrackPath)
 	}
 
-	// Переходим к следующему треку
+	// Move to next track
 	pl.NextTrack()
 
-	// Даем время на обновление плейлиста
+	// Allow time for playlist to update
 	time.Sleep(200 * time.Millisecond)
 
-	// Проверяем, что трек действительно изменился
+	// Check that the track has changed
 	midTrack := pl.GetCurrentTrack()
 	midTrackPath := ""
 	if track, ok := midTrack.(interface{ GetPath() string }); ok {
@@ -247,43 +247,43 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 		t.Logf("Middle track path (after next): %s", midTrackPath)
 	}
 
-	// Возвращаемся к предыдущему треку
+	// Move back to previous track
 	previousTrack := pl.PreviousTrack()
 
-	// Даем время на обновление плейлиста
+	// Allow time for playlist to update
 	time.Sleep(200 * time.Millisecond)
 
-	// Проверяем, что предыдущий трек не пустой
+	// Check that the previous track is not empty
 	if previousTrack == nil {
 		t.Fatalf("Expected previous track to not be nil")
 	}
 
-	// Получаем путь предыдущего трека
+	// Get previous track path
 	previousTrackPath := ""
 	if track, ok := previousTrack.(interface{ GetPath() string }); ok {
 		previousTrackPath = track.GetPath()
 		t.Logf("Previous track path (after prev): %s", previousTrackPath)
 	}
 
-	// Проверяем, что предыдущий трек соответствует первоначальному
+	// Check that the previous track matches the original track
 	if previousTrackPath != currentTrackPath {
 		t.Fatalf("Expected previous track path (%s) to be the same as original track path (%s)", 
 			previousTrackPath, currentTrackPath)
 	}
 
-	// Логируем состояние истории
+	// Log history state
 	t.Logf("Final history: %v", pl.GetHistory())
 }
 
 func TestPlaylist_ShuffleMode(t *testing.T) {
-	// Создаем временную директорию для тестов
+	// Create a temporary directory for tests
 	tmpDir, err := ioutil.TempDir("", "playlist-test-shuffle")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Создаем больше аудиофайлов для лучшего тестирования перемешивания
+	// Create more audio files for better shuffle testing
 	files := []struct {
 		name string
 		data []byte
@@ -300,7 +300,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		{"10_track.mp3", minimumMP3Data},
 	}
 
-	// Создаем файлы
+	// Create files
 	for _, file := range files {
 		filePath := filepath.Join(tmpDir, file.name)
 		if err := ioutil.WriteFile(filePath, file.data, 0644); err != nil {
@@ -308,23 +308,23 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		}
 	}
 
-	// Инициализируем плейлист без перемешивания для сохранения исходного порядка
+	// Initialize playlist without shuffling to preserve original order
 	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to create regular playlist: %v", err)
 	}
 
-	// Даем время на инициализацию
+	// Allow time for initialization
 	time.Sleep(200 * time.Millisecond)
 
-	// Получаем треки из обычного плейлиста (должны быть в алфавитном порядке)
+	// Get tracks from regular playlist (should be in alphabetical order)
 	var regularTracks []string
 	currentTrack := regularPl.GetCurrentTrack()
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
 		regularTracks = append(regularTracks, filepath.Base(track.GetPath()))
 	}
 
-	// Перебираем треки в порядке следования
+	// Iterate through tracks in sequence
 	for i := 0; i < 9; i++ {
 		nextTrack := regularPl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
@@ -333,23 +333,23 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		}
 	}
 
-	// Инициализируем плейлист с перемешиванием
+	// Initialize playlist with shuffling
 	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, true)
 	if err != nil {
 		t.Fatalf("Failed to create shuffle playlist: %v", err)
 	}
 
-	// Даем время на инициализацию
+	// Allow time for initialization
 	time.Sleep(200 * time.Millisecond)
 
-	// Получаем треки из перемешанного плейлиста
+	// Get tracks from shuffled playlist
 	var shuffleTracks []string
 	currentTrack = shufflePl.GetCurrentTrack()
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
 		shuffleTracks = append(shuffleTracks, filepath.Base(track.GetPath()))
 	}
 
-	// Перебираем треки в порядке следования
+	// Iterate through tracks in sequence
 	for i := 0; i < 9; i++ {
 		nextTrack := shufflePl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
@@ -358,17 +358,17 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		}
 	}
 
-	// Выводим порядок треков для отладки
+	// Log track order for debugging
 	t.Logf("Regular playlist tracks order: %v", regularTracks)
 	t.Logf("Shuffled playlist tracks order: %v", shuffleTracks)
 
-	// Проверяем, что в обоих плейлистах одинаковое количество треков
+	// Check that both playlists have the same number of tracks
 	if len(regularTracks) != len(shuffleTracks) {
 		t.Fatalf("Expected both playlists to have the same number of tracks, but got %d and %d", 
 			len(regularTracks), len(shuffleTracks))
 	}
 
-	// Проверяем, что порядок треков отличается в режиме SHUFFLE
+	// Check that the track order is different in SHUFFLE mode
 	different := false
 	for i, track := range regularTracks {
 		if i < len(shuffleTracks) && track != shuffleTracks[i] {
@@ -381,7 +381,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		t.Errorf("Expected shuffled playlist to have different order than regular playlist, but they appear identical")
 	}
 
-	// Проверяем, что все файлы присутствуют в обоих плейлистах
+	// Check that all files are present in both playlists
 	regularMap := make(map[string]bool)
 	shuffleMap := make(map[string]bool)
 
@@ -393,14 +393,14 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		shuffleMap[track] = true
 	}
 
-	// Все файлы из обычного плейлиста должны быть в перемешанном
+	// All files from regular playlist should be in shuffled playlist
 	for track := range regularMap {
 		if !shuffleMap[track] {
 			t.Errorf("Track %s is missing in shuffled playlist", track)
 		}
 	}
 
-	// Все файлы из перемешанного плейлиста должны быть в обычном
+	// All files from shuffled playlist should be in regular playlist
 	for track := range shuffleMap {
 		if !regularMap[track] {
 			t.Errorf("Track %s is missing in regular playlist", track)

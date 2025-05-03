@@ -228,8 +228,25 @@ func (p *Playlist) NextTrack() interface{} {
 	currentTrack := p.tracks[p.current]
 	p.addTrackToHistory(currentTrack)
 
+	// Move to the next track
 	p.current = (p.current + 1) % len(p.tracks)
+	
+	// If we reached the end of playlist and shuffle is enabled, reshuffle for the next cycle
+	if p.current == 0 && p.shuffle {
+		log.Printf("DIAGNOSTICS: Reached end of playlist, will reshuffle for next cycle")
+		go p.reshuffleAtEnd() // Launch reshuffling in a separate goroutine
+	}
+	
 	return &p.tracks[p.current]
+}
+
+// reshuffleAtEnd reshuffles the playlist after a small delay
+// to avoid issues with current playback
+func (p *Playlist) reshuffleAtEnd() {
+	// Small delay to allow current track to start playing
+	time.Sleep(500 * time.Millisecond)
+	log.Printf("DIAGNOSTICS: Performing playlist reshuffle after reaching end")
+	p.Shuffle()
 }
 
 // PreviousTrack moves to the previous track and returns it
@@ -300,11 +317,46 @@ func (p *Playlist) Shuffle() {
 		return
 	}
 
-	log.Printf("DIAGNOSTICS: Shuffling %d tracks...", len(p.tracks))
+	// Save current track to restore it after shuffling
+	var currentTrack Track
+	if p.current < len(p.tracks) {
+		currentTrack = p.tracks[p.current]
+		log.Printf("DIAGNOSTICS: Current track before shuffle: %s", currentTrack.Name)
+	}
+
+	// Create a copy of the original order for logging
+	originalOrder := make([]string, min(5, len(p.tracks)))
+	for i := 0; i < len(originalOrder); i++ {
+		originalOrder[i] = p.tracks[i].Name
+	}
+	log.Printf("DIAGNOSTICS: First 5 tracks before shuffle: %v", originalOrder)
+
+	// Use Fisher-Yates shuffling algorithm
+	log.Printf("DIAGNOSTICS: Shuffling %d tracks using Fisher-Yates algorithm...", len(p.tracks))
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	r.Shuffle(len(p.tracks), func(i, j int) {
+	
+	for i := len(p.tracks) - 1; i > 0; i-- {
+		j := r.Intn(i + 1)
 		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
-	})
+	}
+
+	// Log the first few tracks after shuffling
+	shuffledOrder := make([]string, min(5, len(p.tracks)))
+	for i := 0; i < len(shuffledOrder); i++ {
+		shuffledOrder[i] = p.tracks[i].Name
+	}
+	log.Printf("DIAGNOSTICS: First 5 tracks after shuffle: %v", shuffledOrder)
+
+	// Restore the pointer to the current track if possible
+	if len(p.tracks) > 0 && currentTrack.Path != "" {
+		for i, track := range p.tracks {
+			if track.Path == currentTrack.Path {
+				p.current = i
+				log.Printf("DIAGNOSTICS: Restored current track position to %d", i)
+				break
+			}
+		}
+	}
 
 	log.Printf("DIAGNOSTICS: Playlist successfully shuffled: %s, tracks: %d", p.directory, len(p.tracks))
 }

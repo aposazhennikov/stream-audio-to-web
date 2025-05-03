@@ -13,28 +13,28 @@ import (
 )
 
 func TestNowPlayingEndpoint(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// Отправляем GET-запрос к /now-playing
+	// Send GET request to /now-playing
 	resp, err := http.Get(fmt.Sprintf("%s/now-playing", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /now-playing: %v", err)
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 	
-	// Проверяем, что ответ содержит JSON
+	// Check that response contains JSON
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
 		t.Errorf("Expected Content-Type to contain 'application/json', got '%s'", contentType)
 	}
 	
-	// Проверяем, что тело ответа не пустое
+	// Check that response body is not empty
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
@@ -46,11 +46,11 @@ func TestNowPlayingEndpoint(t *testing.T) {
 }
 
 func TestStatusPageAccess(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	
-	// Создаем HTTP-клиент с поддержкой cookie
+	// Create HTTP client with cookie support
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatalf("Failed to create cookie jar: %v", err)
@@ -61,19 +61,19 @@ func TestStatusPageAccess(t *testing.T) {
 		Timeout: 5 * time.Second,
 	}
 	
-	// Отправляем GET-запрос к странице входа
+	// Send GET request to login page
 	respGet, err := client.Get(fmt.Sprintf("%s/status", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send GET request to /status: %v", err)
 	}
 	respGet.Body.Close()
 	
-	// Проверяем, что страница входа доступна
+	// Check that login page is accessible
 	if respGet.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for /status GET, got %d", http.StatusOK, respGet.StatusCode)
 	}
 	
-	// Отправляем POST-запрос с паролем
+	// Send POST request with password
 	form := url.Values{}
 	form.Add("password", password)
 	
@@ -83,36 +83,36 @@ func TestStatusPageAccess(t *testing.T) {
 	}
 	defer respPost.Body.Close()
 	
-	// Проверяем, что произошло перенаправление на страницу статуса
+	// Check that redirect to status page occurred
 	if respPost.StatusCode != http.StatusOK {
-		// Обычно должен быть 302 на /status-page, но мы уже перенаправлены
+		// Should normally be 302 to /status-page, but we're already redirected
 		t.Logf("Status code after authentication: %d (expected redirect to status page)", respPost.StatusCode)
 	}
 	
-	// Теперь пытаемся получить доступ к странице статуса напрямую
+	// Now try to access status page directly
 	respStatus, err := client.Get(fmt.Sprintf("%s/status-page", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send GET request to /status-page: %v", err)
 	}
 	defer respStatus.Body.Close()
 	
-	// Проверяем, что страница статуса доступна после аутентификации
+	// Check that status page is accessible after authentication
 	if respStatus.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for /status-page after auth, got %d", http.StatusOK, respStatus.StatusCode)
 	}
 }
 
 func TestTrackControlEndpoints(t *testing.T) {
-	// Пропускаем этот тест, если не указан пароль для проверки
+	// Skip this test if no password is specified for checking
 	if testing.Short() {
 		t.Skip("Skipping track control test in short mode")
 	}
 	
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	
-	// Получаем маршрут для тестирования
+	// Get route for testing
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /streams: %v", err)
@@ -124,13 +124,13 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
 	
-	// Используем маршрут по умолчанию, если не удалось получить из API
+	// Use default route if couldn't get from API
 	testRoute := "humor"
 	if strings.Contains(string(body), "science") {
 		testRoute = "science"
 	}
 	
-	// Создаем HTTP-клиент с поддержкой cookie
+	// Create HTTP client with cookie support
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatalf("Failed to create cookie jar: %v", err)
@@ -139,13 +139,13 @@ func TestTrackControlEndpoints(t *testing.T) {
 	client := &http.Client{
 		Jar: jar,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// Позволяем перенаправления для проверки входа
+			// Allow redirects for login check
 			return nil
 		},
 		Timeout: 5 * time.Second,
 	}
 	
-	// Аутентифицируемся
+	// Authenticate
 	form := url.Values{}
 	form.Add("password", password)
 	
@@ -154,7 +154,7 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Fatalf("Failed to authenticate: %v", err)
 	}
 	
-	// Получаем информацию о текущем треке перед переключением
+	// Get information about current track before switching
 	nowPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=%s", baseURL, testRoute))
 	if err != nil {
 		t.Fatalf("Failed to get current track: %v", err)
@@ -173,7 +173,7 @@ func TestTrackControlEndpoints(t *testing.T) {
 		currentTrack = "unknown"
 	}
 	
-	// Отправляем запрос на переключение трека
+	// Send request to switch track
 	nextTrackURL := fmt.Sprintf("%s/next-track/%s?ajax=1", baseURL, testRoute)
 	nextTrackResp, err := client.Post(nextTrackURL, "application/x-www-form-urlencoded", nil)
 	if err != nil {
@@ -181,15 +181,15 @@ func TestTrackControlEndpoints(t *testing.T) {
 	}
 	defer nextTrackResp.Body.Close()
 	
-	// Проверяем, что ответ успешный
+	// Check that response is successful
 	if nextTrackResp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for next-track, got %d", http.StatusOK, nextTrackResp.StatusCode)
 	}
 	
-	// Даем время серверу на переключение трека
+	// Give server time to switch tracks
 	time.Sleep(1 * time.Second)
 	
-	// Проверяем, что трек изменился
+	// Check that track has changed
 	newPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=%s", baseURL, testRoute))
 	if err != nil {
 		t.Fatalf("Failed to get new current track: %v", err)
@@ -208,7 +208,7 @@ func TestTrackControlEndpoints(t *testing.T) {
 		return
 	}
 	
-	// Из-за специфики механизма проверки и асинхронности, мы просто логируем изменение трека
+	// Due to the specifics of the verification mechanism and asynchronicity, we just log the track change
 	t.Logf("Track before switch: %s", currentTrack)
 	t.Logf("Track after switch: %s", newTrack)
 } 

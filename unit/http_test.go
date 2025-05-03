@@ -9,7 +9,7 @@ import (
 	httpServer "github.com/user/stream-audio-to-web/http"
 )
 
-// Макет для StreamHandler
+// Mock implementation for StreamHandler
 type mockStreamHandler struct {
 	clientCount int
 	trackChan   chan string
@@ -33,7 +33,7 @@ func (m *mockStreamHandler) GetCurrentTrackChannel() <-chan string {
 	return m.trackChan
 }
 
-// Макет для PlaylistManager
+// Mock implementation for PlaylistManager
 type mockPlaylistManager struct {
 	currentTrack string
 	history      []interface{}
@@ -70,28 +70,28 @@ func (m *mockPlaylistManager) PreviousTrack() interface{} {
 }
 
 func TestHealthzEndpoint(t *testing.T) {
-	// Создаем HTTP-сервер
+	// Create HTTP server
 	server := httpServer.NewServer("mp3", 10)
 
-	// Создаем тестовый HTTP-запрос
+	// Create test HTTP request
 	req, err := http.NewRequest("GET", "/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Создаем ResponseRecorder для записи ответа
+	// Create ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Обрабатываем запрос
+	// Process the request
 	server.Handler().ServeHTTP(rr, req)
 
-	// Проверяем код ответа
+	// Check response code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Проверяем тело ответа
+	// Check response body
 	expected := "OK"
 	if rr.Body.String() != expected {
 		t.Errorf("handler returned unexpected body: got %v want %v",
@@ -100,22 +100,22 @@ func TestHealthzEndpoint(t *testing.T) {
 }
 
 func TestReadyzEndpoint(t *testing.T) {
-	// Создаем HTTP-сервер
+	// Create HTTP server
 	server := httpServer.NewServer("mp3", 10)
 
-	// Создаем тестовый HTTP-запрос
+	// Create test HTTP request
 	req, err := http.NewRequest("GET", "/readyz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Создаем ResponseRecorder для записи ответа
+	// Create ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Обрабатываем запрос
+	// Process the request
 	server.Handler().ServeHTTP(rr, req)
 
-	// Проверяем код ответа
+	// Check response code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
@@ -123,10 +123,10 @@ func TestReadyzEndpoint(t *testing.T) {
 }
 
 func TestStreamRegistration(t *testing.T) {
-	// Создаем HTTP-сервер
+	// Create HTTP server
 	server := httpServer.NewServer("mp3", 10)
 
-	// Создаем макеты для стрима и плейлиста
+	// Create mocks for stream and playlist
 	mockStream := &mockStreamHandler{
 		clientCount: 0,
 		trackChan:   make(chan string),
@@ -138,10 +138,10 @@ func TestStreamRegistration(t *testing.T) {
 		startTime:    time.Now(),
 	}
 
-	// Регистрируем стрим
+	// Register stream
 	server.RegisterStream("/test", mockStream, mockPlaylist)
 
-	// Проверяем, что стрим зарегистрирован
+	// Check that stream is registered
 	if !server.IsStreamRegistered("/test") {
 		t.Errorf("Stream not registered properly")
 	}

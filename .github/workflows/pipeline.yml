@@ -3,7 +3,7 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [ main ]
-  # Возможность запустить workflow вручную
+  # Ability to run workflow manually
   workflow_dispatch:
 
 jobs:
@@ -78,7 +78,7 @@ jobs:
             docker compose up -d
             docker ps
             
-            # Проверка статуса контейнера
+            # Check container status
             echo "Waiting for container to become healthy..."
             for i in {1..30}; do
               STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker ps -q -f name=audio-streamer))
@@ -108,39 +108,39 @@ jobs:
           script: |
             echo "Testing stream endpoints with HEAD requests..."
             
-            # Сохраним базовый URL для тестирования
+            # Save base URL for testing
             BASE_URL="http://localhost:8000"
             
-            # Проверяем базовые endpoint'ы
+            # Check basic endpoints
             echo "Testing basic endpoints..."
             curl -s -I $BASE_URL/healthz
             curl -s -I $BASE_URL/readyz
             
-            # Проверим содержимое /healthz и /readyz для диагностики
+            # Check /healthz and /readyz content for diagnostics
             echo "Checking response content:"
             echo "/healthz content: $(curl -s $BASE_URL/healthz)"
             echo "/readyz content: $(curl -s $BASE_URL/readyz)"
             
-            # Устанавливаем jq, если он отсутствует
+            # Install jq if it's missing
             if ! command -v jq &> /dev/null; then
               echo "Installing jq..."
               apt-get update && apt-get install -y jq
             fi
             
-            # Получаем список всех маршрутов из API с отладочным выводом
+            # Get all routes list from API with debug output
             echo "Fetching streams JSON..."
             STREAMS_JSON=$(curl -s $BASE_URL/streams)
             echo "Raw JSON response: $STREAMS_JSON"
             
-            # Пытаемся извлечь список маршрутов с обработкой ошибок
+            # Try to extract routes list with error handling
             echo "Extracting and testing stream routes..."
             if ! echo "$STREAMS_JSON" | jq -e '.streams' > /dev/null 2>&1; then
               echo "Warning: Could not parse JSON response from /streams endpoint"
               echo "Testing default routes instead"
-              # Используем жестко заданные стандартные маршруты при ошибке парсинга
+              # Use hardcoded default routes when parse error occurs
               ROUTES="/humor /science /troshin /politics /nature /shaov"
             else
-              # Извлекаем маршруты из JSON
+              # Extract routes from JSON
               ROUTES=$(echo $STREAMS_JSON | jq -r '.streams[].route' 2>/dev/null || echo "")
               if [ -z "$ROUTES" ]; then
                 echo "No routes found in streams JSON, testing default routes"
@@ -151,7 +151,7 @@ jobs:
             echo "Found the following routes to test:"
             echo "$ROUTES"
             
-            # Тестируем каждый маршрут
+            # Test each route
             for ROUTE in $ROUTES; do
               echo "Testing route: $ROUTE"
               HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -I $BASE_URL$ROUTE)
@@ -159,7 +159,7 @@ jobs:
                 echo "✅ Route $ROUTE returned HTTP $HTTP_CODE (Success)"
               else
                 echo "❌ Route $ROUTE returned HTTP $HTTP_CODE (Failure)"
-                # Не прерываем выполнение, даже если маршрут не отвечает
+                # Don't interrupt execution even if route is not responding
                 # exit 1
               fi
             done

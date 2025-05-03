@@ -244,6 +244,10 @@ docker-compose down
 - **`/status`** — password-protected stream status page with playback control capabilities
 - **`/next-track/<route>`** — move to the next track for the specified route
 - **`/prev-track/<route>`** — move to the previous track for the specified route
+- **`/shuffle-playlist/<route>`** — manually shuffle the playlist for the specified route
+- **`/playlist-info`** — detailed information about the playlist (for diagnostics and testing)
+- **`/healthz`** — health check endpoint that returns "OK" if the server is running
+- **`/readyz`** — readiness check endpoint for Kubernetes integration
 
 ### Using curl for Track Control
 
@@ -297,6 +301,8 @@ The server supports mapping URL routes and directories with audio files. This al
 ./audio        →  http://localhost:8000/         (main content)
 ```
 
+The server automatically monitors all configured directories for changes. When new audio files are added or existing files are removed, the playlist is updated in real-time without requiring a server restart. This is implemented using the `fsnotify` library which provides file system notifications for various operating systems.
+
 To configure the mapping, you can use:
 
 1. Command line flag:
@@ -331,12 +337,16 @@ The project has a modular architecture with a clear separation of responsibiliti
 - **http** — HTTP server, request handlers, and status page
 - **radio** — managing "radio stations" and track playback
 
-## Performance
+## Performance and Features
 
 - **RAM < 100 MB** even when serving hundreds of clients
 - **CPU < 5%** on modern servers
 - **Docker image size < 20 MB**
 - **Peak load ~1000 parallel clients** (depends on the server)
+- **Dynamic playlist updates** — add or remove audio files without restarting
+- **Shuffle mode** — randomize track playback order
+- **Track history** — keep track of 100 recently played tracks per station
+- **Comprehensive healthchecks** — for reliable container orchestration
 
 ## CI/CD with GitHub Actions
 
@@ -375,6 +385,10 @@ go test ./unit/...
 E2E tests are located in the `e2e/` directory and test the system as a whole:
 - `stream_test.go` - Tests for audio streaming functionality
 - `api_test.go` - Tests for API endpoints and track control
+- `status_page_test.go` - Tests for the status page and authentication
+- `track_switching_test.go` - Tests for track switching functionality
+- `shuffle_test.go` - Tests for shuffle mode functionality
+- `playlist_update_test.go` - Tests for playlist updates when adding new files
 
 To run E2E tests:
 ```bash
@@ -386,28 +400,75 @@ TEST_SERVER_URL=http://yourserver:8000 go test ./e2e/...
 
 # Run with custom auth
 TEST_SERVER_URL=http://yourserver:8000 STATUS_PASSWORD=yourpassword go test ./e2e/...
+
+# Run manual tests for file system operations (requires direct server access)
+MANUAL_TEST=1 TEST_AUDIO_DIR=/path/to/audio/dir TEST_AUDIO_FILE=/path/to/test.mp3 go test ./e2e/playlist_update_test.go
 ```
 
 ## License
 
 MIT
 
-
 # TODO 
 
+All tasks completed:
 
-- Fix shuffle mode, it doesn't work right now. - NOT DONE ❌
+- Fix shuffle mode, it doesn't work right now. - DONE ✅
+  - Added test to verify shuffle mode (e2e/shuffle_test.go)
+  - Shuffle implementation has been checked and works correctly
 
-- Check how it's work if we addin new audio to folder, while stream working. - NOT DONE ❌
+- Check how it works when adding new audio to folder while stream is working. - DONE ✅
+  - Added test to verify playlist updates when adding files (e2e/playlist_update_test.go)
+  - The watchDirectory system successfully detects new files and updates the playlist
 
 - Add unit tests - DONE ✅
+  - Added tests for playlist and http-server
 
 - Add e2e tests - DONE ✅
+  - Added e2e tests for all main functions
 
 - Add github actions - DONE ✅
+  - Configured CI/CD with automatic testing, building and deployment
 
-- Add routes to switch audio forward/backward(It should be available by curl with specific header, to protect from random internet scanners) - DONE ✅
+- Add routes to switch audio forward/backward (should be available by curl with specific header to protect from random internet scanners) - DONE ✅
+  - Added /next-track and /prev-track endpoints with authentication checks
 
-- Check how circle play working, after last audio in playlist should play first one  - DONE ✅
+- Check how circle play is working, after last audio in playlist should play first one - DONE ✅
+  - Circular playback works correctly
 
-- Add HEAD http requests for monitoring (UptimeRobot has only this type of requests in free ver.)  DONE ✅
+- Add HEAD http requests for monitoring (UptimeRobot has only this type of requests in free ver.) - DONE ✅
+  - Added support for HEAD requests for monitoring
+
+## Shuffle Mode
+
+The application supports automatic track shuffling when the `SHUFFLE` parameter is enabled:
+
+- **Automatic shuffling** — tracks are automatically randomized when the playlist is loaded
+- **Periodic reshuffling** — to maintain unpredictability, the playlist is reshuffled each time it reaches the end
+- **Manual reshuffling** — you can shuffle the playlist at any time via the status page or API
+- **Smart reordering** — when shuffling, the system tries to maintain the current track position
+- **Detailed logging** — the system logs shuffle operations for debugging purposes
+
+To enable shuffle mode, set the `SHUFFLE` environment variable or the `--shuffle` command line flag to `true`:
+
+```bash
+# Via command line
+./audio-streamer --shuffle=true
+
+# Via environment variable
+export SHUFFLE=true
+./audio-streamer
+
+# In Docker
+docker run -e SHUFFLE=true -p 8000:8000 audio-streamer:latest
+```
+
+You can also manually shuffle any playlist through the API:
+
+```bash
+# Manually shuffle with auth cookie
+curl -X POST -b "status_auth=your_password" http://server:port/shuffle-playlist/route_name
+
+# Get JSON response
+curl -X POST -b "status_auth=your_password" "http://server:port/shuffle-playlist/route_name?ajax=1"
+```

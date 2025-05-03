@@ -12,11 +12,11 @@ import (
 )
 
 func TestStatusPageContent(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	
-	// Создаем HTTP-клиент с поддержкой cookie
+	// Create HTTP client with cookie support
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatalf("Failed to create cookie jar: %v", err)
@@ -25,12 +25,12 @@ func TestStatusPageContent(t *testing.T) {
 	client := &http.Client{
 		Jar: jar,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return nil // разрешаем перенаправления
+			return nil // allow redirects
 		},
 		Timeout: 10 * time.Second,
 	}
 	
-	// Аутентифицируемся для доступа к странице статуса
+	// Authenticate for access to status page
 	form := url.Values{}
 	form.Add("password", password)
 	
@@ -39,19 +39,19 @@ func TestStatusPageContent(t *testing.T) {
 		t.Fatalf("Failed to authenticate: %v", err)
 	}
 	
-	// Получаем страницу статуса
+	// Get status page
 	statusResp, err := client.Get(fmt.Sprintf("%s/status-page", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to get status page: %v", err)
 	}
 	defer statusResp.Body.Close()
 	
-	// Проверяем код ответа
+	// Check response code
 	if statusResp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for /status-page, got %d", http.StatusOK, statusResp.StatusCode)
 	}
 	
-	// Получаем HTML-код страницы
+	// Get HTML page content
 	body, err := ioutil.ReadAll(statusResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read status page body: %v", err)
@@ -59,32 +59,32 @@ func TestStatusPageContent(t *testing.T) {
 	
 	htmlContent := string(body)
 	
-	// Проверяем наличие основных элементов страницы
+	// Check for main page elements
 	requiredElements := []string{
-		"<h1>Audio Streams Status</h1>", // Заголовок страницы
-		"class=\"status-info listeners\"", // Информация о слушателях
-		"class=\"status-info current-track\"", // Информация о текущем треке
-		"class=\"status-info start-time\"", // Информация о времени начала
-		"class=\"button-group\"", // Кнопки управления
-		"class=\"prev-track\"", // Кнопка предыдущего трека
-		"class=\"next-track\"", // Кнопка следующего трека
-		"class=\"show-history\"", // Кнопка истории
+		"<h1>Audio Streams Status</h1>", // Page title
+		"class=\"status-info listeners\"", // Listeners information
+		"class=\"status-info current-track\"", // Current track information
+		"class=\"status-info start-time\"", // Start time information
+		"class=\"button-group\"", // Control buttons
+		"class=\"prev-track\"", // Previous track button
+		"class=\"next-track\"", // Next track button
+		"class=\"show-history\"", // History button
 	}
 	
-	// Проверяем наличие каждого элемента на странице
+	// Check for each element on the page
 	for _, element := range requiredElements {
 		if !strings.Contains(htmlContent, element) {
 			t.Errorf("Status page doesn't contain required element: %s", element)
 		}
 	}
 	
-	// Проверяем формат времени (ожидается формат типа "02.01.2006 15:04:05")
+	// Check time format (expected format like "02.01.2006 15:04:05")
 	timePattern := "Started: "
 	if !strings.Contains(htmlContent, timePattern) {
 		t.Errorf("Status page doesn't contain start time information with pattern '%s'", timePattern)
 	}
 	
-	// Проверяем отображение количества слушателей
+	// Check listeners count display
 	listenersPattern := "Listeners count: <span class=\"listeners-count"
 	if !strings.Contains(htmlContent, listenersPattern) {
 		t.Errorf("Status page doesn't contain listeners count information with pattern '%s'", listenersPattern)
@@ -94,13 +94,13 @@ func TestStatusPageContent(t *testing.T) {
 }
 
 func TestAuthenticationFailure(t *testing.T) {
-	// Получаем базовый URL из переменной окружения или используем значение по умолчанию
+	// Get base URL from environment variable or use default value
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	
-	// 1. Проверяем доступ к status-page без аутентификации
+	// 1. Check access to status-page without authentication
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // не следуем за перенаправлениями
+			return http.ErrUseLastResponse // don't follow redirects
 		},
 		Timeout: 5 * time.Second,
 	}
@@ -111,13 +111,13 @@ func TestAuthenticationFailure(t *testing.T) {
 	}
 	defer statusResp.Body.Close()
 	
-	// Ожидаем перенаправление на страницу входа
+	// Expect redirect to login page
 	if statusResp.StatusCode != http.StatusFound {
 		t.Errorf("Expected status code %d for unauthenticated /status-page access, got %d", 
 			http.StatusFound, statusResp.StatusCode)
 	}
 	
-	// Проверяем URL перенаправления
+	// Check redirect URL
 	location := statusResp.Header.Get("Location")
 	if location != "/status" {
 		t.Errorf("Expected redirect to /status, got %s", location)
@@ -125,17 +125,17 @@ func TestAuthenticationFailure(t *testing.T) {
 	
 	t.Logf("Unauthenticated access to /status-page correctly redirects to /status")
 	
-	// 2. Проверяем аутентификацию с неверным паролем
+	// 2. Check authentication with wrong password
 	jar, _ := cookiejar.New(nil)
 	clientWithCookies := &http.Client{
 		Jar: jar,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return nil // следуем за перенаправлениями
+			return nil // follow redirects
 		},
 		Timeout: 5 * time.Second,
 	}
 	
-	// Отправляем форму с неверным паролем
+	// Submit form with wrong password
 	form := url.Values{}
 	form.Add("password", "wrong_password")
 	
@@ -145,8 +145,8 @@ func TestAuthenticationFailure(t *testing.T) {
 	}
 	defer loginResp.Body.Close()
 	
-	// Проверяем, что неверный пароль не проходит аутентификацию
-	// (возвращается обратно на страницу входа или содержит сообщение об ошибке)
+	// Check that wrong password doesn't pass authentication
+	// (returns to login page or contains error message)
 	body, err := ioutil.ReadAll(loginResp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read login response body: %v", err)
@@ -154,7 +154,7 @@ func TestAuthenticationFailure(t *testing.T) {
 	
 	htmlContent := string(body)
 	
-	// Проверяем наличие сообщения об ошибке или то, что мы остались на странице входа
+	// Check for error message or that we stayed on login page
 	isLoginPage := strings.Contains(htmlContent, "<form") && 
 		strings.Contains(htmlContent, "method=\"post\"") && 
 		strings.Contains(htmlContent, "action=\"/status\"")
@@ -163,14 +163,14 @@ func TestAuthenticationFailure(t *testing.T) {
 		t.Errorf("Expected to stay on login page after wrong password, but got different page")
 	}
 	
-	// Проверяем, что после неверного пароля нет доступа к защищенной странице
+	// Check that after wrong password there's no access to protected page
 	statusPageResp, err := clientWithCookies.Get(fmt.Sprintf("%s/status-page", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to get status page after wrong password: %v", err)
 	}
 	defer statusPageResp.Body.Close()
 	
-	// Если доступ запрещен, должно быть перенаправление на страницу входа
+	// If access is denied, should be redirected to login page
 	if statusPageResp.Request.URL.Path != "/status" && statusPageResp.StatusCode != http.StatusFound {
 		t.Errorf("Expected access to be denied after wrong password authentication")
 	}

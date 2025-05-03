@@ -233,6 +233,9 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")
 	s.router.HandleFunc("/prev-track/{route}", s.prevTrackHandler).Methods("POST")
 
+	// Endpoint to shuffle playlist manually
+	s.router.HandleFunc("/shuffle-playlist/{route}", s.handleShufflePlaylist).Methods("POST")
+
 	// Add static files for web interface
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 	
@@ -1001,4 +1004,48 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 // SetStationManager sets station manager for restarting playback
 func (s *Server) SetStationManager(manager interface { RestartPlayback(string) bool }) {
 	s.stationManager = manager
+}
+
+// handleShufflePlaylist handles the request to manually shuffle a playlist
+func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
+	// Check authentication (same as for status page)
+	if !s.checkAuth(r) {
+		s.redirectToLogin(w, r)
+		return
+	}
+	
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	
+	// Get stream by route
+	stream, ok := s.streams[route]
+	if !ok {
+		http.Error(w, "Stream not found", http.StatusNotFound)
+		return
+	}
+	
+	// Get playlist and perform shuffling
+	playlist, ok := s.playlists[route]
+	if !ok {
+		http.Error(w, "Playlist not found", http.StatusNotFound)
+		return
+	}
+	
+	// Call Shuffle method on the playlist
+	log.Printf("Manual shuffle requested for route %s", route)
+	playlist.Shuffle()
+	
+	// Check if need to return JSON or perform redirect
+	ajax := r.URL.Query().Get("ajax")
+	if ajax == "1" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Playlist shuffled successfully",
+			"route": route,
+		})
+	} else {
+		// Redirect back to status page
+		http.Redirect(w, r, "/status", http.StatusSeeOther)
+	}
 } 

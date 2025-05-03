@@ -27,6 +27,9 @@
                 <form method="post" action="/next-track/{{.RouteID}}" style="flex: 1;">
                     <button type="submit" class="next-track">Next track</button>
                 </form>
+                <form method="post" action="/shuffle-playlist/{{.RouteID}}" style="flex: 1;">
+                    <button type="submit" class="shuffle-playlist">Shuffle playlist</button>
+                </form>
                 <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
             </div>
             <div id="track-list-{{.RouteID}}" class="track-list">
