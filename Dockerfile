@@ -36,6 +36,8 @@ RUN apk add --no-cache ca-certificates tzdata curl findutils
 # Копирование бинарного файла из этапа сборки
 COPY --from=builder /app/audio-streamer /app/
 COPY --from=builder /app/web /app/web
+COPY --from=builder /app/templates /app/templates
+COPY --from=builder /app/image /app/image
 
 # Копирование entrypoint-скрипта
 COPY entrypoint.sh /app/
