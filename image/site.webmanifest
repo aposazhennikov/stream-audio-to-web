@@ -1,0 +1,19 @@
+{
+    "name": "Audio Streamer",
+    "short_name": "Streamer",
+    "icons": [
+        {
+            "src": "/image/android-chrome-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "/image/android-chrome-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ],
+    "theme_color": "#3498db",
+    "background_color": "#f5f5f5",
+    "display": "standalone"
+} 

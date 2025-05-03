@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+{{template "head" .}}
+<body>
+    <div class="error-container">
+        <span class="error-icon">🔍</span>
+        <div class="error-code">404</div>
+        <h1>Страница не найдена</h1>
+        <p>Запрошенный ресурс не существует или был перемещен.</p>
+        <a href="/status" class="back-link">Вернуться на главную</a>
+    </div>
+
+    {{block "additional_styles" .}}
+    <style>
+        body {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 20px;
+        }
+
+        .error-container {
+            background-color: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            width: 100%;
+            max-width: 500px;
+            padding: 3rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .error-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 6px;
+            background: var(--color-error);
+        }
+
+        .error-code {
+            font-size: 5rem;
+            font-weight: 800;
+            color: var(--color-error);
+            line-height: 1;
+            margin-bottom: 1rem;
+            position: relative;
+            display: inline-block;
+        }
+
+        .error-code::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 4px;
+            background: var(--color-error);
+            opacity: 0.3;
+            border-radius: 2px;
+        }
+
+        h1 {
+            color: var(--color-secondary);
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        p {
+            color: var(--color-text-secondary);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background-color: var(--color-primary);
+            color: white;
+            text-decoration: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .back-link:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .back-link:active {
+            transform: translateY(0);
+        }
+
+        .back-link::before {
+            content: '🏠';
+        }
+
+        .error-icon {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        @media (max-width: 576px) {
+            .error-container {
+                padding: 2rem;
+            }
+
+            .error-code {
+                font-size: 4rem;
+            }
+
+            .error-icon {
+                font-size: 3rem;
+            }
+        }
+    </style>
+    {{end}}
+</body>
+</html> 

@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ru">
+{{template "head" .}}
+<body>
+    <header class="header">
+        <h1>Статус Аудио Потоков</h1>
+    </header>
+    <div class="container">
+        {{range .Streams}}
+        <div class="stream-container">
+            <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.Route}}</a></div>
+            <div class="status-info start-time">Запущено: {{.StartTime}}</div>
+            <div class="status-info current-track">{{.CurrentTrack}}</div>
+            <div class="status-info listeners">Количество слушателей: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="button-group">
+                <form method="post" action="/prev-track/{{.RouteID}}" style="flex: 1;">
+                    <button type="submit" class="prev-track">Переключить назад</button>
+                </form>
+                <form method="post" action="/next-track/{{.RouteID}}" style="flex: 1;">
+                    <button type="submit" class="next-track">Переключить вперед</button>
+                </form>
+                <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Показать историю треков</button>
+            </div>
+            <div id="track-list-{{.RouteID}}" class="track-list">
+                {{.HistoryHTML}}
+            </div>
+        </div>
+        {{end}}
+    </div>
+
+    {{block "additional_styles" .}}
+    <style>
+        .header {
+            text-align: center;
+            padding: 2rem 0;
+            background-color: var(--color-surface);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: var(--color-secondary);
+            font-size: 2.2rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 0 0 2rem;
+            position: relative;
+            padding-bottom: 1rem;
+            display: inline-block;
+        }
+
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 4px;
+            background: var(--color-primary);
+            border-radius: 2px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem 3rem;
+        }
+
+        .stream-container {
+            background-color: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            margin-bottom: 1.5rem;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .stream-container:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+        }
+
+        .stream-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 4px;
+            background-color: var(--color-primary);
+        }
+
+        .stream-header {
+            display: flex;
+            align-items: center;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--color-secondary);
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .stream-header::before {
+            content: '🎵';
+            margin-right: 0.5rem;
+            font-size: 1.25rem;
+        }
+
+        .stream-header a {
+            color: inherit;
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .stream-header a:hover {
+            color: var(--color-primary);
+        }
+
+        .status-info {
+            margin-bottom: 0.75rem;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .status-info:before {
+            margin-right: 0.5rem;
+            font-size: 1rem;
+        }
+
+        .status-info.start-time:before {
+            content: '🕒';
+        }
+
+        .status-info.current-track {
+            background-color: rgba(52, 152, 219, 0.08);
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-primary);
+            margin: 1rem 0;
+        }
+
+        .status-info.current-track:before {
+            content: '▶️';
+        }
+
+        .status-info.listeners:before {
+            content: '👥';
+        }
+
+        .listeners-count {
+            display: inline-flex;
+            align-items: center;
+            background-color: rgba(46, 204, 113, 0.1);
+            color: var(--color-text-secondary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            margin-left: 0.5rem;
+            font-weight: 500;
+        }
+
+        .listeners-count.zero {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+        }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
+            padding-top: 1.5rem;
+        }
+
+        button {
+            background-color: var(--color-primary);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            flex: 1 1 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        button:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.prev-track:before {
+            content: '⏮️';
+        }
+
+        button.next-track:before {
+            content: '⏭️';
+        }
+        
+        button.show-history:before {
+            content: '📋';
+        }
+
+        .track-list {
+            display: none;
+            margin-top: 1rem;
+            background-color: rgba(52, 152, 219, 0.04);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .track-list ul {
+            list-style-type: none;
+        }
+
+        .track-list li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--color-border);
+            position: relative;
+            padding-left: 1.5rem;
+        }
+
+        .track-list li:last-child {
+            border-bottom: none;
+        }
+
+        .track-list li:before {
+            content: '🎵';
+            position: absolute;
+            left: 0;
+            top: 0.5rem;
+        }
+
+        .error-container {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-error);
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 1rem 2rem;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .stream-container {
+                padding: 1.25rem;
+            }
+            
+            .stream-header {
+                font-size: 1.3rem;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+    {{end}}
+
+    <script>
+        function toggleTrackList(id) {
+            const trackList = document.getElementById('track-list-' + id);
+            const isVisible = trackList.style.display === 'block';
+            trackList.style.display = isVisible ? 'none' : 'block';
+            
+            // Изменяем текст кнопки
+            const buttons = trackList.previousElementSibling.querySelectorAll('button');
+            const historyButton = buttons[buttons.length - 1];
+            historyButton.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
+        }
+
+        // Функция для автоматического обновления плеера при изменении трека
+        const audioPlayers = {};
+        const currentTracks = {};
+
+        // Функция для получения текущего трека для каждого маршрута
+        function checkCurrentTracks() {
+            fetch('/now-playing')
+                .then(response => response.json())
+                .then(tracks => {
+                    Object.keys(tracks).forEach(route => {
+                        // Если трек изменился, перезагружаем плеер
+                        if (currentTracks[route] !== tracks[route]) {
+                            console.log('Трек изменился на маршруте ' + route + ': ' + tracks[route]);
+                            currentTracks[route] = tracks[route];
+                            
+                            // Если у нас открыт этот маршрут, перезагружаем плеер
+                            if (window.location.pathname === route) {
+                                console.log('Перезагрузка аудиоплеера для ' + route);
+                                const audio = document.querySelector('audio');
+                                if (audio) {
+                                    // Сохраняем текущую громкость
+                                    const volume = audio.volume;
+                                    // Запоминаем URL для дальнейшего использования
+                                    const originalSrc = audio.src;
+                                    // Останавливаем текущий плеер
+                                    audio.pause();
+                                    // Перезагружаем источник с новым временным параметром для обхода кеширования
+                                    audio.src = originalSrc + '?t=' + new Date().getTime();
+                                    // Восстанавливаем громкость
+                                    audio.volume = volume;
+                                    // Запускаем воспроизведение
+                                    audio.play().catch(e => console.error('Ошибка воспроизведения:', e));
+                                }
+                            }
+                        }
+                    });
+                })
+                .catch(error => console.error('Ошибка при проверке текущего трека:', error));
+        }
+
+        // Проверяем текущий трек каждые 2 секунды
+        setInterval(checkCurrentTracks, 2000);
+        
+        // Инициализация при загрузке страницы
+        window.addEventListener('DOMContentLoaded', () => {
+            // Начальная загрузка информации о треках
+            checkCurrentTracks();
+        });
+    </script>
+</body>
+</html> 

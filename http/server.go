@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -234,6 +235,14 @@ func (s *Server) setupRoutes() {
 
 	// Добавление статических файлов для веб-интерфейса
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
+	
+	// Добавление файлов favicon и изображений
+	s.router.PathPrefix("/image/").Handler(http.StripPrefix("/image/", http.FileServer(http.Dir("./image"))))
+	
+	// Обработка запросов favicon.ico в корне
+	s.router.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./image/favicon.ico")
+	})
 	
 	// Настройка обработчика 404
 	s.router.NotFoundHandler = http.HandlerFunc(s.notFoundHandler)
@@ -619,184 +628,83 @@ func (s *Server) ReloadPlaylist(route string) error {
 	return playlist.Reload()
 }
 
-// statusLoginHandler отображает форму для входа на страницу статуса
+// statusLoginHandler отображает страницу с формой для входа
 func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем, есть ли cookie с правильной авторизацией
-	cookie, err := r.Cookie("status_auth")
-	if err == nil && cookie.Value == s.statusPassword {
-		// Если пользователь авторизован, перенаправляем на основную страницу
+	// Если уже есть авторизация, перенаправляем на страницу статуса
+	if s.checkAuth(r) {
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
 
-	// HTML форма для ввода пароля
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>Авторизация для доступа к статусу</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .login-container {
-            background-color: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            padding: 20px;
-            width: 300px;
-        }
-        h1 {
-            color: #2c3e50;
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-        input[type="password"] {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            box-sizing: border-box;
-        }
-        button {
-            width: 100%;
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #2980b9;
-        }
-        .error-message {
-            color: #e74c3c;
-            margin-bottom: 15px;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <h1>Доступ к статусу потоков</h1>
-        <form method="post" action="/status">
-            <input type="password" name="password" placeholder="Введите пароль" required autofocus>
-            <button type="submit">Войти</button>
-        </form>
-    </div>
-</body>
-</html>`
+	// Загружаем и рендерим шаблон страницы входа
+	tmpl, err := template.ParseFiles(
+		"templates/login.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		log.Printf("ОШИБКА: Невозможно загрузить шаблон login.html: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title": "Вход - Статус Аудио Потоков",
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+	}
 }
 
-// statusLoginSubmitHandler обрабатывает отправку формы для входа
+// statusLoginSubmitHandler обрабатывает отправку формы логина
 func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	err := r.ParseForm()
+	if err != nil {
+		log.Printf("ОШИБКА: Не удалось разобрать форму логина: %v", err)
+		http.Error(w, "Ошибка обработки формы", http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем пароль из формы
 	password := r.FormValue("password")
-	
+
+	// Проверяем пароль
 	if password == s.statusPassword {
-		// Устанавливаем cookie с авторизацией
-		cookie := http.Cookie{
+		// Создаем куки для авторизации
+		http.SetCookie(w, &http.Cookie{
 			Name:     "status_auth",
 			Value:    s.statusPassword,
 			Path:     "/",
+			Expires:  time.Now().Add(24 * time.Hour),
 			HttpOnly: true,
-			MaxAge:   3600, // 1 час
-		}
-		http.SetCookie(w, &cookie)
-		
+		})
+
 		// Перенаправляем на страницу статуса
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
-	
-	// В случае неверного пароля возвращаем страницу логина с сообщением об ошибке
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>Авторизация для доступа к статусу</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .login-container {
-            background-color: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            padding: 20px;
-            width: 300px;
-        }
-        h1 {
-            color: #2c3e50;
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-        input[type="password"] {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            box-sizing: border-box;
-        }
-        button {
-            width: 100%;
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #2980b9;
-        }
-        .error-message {
-            color: #e74c3c;
-            margin-bottom: 15px;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <h1>Доступ к статусу потоков</h1>
-        <div class="error-message">Неверный пароль</div>
-        <form method="post" action="/status">
-            <input type="password" name="password" placeholder="Введите пароль" required autofocus>
-            <button type="submit">Войти</button>
-        </form>
-    </div>
-</body>
-</html>`
+
+	// Если пароль неверный, показываем сообщение об ошибке
+	tmpl, err := template.ParseFiles(
+		"templates/login.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		log.Printf("ОШИБКА: Невозможно загрузить шаблон login.html: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title":        "Вход - Статус Аудио Потоков",
+		"ErrorMessage": "Неверный пароль",
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+	}
 }
 
 // checkAuth проверяет авторизацию для доступа к странице статуса
@@ -839,89 +747,19 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		routes = append(routes, route)
 	}
 	sort.Strings(routes)
-	
-	// HTML заголовок
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>Аудио Стример - Статус</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
-            color: #333;
-        }
-        h1 {
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-        }
-        .stream-container {
-            background-color: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            padding: 15px;
-        }
-        .stream-header {
-            font-size: 1.5em;
-            color: #2980b9;
-            margin-bottom: 10px;
-        }
-        .status-info {
-            margin-bottom: 10px;
-        }
-        .track-list {
-            display: none;
-            margin-top: 10px;
-            border: 1px solid #ddd;
-            padding: 10px;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        .track-list ul {
-            list-style-type: none;
-            padding: 0;
-        }
-        .track-list li {
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
-        }
-        button {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 3px;
-            cursor: pointer;
-            margin-right: 5px;
-        }
-        button:hover {
-            background-color: #2980b9;
-        }
-        .button-group {
-            margin-top: 10px;
-            display: flex;
-            gap: 5px;
-        }
-        .error-container {
-            background-color: #f8d7da;
-            color: #721c24;
-            padding: 10px;
-            margin-bottom: 20px;
-            border-radius: 5px;
-        }
-    </style>
-</head>
-<body>
-    <h1>Статус Аудио Потоков</h1>
-`
 
-	// Для каждого потока в отсортированном порядке
+	// Подготавливаем данные для шаблона
+	type StreamInfo struct {
+		Route       string
+		RouteID     string
+		StartTime   string
+		CurrentTrack string
+		Listeners   int
+		HistoryHTML template.HTML
+	}
+
+	streamInfos := make([]StreamInfo, 0, len(routes))
+
 	for _, route := range routes {
 		stream := streams[route]
 		playlist, exists := playlists[route]
@@ -954,96 +792,36 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Получаем ID маршрута для JS функций, удаляя ведущий слеш
 		routeID := route[1:]
 		
-		// HTML для потока
-		html += fmt.Sprintf(`
-    <div class="stream-container">
-        <div class="stream-header"><a href="%s" target="_blank" style="text-decoration:none; color:inherit;">%s</a></div>
-        <div class="status-info">Запущено: %s</div>
-        <div class="status-info">Текущий трек: %s</div>
-        <div class="status-info">Количество слушателей: %d</div>
-        <div class="button-group">
-            <form method="post" action="/prev-track/%s" style="display: inline;">
-                <button type="submit">Переключить назад</button>
-            </form>
-            <form method="post" action="/next-track/%s" style="display: inline;">
-                <button type="submit">Переключить вперед</button>
-            </form>
-            <button onclick="toggleTrackList('%s')">Показать историю треков</button>
-        </div>
-        <div id="track-list-%s" class="track-list">
-            %s
-        </div>
-    </div>`, route, route, startTime, currentTrack, stream.GetClientCount(), routeID, routeID, routeID, routeID, historyHtml)
+		streamInfos = append(streamInfos, StreamInfo{
+			Route:       route,
+			RouteID:     routeID,
+			StartTime:   startTime,
+			CurrentTrack: currentTrack,
+			Listeners:   stream.GetClientCount(),
+			HistoryHTML: template.HTML(historyHtml),
+		})
 	}
-	
-	// JavaScript и закрывающие HTML теги
-	html += `
-    <script>
-        function toggleTrackList(id) {
-            const trackList = document.getElementById('track-list-' + id);
-            const isVisible = trackList.style.display === 'block';
-            trackList.style.display = isVisible ? 'none' : 'block';
-            
-            // Изменяем текст кнопки
-            const buttons = trackList.previousElementSibling.querySelectorAll('button');
-            const historyButton = buttons[buttons.length - 1];
-            historyButton.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
-        }
 
-        // Функция для автоматического обновления плеера при изменении трека
-        const audioPlayers = {};
-        const currentTracks = {};
+	// Загружаем и рендерим шаблон
+	tmpl, err := template.ParseFiles(
+		"templates/status.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		log.Printf("ОШИБКА: Невозможно загрузить шаблон status.html: %v", err)
+		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		return
+	}
 
-        // Функция для получения текущего трека для каждого маршрута
-        function checkCurrentTracks() {
-            fetch('/now-playing')
-                .then(response => response.json())
-                .then(tracks => {
-                    Object.keys(tracks).forEach(route => {
-                        // Если трек изменился, перезагружаем плеер
-                        if (currentTracks[route] !== tracks[route]) {
-                            console.log('Трек изменился на маршруте ' + route + ': ' + tracks[route]);
-                            currentTracks[route] = tracks[route];
-                            
-                            // Если у нас открыт этот маршрут, перезагружаем плеер
-                            if (window.location.pathname === route) {
-                                console.log('Перезагрузка аудиоплеера для ' + route);
-                                const audio = document.querySelector('audio');
-                                if (audio) {
-                                    // Сохраняем текущую громкость
-                                    const volume = audio.volume;
-                                    // Запоминаем URL для дальнейшего использования
-                                    const originalSrc = audio.src;
-                                    // Останавливаем текущий плеер
-                                    audio.pause();
-                                    // Перезагружаем источник с новым временным параметром для обхода кеширования
-                                    audio.src = originalSrc + '?t=' + new Date().getTime();
-                                    // Восстанавливаем громкость
-                                    audio.volume = volume;
-                                    // Запускаем воспроизведение
-                                    audio.play().catch(e => console.error('Ошибка воспроизведения:', e));
-                                }
-                            }
-                        }
-                    });
-                })
-                .catch(error => console.error('Ошибка при проверке текущего трека:', error));
-        }
-
-        // Проверяем текущий трек каждые 2 секунды
-        setInterval(checkCurrentTracks, 2000);
-        
-        // Инициализация при загрузке страницы
-        window.addEventListener('DOMContentLoaded', () => {
-            // Начальная загрузка информации о треках
-            checkCurrentTracks();
-        });
-    </script>
-</body>
-</html>`
+	data := map[string]interface{}{
+		"Title":   "Статус Аудио Потоков",
+		"Streams": streamInfos,
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+	}
 }
 
 // nextTrackHandler обрабатывает запрос на переключение трека вперед
@@ -1192,66 +970,27 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("404 - маршрут не найден: %s", r.URL.Path)
 	
-	// HTML для страницы 404
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>404 - Страница не найдена</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f4f4f4;
-            color: #333;
-            text-align: center;
-        }
-        .error-container {
-            background-color: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            margin: 50px auto;
-            padding: 30px;
-            max-width: 500px;
-        }
-        h1 {
-            color: #e74c3c;
-            font-size: 4em;
-            margin: 0;
-        }
-        p {
-            font-size: 1.2em;
-            margin: 20px 0;
-        }
-        .back-link {
-            display: inline-block;
-            margin-top: 20px;
-            background-color: #3498db;
-            color: white;
-            padding: 10px 20px;
-            text-decoration: none;
-            border-radius: 3px;
-        }
-        .back-link:hover {
-            background-color: #2980b9;
-        }
-    </style>
-</head>
-<body>
-    <div class="error-container">
-        <h1>404</h1>
-        <p>Страница не найдена</p>
-        <p>Запрошенный ресурс не существует.</p>
-        <a href="/status" class="back-link">Вернуться на главную</a>
-    </div>
-</body>
-</html>`
+	// Загружаем и рендерим шаблон страницы 404
+	tmpl, err := template.ParseFiles(
+		"templates/404.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		log.Printf("ОШИБКА: Невозможно загрузить шаблон 404.html: %v", err)
+		http.Error(w, "Страница не найдена", http.StatusNotFound)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title": "404 - Страница не найдена",
+		"Path":  r.URL.Path,
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(html))
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+	}
 }
 
 // SetStationManager устанавливает менеджер радиостанций для перезапуска воспроизведения
