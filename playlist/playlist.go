@@ -190,6 +190,12 @@ func (p *Playlist) Reload() error {
 		return err
 	}
 
+	// Add current track to history to ensure history has at least one track
+	if len(p.tracks) > 0 {
+		log.Printf("DIAGNOSTICS: Adding initial track %s to history", p.tracks[p.current].Name)
+		p.addTrackToHistory(p.tracks[p.current])
+	}
+
 	// Send statistics only to logs
 	log.Printf("Playlist loaded: %s, tracks: %d", p.directory, len(p.tracks))
 	
@@ -221,21 +227,31 @@ func (p *Playlist) NextTrack() interface{} {
 	defer p.mutex.Unlock()
 
 	if len(p.tracks) == 0 {
+		log.Printf("DIAGNOSTICS: NextTrack() called but no tracks available")
 		return nil
 	}
 
 	// Add current track to history before moving to the next
 	currentTrack := p.tracks[p.current]
+	log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to next", currentTrack.Name)
 	p.addTrackToHistory(currentTrack)
 
 	// Move to the next track
 	p.current = (p.current + 1) % len(p.tracks)
+	nextTrack := p.tracks[p.current]
+	log.Printf("DIAGNOSTICS: Moved to next track: %s (position: %d)", nextTrack.Name, p.current)
 	
 	// If we reached the end of playlist and shuffle is enabled, reshuffle for the next cycle
 	if p.current == 0 && p.shuffle {
 		log.Printf("DIAGNOSTICS: Reached end of playlist, will reshuffle for next cycle")
 		go p.reshuffleAtEnd() // Launch reshuffling in a separate goroutine
 	}
+	
+	// Verify history has been updated
+	p.historyMutex.RLock()
+	historyLength := len(p.history)
+	p.historyMutex.RUnlock()
+	log.Printf("DIAGNOSTICS: History length after NextTrack(): %d", historyLength)
 	
 	return &p.tracks[p.current]
 }
@@ -273,11 +289,13 @@ func (p *Playlist) PreviousTrack() interface{} {
 	defer p.mutex.Unlock()
 
 	if len(p.tracks) == 0 {
+		log.Printf("DIAGNOSTICS: PreviousTrack() called but no tracks available")
 		return nil
 	}
 
 	// Add current track to history before moving to the previous
 	currentTrack := p.tracks[p.current]
+	log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to previous", currentTrack.Name)
 	p.addTrackToHistory(currentTrack)
 
 	// Move to the previous track considering the possibility of going to a negative index
@@ -287,7 +305,15 @@ func (p *Playlist) PreviousTrack() interface{} {
 		p.current--
 	}
 	
-	log.Printf("DIAGNOSTICS: Switching to previous track: %s", p.tracks[p.current].Name)
+	prevTrack := p.tracks[p.current]
+	log.Printf("DIAGNOSTICS: Switching to previous track: %s (position: %d)", prevTrack.Name, p.current)
+	
+	// Verify history has been updated
+	p.historyMutex.RLock()
+	historyLength := len(p.history)
+	p.historyMutex.RUnlock()
+	log.Printf("DIAGNOSTICS: History length after PreviousTrack(): %d", historyLength)
+	
 	return &p.tracks[p.current]
 }
 
@@ -311,10 +337,30 @@ func (p *Playlist) GetHistory() []interface{} {
 	p.historyMutex.RLock()
 	defer p.historyMutex.RUnlock()
 	
-	history := make([]interface{}, len(p.history))
+	historyLen := len(p.history)
+	log.Printf("DIAGNOSTICS: GetHistory() called, history length: %d", historyLen)
+	
+	if historyLen == 0 {
+		log.Printf("DIAGNOSTICS: Warning - History is empty!")
+		return []interface{}{}
+	}
+	
+	history := make([]interface{}, historyLen)
 	for i, track := range p.history {
 		history[i] = &track
 	}
+	
+	// Log first few tracks in history
+	if historyLen > 0 {
+		trackNames := make([]string, 0, min(3, historyLen))
+		for i := 0; i < min(3, historyLen); i++ {
+			if track, ok := history[i].(interface{ GetPath() string }); ok {
+				trackNames = append(trackNames, filepath.Base(track.GetPath()))
+			}
+		}
+		log.Printf("DIAGNOSTICS: First tracks in history: %v", trackNames)
+	}
+	
 	return history
 }
 
