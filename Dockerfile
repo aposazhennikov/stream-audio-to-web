@@ -53,9 +53,9 @@ WORKDIR /app
 # Opening port
 EXPOSE 8000
 
-# Improved HEALTHCHECK - using metrics that are immediately available
+# Improved HEALTHCHECK - using simple healthz endpoint with GET request
 HEALTHCHECK --interval=30s --timeout=2s --start-period=5s --retries=3 \
-  CMD wget -q -t1 -T2 http://localhost:8000/metrics || exit 1
+  CMD curl -X GET -f http://localhost:8000/healthz || exit 1
 
 # Entry point - our entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]
