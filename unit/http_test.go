@@ -69,6 +69,11 @@ func (m *mockPlaylistManager) PreviousTrack() interface{} {
 	return m.currentTrack
 }
 
+// Shuffle implements PlaylistManager.Shuffle method
+func (m *mockPlaylistManager) Shuffle() {
+	// Mock implementation, doesn't need to actually shuffle anything
+}
+
 func TestHealthzEndpoint(t *testing.T) {
 	// Create HTTP server
 	server := httpServer.NewServer("mp3", 10)
