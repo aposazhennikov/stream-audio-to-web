@@ -71,6 +71,7 @@ type PlaylistManager interface {
 	GetHistory() []interface{} // Get track history
 	GetStartTime() time.Time   // Get start time
 	PreviousTrack() interface{} // Switch to previous track
+	Shuffle() // Shuffle the playlist
 }
 
 // Server represents HTTP server for audio streaming
@@ -1006,6 +1007,11 @@ func (s *Server) SetStationManager(manager interface { RestartPlayback(string) b
 	s.stationManager = manager
 }
 
+// redirectToLogin redirects user to login page
+func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/status", http.StatusFound)
+}
+
 // handleShufflePlaylist handles the request to manually shuffle a playlist
 func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Check authentication (same as for status page)
@@ -1017,15 +1023,11 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
 	
-	// Get stream by route
-	stream, ok := s.streams[route]
-	if !ok {
-		http.Error(w, "Stream not found", http.StatusNotFound)
-		return
-	}
-	
-	// Get playlist and perform shuffling
+	// Get playlist by route
+	s.mutex.RLock()
 	playlist, ok := s.playlists[route]
+	s.mutex.RUnlock()
+	
 	if !ok {
 		http.Error(w, "Playlist not found", http.StatusNotFound)
 		return
@@ -1046,6 +1048,6 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 		})
 	} else {
 		// Redirect back to status page
-		http.Redirect(w, r, "/status", http.StatusSeeOther)
+		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
 	}
 } 
