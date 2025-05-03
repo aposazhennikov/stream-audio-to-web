@@ -245,6 +245,26 @@ docker-compose down
 - **`/next-track/<route>`** — move to the next track for the specified route
 - **`/prev-track/<route>`** — move to the previous track for the specified route
 
+### Using curl for Track Control
+
+You can also control track playback programmatically using curl commands with proper authentication:
+
+```bash
+# Switch to next track
+curl -X POST -b "status_auth=your_password" http://server:port/next-track/route_name
+
+# Switch to previous track
+curl -X POST -b "status_auth=your_password" http://server:port/prev-track/route_name
+```
+
+Replace `your_password` with the value from your `STATUS_PASSWORD` environment variable (default is `1234554321`) and `route_name` with your stream route (e.g., `humor`, `science`).
+
+To get a JSON response instead of being redirected to the status page, add the `ajax=1` parameter:
+
+```bash
+curl -X POST -b "status_auth=your_password" "http://server:port/next-track/route_name?ajax=1"
+```
+
 ## Status Page and Playback Control
 
 The server has a built-in web interface for monitoring and controlling audio streams, accessible at `/status`.
@@ -318,6 +338,23 @@ The project has a modular architecture with a clear separation of responsibiliti
 - **Docker image size < 20 MB**
 - **Peak load ~1000 parallel clients** (depends on the server)
 
+## CI/CD with GitHub Actions
+
+The project includes GitHub Actions workflow for continuous integration and delivery:
+
+1. On push to the `main` branch, the workflow automatically:
+   - Builds a Docker image
+   - Logs in to Docker Hub using repository secrets
+   - Pushes the image to Docker Hub with tags:
+     - `latest`
+     - Git commit SHA (for versioning)
+
+To use this CI/CD pipeline, you need to set up the following secrets in your GitHub repository:
+- `DOCKERHUB_USERNAME` - Your Docker Hub username
+- `DOCKERHUB_TOKEN` - Your Docker Hub access token (not your password)
+
+This ensures that every push to the main branch results in an updated Docker image available in your Docker Hub repository.
+
 ## License
 
 MIT
@@ -330,8 +367,14 @@ MIT
 
 - Check how it's work if we addin new audio to folder, while stream working. - NOT DONE ❌
 
-- Add routes to switch audio forward/backward(It should be available by curl with specific header, to protect from random internet scanners) - NOT DONE ❌
+- Add unit tests - NOT DONE ❌
+
+- Add e2e tests - NOT DONE ❌
+
+- Add github actions - DONE ✅
+
+- Add routes to switch audio forward/backward(It should be available by curl with specific header, to protect from random internet scanners) - DONE ✅
 
 - Check how circle play working, after last audio in playlist should play first one  - DONE ✅
 
-- Add HEAD requeests for monitoring DONE ✅
+- Add HEAD http requests for monitoring (UptimeRobot has only this type of requests in free ver.)  DONE ✅
