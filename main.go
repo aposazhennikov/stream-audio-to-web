@@ -537,4 +537,9 @@ func (d *dummyPlaylistManager) GetStartTime() time.Time {
 
 func (d *dummyPlaylistManager) PreviousTrack() interface{} {
 	return "dummy.mp3"
+}
+
+// Shuffle implements PlaylistManager.Shuffle method
+func (d *dummyPlaylistManager) Shuffle() {
+	// Empty implementation for dummy placeholder
 } 
