@@ -1,0 +1,125 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ main ]
+  # Возможность запустить workflow вручную
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:buildcache,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            clear
+            cd /home/stream-audio-to-web/
+            git pull origin
+            docker pull aposazhennikov/audio-streamer:latest
+            docker compose down
+            docker compose up -d
+            docker ps
+            
+            # Проверка статуса контейнера
+            echo "Waiting for container to become healthy..."
+            for i in {1..30}; do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker ps -q -f name=audio-streamer))
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Container is healthy! Deployment successful."
+                exit 0
+              fi
+              echo "Container status: $STATUS. Waiting 10 seconds..."
+              sleep 10
+            done
+            
+            echo "Container did not become healthy in time. Deployment might have failed."
+            docker logs $(docker ps -q -f name=audio-streamer)
+            exit 1
+
+  test-streams:
+    needs: deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Test stream endpoints
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            echo "Testing stream endpoints with HEAD requests..."
+            
+            # Сначала получим список всех маршрутов из API
+            STREAMS_JSON=$(curl -s http://localhost:8000/ )
+            
+            # Сохраним базовый URL для тестирования
+            BASE_URL="http://localhost:8000"
+            
+            # Проверяем базовые endpoint'ы
+            echo "Testing basic endpoints..."
+            curl -s -I $BASE_URL/healthz
+            curl -s -I $BASE_URL/readyz
+            curl -s -I $BASE_URL/metrics
+            
+            # Теперь используем jq для извлечения маршрутов из JSON-ответа
+            # Если jq не установлен, нужно его установить
+            if ! command -v jq &> /dev/null; then
+              echo "Installing jq..."
+              apt-get update && apt-get install -y jq
+            fi
+            
+            # Извлекаем список маршрутов и тестируем каждый
+            echo "Extracting and testing stream routes..."
+            ROUTES=$(echo $STREAMS_JSON | jq -r '.streams[].route')
+            
+            echo "Found the following routes to test:"
+            echo "$ROUTES"
+            
+            # Тестируем каждый маршрут
+            for ROUTE in $ROUTES; do
+              echo "Testing route: $ROUTE"
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -I $BASE_URL$ROUTE)
+              if [ $HTTP_CODE -ge 200 ] && [ $HTTP_CODE -lt 300 ]; then
+                echo "✅ Route $ROUTE returned HTTP $HTTP_CODE (Success)"
+              else
+                echo "❌ Route $ROUTE returned HTTP $HTTP_CODE (Failure)"
+                exit 1
+              fi
+            done
+            
+            echo "All stream endpoints are responding correctly!" 
