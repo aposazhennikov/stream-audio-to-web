@@ -1175,7 +1175,7 @@ func (s *Server) SetStationManager(manager interface { RestartPlayback(string) b
 
 // redirectToLogin redirects user to login page
 func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/status", http.StatusFound)
+	http.Redirect(w, r, "/status", http.StatusSeeOther)
 }
 
 // handleShufflePlaylist handles the request to manually shuffle a playlist
