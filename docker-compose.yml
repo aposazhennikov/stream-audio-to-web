@@ -22,7 +22,7 @@ services:
       - STREAM_FORMAT=mp3
       - BITRATE=128
       - MAX_CLIENTS=10
-      - LOG_LEVEL=info
+      - LOG_LEVEL=error
       - "DIRECTORY_ROUTES={\"test_audio\":\"/app/test_audio\",\"humor\":\"/app/humor\",\"science\":\"/app/science\",\"politics\":\"/app/politics\",\"nature\":\"/app/nature\", \"shaov\":\"/app/shaov\", \"troshin\":\"/app/troshin\"}"
       - SHUFFLE=false
       - STATUS_PASSWORD=1234554321

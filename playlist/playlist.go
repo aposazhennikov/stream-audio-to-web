@@ -14,26 +14,26 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
-// Поддерживаемые форматы аудиофайлов
+// Supported audio file formats
 var supportedExtensions = map[string]bool{
 	".mp3": true,
 	".aac": true,
 	".ogg": true,
 }
 
-// Track представляет информацию о треке
+// Track represents information about a track
 type Track struct {
 	Path     string
 	Name     string
 	FileInfo os.FileInfo
 }
 
-// GetPath возвращает путь к треку
+// GetPath returns the path to the track
 func (t *Track) GetPath() string {
 	return t.Path
 }
 
-// Playlist управляет списком треков для аудиопотока
+// Playlist manages the list of tracks for audio streaming
 type Playlist struct {
 	directory      string
 	tracks         []Track
@@ -41,13 +41,13 @@ type Playlist struct {
 	mutex          sync.RWMutex
 	watcher        *fsnotify.Watcher
 	onChange       func()
-	shuffle        bool  // Флаг, определяющий перемешивать ли треки
-	history        []Track // История воспроизведенных треков
-	startTime      time.Time // Время запуска плейлиста
-	historyMutex   sync.RWMutex // Мьютекс для истории
+	shuffle        bool  // Flag determining whether to shuffle tracks
+	history        []Track // History of played tracks
+	startTime      time.Time // Playlist start time
+	historyMutex   sync.RWMutex // Mutex for history
 }
 
-// NewPlaylist создаёт новый плейлист из указанной директории
+// NewPlaylist creates a new playlist from the specified directory
 func NewPlaylist(directory string, onChange func(), shuffle bool) (*Playlist, error) {
 	pl := &Playlist{
 		directory: directory,
@@ -55,11 +55,11 @@ func NewPlaylist(directory string, onChange func(), shuffle bool) (*Playlist, er
 		history:   []Track{},
 		current:   0,
 		onChange:  onChange,
-		shuffle:   shuffle, // Сохраняем параметр перемешивания
-		startTime: time.Now(), // Запоминаем время запуска
+		shuffle:   shuffle, // Save shuffle parameter
+		startTime: time.Now(), // Remember start time
 	}
 
-	// Инициализация watcher для отслеживания изменений в директории
+	// Initialize watcher to track directory changes
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		sentry.CaptureException(err)
@@ -67,19 +67,19 @@ func NewPlaylist(directory string, onChange func(), shuffle bool) (*Playlist, er
 	}
 	pl.watcher = watcher
 
-	// Загрузка треков из директории
+	// Load tracks from directory
 	if err := pl.Reload(); err != nil {
 		sentry.CaptureException(err)
 		return nil, err
 	}
 
-	// Запуск горутины для отслеживания изменений в директории
+	// Start goroutine to monitor directory changes
 	go pl.watchDirectory()
 
 	return pl, nil
 }
 
-// Close закрывает watcher
+// Close closes the watcher
 func (p *Playlist) Close() error {
 	err := p.watcher.Close()
 	if err != nil {
@@ -88,28 +88,28 @@ func (p *Playlist) Close() error {
 	return err
 }
 
-// Reload перезагружает список треков из директории
+// Reload reloads the list of tracks from the directory
 func (p *Playlist) Reload() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	
-	log.Printf("ДИАГНОСТИКА: Начало перезагрузки плейлиста в директории %s", p.directory)
+	log.Printf("DIAGNOSTICS: Starting playlist reload in directory %s", p.directory)
 
 	p.tracks = []Track{}
 	p.current = 0
 
-	// Проверка существования директории
+	// Check if directory exists
 	if _, err := os.Stat(p.directory); os.IsNotExist(err) {
-		errorMsg := fmt.Sprintf("Директория %s не существует", p.directory)
+		errorMsg := fmt.Sprintf("Directory %s does not exist", p.directory)
 		log.Printf("%s", errorMsg)
-		// Не отправляем в Sentry - это информационное сообщение
-		return nil // Не считаем отсутствие директории ошибкой
+		// Don't send to Sentry - this is an informational message
+		return nil // Don't consider directory absence an error
 	}
 
-	log.Printf("Сканирование директории %s на наличие аудиофайлов", p.directory)
-	// Не отправляем в Sentry - это информационное сообщение
+	log.Printf("Scanning directory %s for audio files", p.directory)
+	// Don't send to Sentry - this is an informational message
 
-	// Счетчики для статистики
+	// Counters for statistics
 	var (
 		totalFiles      int
 		supportedFiles  int
@@ -121,10 +121,10 @@ func (p *Playlist) Reload() error {
 		totalFiles++
 		if err != nil {
 			errorFiles++
-			errorMsg := fmt.Sprintf("Ошибка при доступе к файлу/директории %s: %v", path, err)
+			errorMsg := fmt.Sprintf("Error accessing file/directory %s: %v", path, err)
 			log.Printf("%s", errorMsg)
-			sentry.CaptureException(fmt.Errorf("%s: %w", errorMsg, err)) // Отправляем в Sentry как ошибку
-			return nil // Продолжаем обработку, даже если отдельный файл недоступен
+			sentry.CaptureException(fmt.Errorf("%s: %w", errorMsg, err)) // Send to Sentry as an error
+			return nil // Continue processing even if an individual file is inaccessible
 		}
 		
 		if !info.IsDir() {
@@ -132,7 +132,7 @@ func (p *Playlist) Reload() error {
 			if supportedExtensions[ext] {
 				supportedFiles++
 				fileName := filepath.Base(path)
-				// Не логируем каждый добавляемый трек
+				// Don't log every added track
 				
 				p.tracks = append(p.tracks, Track{
 					Path:     path,
@@ -141,62 +141,62 @@ func (p *Playlist) Reload() error {
 				})
 			} else {
 				unsupportedFiles++
-				log.Printf("Пропуск неподдерживаемого файла: %s (расширение: %s)", filepath.Base(path), ext)
+				log.Printf("Skipping unsupported file: %s (extension: %s)", filepath.Base(path), ext)
 			}
 		}
 		return nil
 	})
 
 	if err != nil {
-		sentry.CaptureException(err) // Отправляем в Sentry как ошибку
+		sentry.CaptureException(err) // Send to Sentry as an error
 		return err
 	}
 
-	// Проверка на наличие треков
+	// Check if there are any tracks
 	if len(p.tracks) == 0 {
-		errorMsg := fmt.Sprintf("В директории %s не найдено аудиофайлов", p.directory)
+		errorMsg := fmt.Sprintf("No audio files found in directory %s", p.directory)
 		log.Printf("%s", errorMsg)
 		
-		// Не отправляем в Sentry - это информационное сообщение
-		return nil // Не считаем отсутствие треков ошибкой
+		// Don't send to Sentry - this is an informational message
+		return nil // Don't consider absence of tracks an error
 	}
 
-	// Логирование найденных треков
-	log.Printf("Найдено %d треков в %s:", len(p.tracks), p.directory)
+	// Log found tracks
+	log.Printf("Found %d tracks in %s:", len(p.tracks), p.directory)
 	
-	// Показываем максимум 3 трека (было 5) для уменьшения объема вывода
+	// Show maximum 3 tracks (was 5) to reduce output volume
 	trackNames := make([]string, 0, min(3, len(p.tracks)))
 	for i, track := range p.tracks {
-		if i < 3 { // Показываем только первые 3 трека
+		if i < 3 { // Show only first 3 tracks
 			log.Printf("  %d. %s", i+1, track.Name)
 			trackNames = append(trackNames, track.Name)
 		} else if i == 3 {
-			log.Printf("  ... и ещё %d треков", len(p.tracks)-3)
+			log.Printf("  ... and %d more tracks", len(p.tracks)-3)
 			break
 		}
 	}
 
-	// Перемешивание треков только если включен соответствующий флаг
+	// Shuffle tracks only if the corresponding flag is enabled
 	if p.shuffle {
-		log.Printf("ДИАГНОСТИКА: Перемешивание включено для плейлиста %s", p.directory)
+		log.Printf("DIAGNOSTICS: Shuffle enabled for playlist %s", p.directory)
 		p.Shuffle()
 	} else {
-		log.Printf("ДИАГНОСТИКА: Перемешивание отключено для плейлиста %s", p.directory)
+		log.Printf("DIAGNOSTICS: Shuffle disabled for playlist %s", p.directory)
 	}
 
-	// Добавление директории в watcher
+	// Add directory to watcher
 	if err := p.watcher.Add(p.directory); err != nil {
-		sentry.CaptureException(err) // Отправляем в Sentry как ошибку
+		sentry.CaptureException(err) // Send to Sentry as an error
 		return err
 	}
 
-	// Отправляем статистику только в логи
-	log.Printf("Плейлист загружен: %s, треков: %d", p.directory, len(p.tracks))
+	// Send statistics only to logs
+	log.Printf("Playlist loaded: %s, tracks: %d", p.directory, len(p.tracks))
 	
 	return nil
 }
 
-// min возвращает минимальное из двух чисел
+// min returns the minimum of two numbers
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -204,7 +204,7 @@ func min(a, b int) int {
 	return b
 }
 
-// GetCurrentTrack возвращает текущий трек
+// GetCurrentTrack returns the current track
 func (p *Playlist) GetCurrentTrack() interface{} {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
@@ -215,7 +215,7 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 	return &p.tracks[p.current]
 }
 
-// NextTrack переходит к следующему треку и возвращает его
+// NextTrack moves to the next track and returns it
 func (p *Playlist) NextTrack() interface{} {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -224,7 +224,7 @@ func (p *Playlist) NextTrack() interface{} {
 		return nil
 	}
 
-	// Добавляем текущий трек в историю перед переходом к следующему
+	// Add current track to history before moving to the next
 	currentTrack := p.tracks[p.current]
 	p.addTrackToHistory(currentTrack)
 
@@ -232,7 +232,7 @@ func (p *Playlist) NextTrack() interface{} {
 	return &p.tracks[p.current]
 }
 
-// PreviousTrack переходит к предыдущему треку и возвращает его
+// PreviousTrack moves to the previous track and returns it
 func (p *Playlist) PreviousTrack() interface{} {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -241,37 +241,37 @@ func (p *Playlist) PreviousTrack() interface{} {
 		return nil
 	}
 
-	// Добавляем текущий трек в историю перед переходом к предыдущему
+	// Add current track to history before moving to the previous
 	currentTrack := p.tracks[p.current]
 	p.addTrackToHistory(currentTrack)
 
-	// Переход к предыдущему треку с учетом возможности уйти в отрицательный индекс
+	// Move to the previous track considering the possibility of going to a negative index
 	if p.current == 0 {
 		p.current = len(p.tracks) - 1
 	} else {
 		p.current--
 	}
 	
-	log.Printf("ДИАГНОСТИКА: Переключение на предыдущий трек: %s", p.tracks[p.current].Name)
+	log.Printf("DIAGNOSTICS: Switching to previous track: %s", p.tracks[p.current].Name)
 	return &p.tracks[p.current]
 }
 
-// addTrackToHistory добавляет трек в историю
+// addTrackToHistory adds a track to history
 func (p *Playlist) addTrackToHistory(track Track) {
 	p.historyMutex.Lock()
 	defer p.historyMutex.Unlock()
 	
-	// Добавляем трек в историю
+	// Add track to history
 	p.history = append(p.history, track)
 	
-	// Ограничиваем размер истории - сохраняем последние 100 треков
+	// Limit history size - keep last 100 tracks
 	const maxHistorySize = 100
 	if len(p.history) > maxHistorySize {
 		p.history = p.history[len(p.history)-maxHistorySize:]
 	}
 }
 
-// GetHistory возвращает историю воспроизведенных треков
+// GetHistory returns the history of played tracks
 func (p *Playlist) GetHistory() []interface{} {
 	p.historyMutex.RLock()
 	defer p.historyMutex.RUnlock()
@@ -283,33 +283,33 @@ func (p *Playlist) GetHistory() []interface{} {
 	return history
 }
 
-// GetStartTime возвращает время запуска плейлиста
+// GetStartTime returns the playlist start time
 func (p *Playlist) GetStartTime() time.Time {
 	return p.startTime
 }
 
-// Shuffle перемешивает список треков
+// Shuffle randomizes the track list
 func (p *Playlist) Shuffle() {
-	log.Printf("ДИАГНОСТИКА: Начало перемешивания плейлиста директории %s...", p.directory)
+	log.Printf("DIAGNOSTICS: Starting playlist shuffle for directory %s...", p.directory)
 	
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
 	if len(p.tracks) <= 1 {
-		log.Printf("ДИАГНОСТИКА: Перемешивание не требуется, треков <= 1")
+		log.Printf("DIAGNOSTICS: Shuffle not required, tracks <= 1")
 		return
 	}
 
-	log.Printf("ДИАГНОСТИКА: Перемешивание %d треков...", len(p.tracks))
+	log.Printf("DIAGNOSTICS: Shuffling %d tracks...", len(p.tracks))
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Shuffle(len(p.tracks), func(i, j int) {
 		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
 	})
 
-	log.Printf("ДИАГНОСТИКА: Плейлист успешно перемешан: %s, треков: %d", p.directory, len(p.tracks))
+	log.Printf("DIAGNOSTICS: Playlist successfully shuffled: %s, tracks: %d", p.directory, len(p.tracks))
 }
 
-// GetTracks возвращает копию списка треков
+// GetTracks returns a copy of the track list
 func (p *Playlist) GetTracks() []Track {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
@@ -319,7 +319,7 @@ func (p *Playlist) GetTracks() []Track {
 	return tracks
 }
 
-// watchDirectory отслеживает изменения в директории с плейлистом
+// watchDirectory monitors changes in the playlist directory
 func (p *Playlist) watchDirectory() {
 	for {
 		select {
@@ -334,16 +334,16 @@ func (p *Playlist) watchDirectory() {
 			}
 
 			if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-				log.Printf("Обнаружено изменение в плейлисте: %s", event.Name)
+				log.Printf("Change detected in playlist: %s", event.Name)
 				
-				// Перезагрузка плейлиста
+				// Reload playlist
 				if err := p.Reload(); err != nil {
-					log.Printf("Ошибка при перезагрузке плейлиста: %s", err)
-					sentry.CaptureException(fmt.Errorf("ошибка при перезагрузке плейлиста: %w", err))
+					log.Printf("Error reloading playlist: %s", err)
+					sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", err))
 					continue
 				}
 
-				// Вызов колбэка при изменении плейлиста
+				// Call callback when playlist changes
 				if p.onChange != nil {
 					p.onChange()
 				}
@@ -353,8 +353,8 @@ func (p *Playlist) watchDirectory() {
 			if !ok {
 				return
 			}
-			log.Printf("Ошибка fsnotify: %s", err)
-			sentry.CaptureException(fmt.Errorf("ошибка fsnotify: %w", err))
+			log.Printf("fsnotify error: %s", err)
+			sentry.CaptureException(fmt.Errorf("fsnotify error: %w", err))
 		}
 	}
 } 

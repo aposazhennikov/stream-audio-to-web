@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 {{template "head" .}}
 <body>
     <div class="login-container">
         <div class="login-icon">🔒</div>
-        <h1>Доступ к статусу потоков</h1>
+        <h1>Stream Status Access</h1>
         {{if .ErrorMessage}}
         <div class="error-message">{{.ErrorMessage}}</div>
         {{end}}
         <form method="post" action="/status">
-            <input type="password" name="password" placeholder="Введите пароль" required autofocus>
-            <button type="submit">Войти</button>
+            <input type="password" name="password" placeholder="Enter password" required autofocus>
+            <button type="submit">Login</button>
         </form>
     </div>
 

@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	// Метрики Prometheus
+	// Prometheus metrics
 	listenerCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "audio_stream_listener_count",
@@ -38,7 +38,7 @@ var (
 		[]string{"stream"},
 	)
 	
-	// Счетчик времени проигрывания аудио в секундах
+	// Counter for audio playback time in seconds
 	trackSecondsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "audio_stream_track_seconds_total",
@@ -49,13 +49,13 @@ var (
 )
 
 func init() {
-	// Регистрация метрик Prometheus
+	// Register Prometheus metrics
 	prometheus.MustRegister(listenerCount)
 	prometheus.MustRegister(bytesSent)
 	prometheus.MustRegister(trackSecondsTotal)
 }
 
-// StreamHandler интерфейс для обработки аудиопотока
+// StreamHandler interface for handling audio stream
 type StreamHandler interface {
 	AddClient() (<-chan []byte, int, error)
 	RemoveClient(clientID int)
@@ -63,17 +63,17 @@ type StreamHandler interface {
 	GetCurrentTrackChannel() <-chan string
 }
 
-// PlaylistManager интерфейс для управления плейлистом
+// PlaylistManager interface for playlist management
 type PlaylistManager interface {
 	Reload() error
 	GetCurrentTrack() interface{}
 	NextTrack() interface{}
-	GetHistory() []interface{} // Получение истории треков
-	GetStartTime() time.Time   // Получение времени запуска
-	PreviousTrack() interface{} // Переключение на предыдущий трек
+	GetHistory() []interface{} // Get track history
+	GetStartTime() time.Time   // Get start time
+	PreviousTrack() interface{} // Switch to previous track
 }
 
-// Server представляет HTTP сервер для потоковой передачи аудио
+// Server represents HTTP server for audio streaming
 type Server struct {
 	router          *mux.Router
 	streams         map[string]StreamHandler
@@ -83,13 +83,13 @@ type Server struct {
 	mutex           sync.RWMutex
 	currentTracks   map[string]string
 	trackMutex      sync.RWMutex
-	statusPassword  string // Пароль для доступа к странице /status
-	stationManager  interface { RestartPlayback(string) bool } // Интерфейс для перезапуска воспроизведения
+	statusPassword  string // Password for accessing /status page
+	stationManager  interface { RestartPlayback(string) bool } // Interface for restarting playback
 }
 
-// NewServer создаёт новый HTTP сервер
+// NewServer creates a new HTTP server
 func NewServer(streamFormat string, maxClients int) *Server {
-	// Получаем пароль для страницы статуса из переменной окружения
+	// Get password for status page from environment variable
 	statusPassword := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	
 	server := &Server{
@@ -102,18 +102,18 @@ func NewServer(streamFormat string, maxClients int) *Server {
 		statusPassword: statusPassword,
 	}
 
-	// Настройка маршрутов
+	// Setup routes
 	server.setupRoutes()
 	
-	// Передаем метрику trackSecondsTotal напрямую в пакет audio
+	// Pass trackSecondsTotal metric directly to audio package
 	audio.SetTrackSecondsMetric(trackSecondsTotal)
-	log.Printf("ДИАГНОСТИКА: Метрика trackSecondsTotal передана в пакет audio")
+	log.Printf("DIAGNOSTICS: trackSecondsTotal metric passed to audio package")
 
-	log.Printf("HTTP сервер создан, формат потока: %s, макс. клиентов: %d", streamFormat, maxClients)
+	log.Printf("HTTP server created, stream format: %s, max clients: %d", streamFormat, maxClients)
 	return server
 }
 
-// Вспомогательная функция для получения значения переменной окружения
+// Helper function to get environment variable value
 func getEnvOrDefault(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -121,67 +121,67 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// Handler возвращает обработчик HTTP запросов
+// Handler returns HTTP request handler
 func (s *Server) Handler() http.Handler {
 	return s.router
 }
 
-// RegisterStream регистрирует новый аудиопоток
+// RegisterStream registers a new audio stream
 func (s *Server) RegisterStream(route string, stream StreamHandler, playlist PlaylistManager) {
-	log.Printf("ДИАГНОСТИКА: Начало регистрации аудиопотока для маршрута '%s'", route)
+	log.Printf("DIAGNOSTICS: Starting audio stream registration for route '%s'", route)
 	
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	// Убедимся, что маршрут начинается со слеша
+	// Make sure route starts with a slash
 	if route[0] != '/' {
 		route = "/" + route
-		log.Printf("Поправлен маршрут при регистрации: '%s'", route)
+		log.Printf("Fixed route during registration: '%s'", route)
 	}
 
-	log.Printf("ДИАГНОСТИКА: Добавление потока в map streams для маршрута '%s'", route)
+	log.Printf("DIAGNOSTICS: Adding stream to streams map for route '%s'", route)
 	s.streams[route] = stream
-	log.Printf("ДИАГНОСТИКА: Добавление плейлиста в map playlists для маршрута '%s'", route)
+	log.Printf("DIAGNOSTICS: Adding playlist to playlists map for route '%s'", route)
 	s.playlists[route] = playlist
 
-	// Проверяем, добавился ли поток
+	// Check if stream was added
 	if _, exists := s.streams[route]; exists {
-		log.Printf("ДИАГНОСТИКА: Поток для маршрута '%s' успешно добавлен в map streams", route)
+		log.Printf("DIAGNOSTICS: Stream for route '%s' successfully added to streams map", route)
 	} else {
-		log.Printf("ОШИБКА: Поток для маршрута '%s' не был добавлен в map streams!", route)
+		log.Printf("ERROR: Stream for route '%s' was not added to streams map!", route)
 	}
 	
-	// ВАЖНО: Регистрируем обработчик маршрута в роутере для GET и HEAD запросов
+	// IMPORTANT: Register route handler in router for GET and HEAD requests
 	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET", "HEAD")
-	log.Printf("ДИАГНОСТИКА: Зарегистрирован HTTP обработчик для маршрута '%s'", route)
+	log.Printf("DIAGNOSTICS: HTTP handler registered for route '%s'", route)
 
-	// Запуск горутины для отслеживания текущего трека
-	log.Printf("ДИАГНОСТИКА: Запуск горутины для отслеживания текущего трека для маршрута '%s'", route)
+	// Start goroutine to track current track
+	log.Printf("DIAGNOSTICS: Starting goroutine to track current track for route '%s'", route)
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	log.Printf("ДИАГНОСТИКА: Аудиопоток для маршрута '%s' успешно зарегистрирован", route)
+	log.Printf("DIAGNOSTICS: Audio stream for route '%s' successfully registered", route)
 }
 
-// IsStreamRegistered проверяет, зарегистрирован ли поток с указанным маршрутом
+// IsStreamRegistered checks if stream with specified route is registered
 func (s *Server) IsStreamRegistered(route string) bool {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	
-	// Проверяем, существует ли поток по указанному маршруту
+	// Check if stream exists for the specified route
 	_, exists := s.streams[route]
 	return exists
 }
 
-// trackCurrentTrack отслеживает текущий трек для указанного потока
+// trackCurrentTrack tracks current track for specified stream
 func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	for trackPath := range trackCh {
-		// Извлекаем только имя файла без пути
+		// Extract only filename without path
 		fileName := filepath.Base(trackPath)
 		
-		// Обрабатываем специфические символы в имени файла (логирование)
-		log.Printf("Текущий трек для %s: %s (путь: %s)", route, fileName, trackPath)
+		// Handle specific characters in filename (logging)
+		log.Printf("Current track for %s: %s (path: %s)", route, fileName, trackPath)
 		
-		// Сохраняем расширенную информацию в Sentry только для проблемных имен файлов с unicode
+		// Save extended information to Sentry only for problematic filenames with unicode
 		if hasUnicodeChars(fileName) {
 			sentry.ConfigureScope(func(scope *sentry.Scope) {
 				scope.SetContext("track_info", map[string]interface{}{
@@ -202,7 +202,7 @@ func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	}
 }
 
-// hasUnicodeChars проверяет наличие не-ASCII символов в строке
+// hasUnicodeChars checks for non-ASCII characters in string
 func hasUnicodeChars(s string) bool {
 	for _, r := range s {
 		if r > 127 {
@@ -212,50 +212,50 @@ func hasUnicodeChars(s string) bool {
 	return false
 }
 
-// setupRoutes настраивает маршруты HTTP сервера
+// setupRoutes configures HTTP server routes
 func (s *Server) setupRoutes() {
-	// Эндпоинты мониторинга и здоровья
+	// Monitoring and health endpoints
 	s.router.HandleFunc("/healthz", s.healthzHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/readyz", s.readyzHandler).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", promhttp.Handler()).Methods("GET")
 
-	// API для управления плейлистами
+	// API for playlist management
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
 	
-	// Добавляем страницу статуса с проверкой пароля
+	// Add status page with password check
 	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
 	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
 	
-	// Добавляем обработчики для переключения треков
+	// Add handlers for track switching
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")
 	s.router.HandleFunc("/prev-track/{route}", s.prevTrackHandler).Methods("POST")
 
-	// Добавление статических файлов для веб-интерфейса
+	// Add static files for web interface
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 	
-	// Добавление файлов favicon и изображений
+	// Add favicon and image files
 	s.router.PathPrefix("/image/").Handler(http.StripPrefix("/image/", http.FileServer(http.Dir("./image"))))
 	
-	// Обработка запросов favicon.ico в корне
+	// Handle favicon.ico requests in root
 	s.router.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./image/favicon.ico")
 	})
 	
-	// Настройка обработчика 404
+	// Configure 404 handler
 	s.router.NotFoundHandler = http.HandlerFunc(s.notFoundHandler)
 
-	log.Printf("HTTP маршруты настроены")
+	log.Printf("HTTP routes configured")
 }
 
-// healthzHandler возвращает 200 OK, если сервер работает
+// healthzHandler returns 200 OK if server is running
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
-	// Логирование запроса healthz
-	log.Printf("Получен запрос %s healthz от %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
+	// Log healthz request
+	log.Printf("Received %s healthz request from %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
 	
-	// Проверка наличия зарегистрированных потоков
+	// Check for registered streams
 	s.mutex.RLock()
 	streamsCount := len(s.streams)
 	streamsList := make([]string, 0, streamsCount)
@@ -264,48 +264,48 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mutex.RUnlock()
 	
-	// Логирование статуса
+	// Log status
 	if streamsCount == 0 {
-		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Нет зарегистрированных потоков, но сервер работает")
+		log.Printf("WARNING: No registered streams, but server is running")
 	} else {
-		log.Printf("Статус healthz: %d потоков зарегистрировано. Маршруты: %v", streamsCount, streamsList)
+		log.Printf("Healthz status: %d streams registered. Routes: %v", streamsCount, streamsList)
 	}
 	
-	// Добавляем заголовки для предотвращения кеширования
+	// Add headers to prevent caching
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/plain")
 	
-	// Всегда возвращаем успешный ответ, так как потоки могут настраиваться асинхронно
+	// Always return successful response, as streams may be configured asynchronously
 	w.WriteHeader(http.StatusOK)
 	
-	// Если это не HEAD запрос, отправляем тело ответа
+	// If not a HEAD request, send response body
 	if r.Method != "HEAD" {
 		w.Write([]byte("OK"))
 		
-		// Принудительно отправляем ответ
+		// Force send response
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 	
-	// Дополнительное логирование успешного ответа
-	log.Printf("Отправлен успешный ответ healthz клиенту %s", r.RemoteAddr)
+	// Additional logging of successful response
+	log.Printf("Sent successful healthz response to client %s", r.RemoteAddr)
 }
 
-// readyzHandler проверяет готовность к работе
+// readyzHandler checks readiness
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
-	// Логирование запроса readyz
-	log.Printf("Получен запрос %s readyz от %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
+	// Log readyz request
+	log.Printf("Received %s readyz request from %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
 	
-	// Добавляем заголовки для предотвращения кеширования
+	// Add headers to prevent caching
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	
-	// Проверка, есть ли хотя бы один поток
+	// Check if there's at least one stream
 	s.mutex.RLock()
 	streamsCount := len(s.streams)
 	streamsList := make([]string, 0, streamsCount)
@@ -314,27 +314,27 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mutex.RUnlock()
 	
-	// Логирование статуса 
-	log.Printf("Статус readyz: %d потоков. Маршруты: %v", streamsCount, streamsList)
+	// Log status 
+	log.Printf("Readyz status: %d streams. Routes: %v", streamsCount, streamsList)
 
-	// Всегда возвращаем OK для readyz, чтобы избежать перезапусков контейнера
+	// Always return OK for readyz to avoid container restarts
 	w.WriteHeader(http.StatusOK)
 	
-	// Если это не HEAD запрос, отправляем тело ответа
+	// If not a HEAD request, send response body
 	if r.Method != "HEAD" {
 		w.Write([]byte(fmt.Sprintf("Ready - %d streams registered", streamsCount)))
 		
-		// Отправка данных немедленно
+		// Send data immediately
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 	
-	// Дополнительное логирование успешного ответа
-	log.Printf("Отправлен успешный ответ readyz клиенту %s", r.RemoteAddr)
+	// Additional logging of successful response
+	log.Printf("Sent successful readyz response to client %s", r.RemoteAddr)
 }
 
-// streamsHandler возвращает информацию о всех доступных потоках
+// streamsHandler returns information about all available streams
 func (s *Server) streamsHandler(w http.ResponseWriter, r *http.Request) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
@@ -363,36 +363,36 @@ func (s *Server) streamsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// reloadPlaylistHandler перезагружает плейлист
+// reloadPlaylistHandler reloads playlist
 func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Query().Get("route")
 
 	if route != "" {
-		// Перезагрузка конкретного плейлиста
+		// Reload specific playlist
 		s.mutex.RLock()
 		playlist, exists := s.playlists[route]
 		s.mutex.RUnlock()
 
 		if !exists {
-			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			log.Printf("ОШИБКА: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
+			errorMsg := fmt.Sprintf("Stream %s not found", route)
+			log.Printf("ERROR: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Save as this is an error
 			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
 
 		if err := playlist.Reload(); err != nil {
-			errorMsg := fmt.Sprintf("Ошибка перезагрузки плейлиста: %s", err)
-			sentry.CaptureException(fmt.Errorf("ошибка перезагрузки плейлиста для %s: %w", route, err))
+			errorMsg := fmt.Sprintf("Error reloading playlist: %s", err)
+			sentry.CaptureException(fmt.Errorf("error reloading playlist for %s: %w", route, err))
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
 
-		log.Printf("Плейлист для потока %s перезагружен", route)
+		log.Printf("Playlist for stream %s reloaded", route)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Плейлист для потока %s перезагружен", route)))
+		w.Write([]byte(fmt.Sprintf("Playlist for stream %s reloaded", route)))
 	} else {
-		// Перезагрузка всех плейлистов
+		// Reload all playlists
 		s.mutex.RLock()
 		playlists := make([]PlaylistManager, 0, len(s.playlists))
 		for _, playlist := range s.playlists {
@@ -402,57 +402,57 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 
 		for _, playlist := range playlists {
 			if err := playlist.Reload(); err != nil {
-				errorMsg := fmt.Sprintf("Ошибка перезагрузки плейлиста: %s", err)
-				sentry.CaptureException(fmt.Errorf("ошибка перезагрузки плейлиста: %w", err))
+				errorMsg := fmt.Sprintf("Error reloading playlist: %s", err)
+				sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", err))
 				http.Error(w, errorMsg, http.StatusInternalServerError)
 				return
 			}
 		}
 
-		log.Printf("Все плейлисты перезагружены")
+		log.Printf("All playlists reloaded")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Все плейлисты перезагружены"))
+		w.Write([]byte("All playlists reloaded"))
 	}
 }
 
-// nowPlayingHandler возвращает информацию о текущем треке
+// nowPlayingHandler returns information about current track
 func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Query().Get("route")
 
 	s.trackMutex.RLock()
 	defer s.trackMutex.RUnlock()
 
-	// Устанавливаем правильные заголовки для Unicode
+	// Set correct headers for Unicode
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	if route != "" {
-		// Информация о конкретном потоке
+		// Information about specific stream
 		if track, exists := s.currentTracks[route]; exists {
-			// Только логгирование, не отправляем в Sentry
-			log.Printf("Запрос информации о треке для %s: %s", route, track)
+			// Just logging, don't send to Sentry
+			log.Printf("Request for track information for %s: %s", route, track)
 			
-			// Отправляем JSON-ответ
+			// Send JSON response
 			json.NewEncoder(w).Encode(map[string]string{
 				"route": route,
 				"track": track,
 			})
 		} else {
-			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			log.Printf("ОШИБКА: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
+			errorMsg := fmt.Sprintf("Stream %s not found", route)
+			log.Printf("ERROR: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Save as this is an error
 			http.Error(w, errorMsg, http.StatusNotFound)
 		}
 	} else {
-		// Информация о всех потоках
-		// Только логгирование, не отправляем в Sentry
-		log.Printf("Запрос информации о всех текущих треках")
+		// Information about all streams
+		// Just logging, don't send to Sentry
+		log.Printf("Request for information about all current tracks")
 		
-		// Отправляем JSON-ответ
+		// Send JSON response
 		json.NewEncoder(w).Encode(s.currentTracks)
 	}
 }
 
-// isConnectionClosedError проверяет, является ли ошибка результатом закрытия соединения клиентом
+// isConnectionClosedError checks if error is result of client closing connection
 func isConnectionClosedError(err error) bool {
 	if err == nil {
 		return false
@@ -464,9 +464,9 @@ func isConnectionClosedError(err error) bool {
 		   strings.Contains(errMsg, "use of closed network connection")
 }
 
-// StreamAudioHandler создаёт HTTP обработчик для стриминга аудио
+// StreamAudioHandler creates HTTP handler for audio streaming
 func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
-	log.Printf("Создание обработчика аудиопотока для маршрута %s", route)
+	log.Printf("Creating audio stream handler for route %s", route)
 	
 	contentType := ""
 	switch s.streamFormat {
@@ -480,198 +480,198 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		contentType = "audio/mpeg"
 	}
 	
-	log.Printf("Формат аудиопотока для маршрута %s: %s (MIME: %s)", route, s.streamFormat, contentType)
+	log.Printf("Audio stream format for route %s: %s (MIME: %s)", route, s.streamFormat, contentType)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос %s на аудиопоток %s от %s", r.Method, route, r.RemoteAddr)
+		log.Printf("Received %s request for audio stream %s from %s", r.Method, route, r.RemoteAddr)
 		
 		s.mutex.RLock()
 		stream, exists := s.streams[route]
 		s.mutex.RUnlock()
 
 		if !exists {
-			errorMsg := fmt.Sprintf("Поток %s не найден", route)
-			log.Printf("ОШИБКА: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
+			errorMsg := fmt.Sprintf("Stream %s not found", route)
+			log.Printf("ERROR: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Save as this is an error
 			http.Error(w, errorMsg, http.StatusNotFound)
 			return
 		}
 		
-		log.Printf("Поток %s найден, настройка заголовков для стриминга", route)
+		log.Printf("Stream %s found, setting up headers for streaming", route)
 
-		// Настройка заголовков для стриминга - ВАЖНО!
-		// 1. Content-Type должен соответствовать формату аудиопотока
+		// Set up streaming headers - IMPORTANT!
+		// 1. Content-Type must match audio stream format
 		w.Header().Set("Content-Type", contentType)
-		// 2. Отключаем кеширование для live-стрима
+		// 2. Disable caching for live stream
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		// 3. Защита от угадывания типа контента
+		// 3. Protect against content type guessing
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// НЕ устанавливаем Transfer-Encoding: chunked, Go сделает это сам
-		// НЕ устанавливаем Connection: keep-alive, это базовое поведение HTTP/1.1
+		// DO NOT set Transfer-Encoding: chunked, Go will do this itself
+		// DO NOT set Connection: keep-alive, this is default behavior for HTTP/1.1
 		
-		// Для HEAD запросов только отправляем заголовки и возвращаемся
+		// For HEAD requests, just send headers and return
 		if r.Method == "HEAD" {
-			log.Printf("Обработан HEAD запрос для потока %s от %s", route, r.RemoteAddr)
+			log.Printf("Handled HEAD request for stream %s from %s", route, r.RemoteAddr)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		
-		// ВАЖНО: НЕ устанавливать Content-Length для стримов, иначе браузер будет ждать точное количество байт
+		// IMPORTANT: DO NOT set Content-Length for streams, otherwise browser will wait for exact byte count
 
-		// Проверка поддержки Flusher
+		// Check for Flusher support
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			errorMsg := "Streaming not supported"
-			log.Printf("ОШИБКА: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Сохраняем, так как это ошибка
+			log.Printf("ERROR: %s", errorMsg)
+			sentry.CaptureMessage(errorMsg) // Save as this is an error
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
 		
-		// Немедленно сбрасываем заголовки - КРИТИЧЕСКИ ВАЖНО!
-		// Это сигнализирует браузеру, что начинается поток
+		// Immediately send headers - CRITICAL IMPORTANT!
+		// This signals to the browser that streaming is starting
 		flusher.Flush()
 		
-		log.Printf("Добавление клиента к потоку %s...", route)
+		log.Printf("Adding client to stream %s...", route)
 
-		// Получаем канал для данных и ID клиента
+		// Get data channel and client ID
 		clientCh, clientID, err := stream.AddClient()
 		if err != nil {
-			log.Printf("Ошибка при добавлении клиента к потоку %s: %s", route, err)
-			sentry.CaptureException(err) // Сохраняем, так как это ошибка
+			log.Printf("Error adding client to stream %s: %s", route, err)
+			sentry.CaptureException(err) // Save as this is an error
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		defer stream.RemoveClient(clientID)
 
-		// Обновляем метрики ТОЛЬКО ПОСЛЕ успешного подключения и отправки заголовков
+		// Update metrics ONLY AFTER successful connection and headers sent
 		listenerCount.WithLabelValues(route).Inc()
 		defer listenerCount.WithLabelValues(route).Dec()
 
-		// Логирование подключения клиента
+		// Log client connection
 		remoteAddr := r.RemoteAddr
-		log.Printf("Клиент подключен к потоку %s: %s (ID: %d)", route, remoteAddr, clientID)
+		log.Printf("Client connected to stream %s: %s (ID: %d)", route, remoteAddr, clientID)
 
-		// Проверяем закрытие соединения
+		// Check for connection closure
 		clientClosed := r.Context().Done()
 		
-		log.Printf("Начало отправки данных клиенту %d для потока %s", clientID, route)
+		log.Printf("Starting data transmission to client %d for stream %s", clientID, route)
 
-		// Счетчик для отслеживания переданных данных
+		// Counter for tracking sent data
 		var totalBytesSent int64
 		var lastLogTime time.Time = time.Now()
-		const logEveryBytes = 1024 * 1024 // Логировать каждый переданный мегабайт
+		const logEveryBytes = 1024 * 1024 // Log every sent megabyte
 		
-		// Отправляем данные клиенту
+		// Send data to client
 		for {
 			select {
 			case <-clientClosed:
-				// Клиент отключился
-				log.Printf("Клиент отключился от потока %s: %s (ID: %d). Всего отправлено: %d байт", 
+				// Client disconnected
+				log.Printf("Client disconnected from stream %s: %s (ID: %d). Total sent: %d bytes", 
 					route, remoteAddr, clientID, totalBytesSent)
 				return
 			case data, ok := <-clientCh:
 				if !ok {
-					// Канал закрыт
-					log.Printf("Канал закрыт для клиента %s (ID: %d). Всего отправлено: %d байт", 
+					// Channel closed
+					log.Printf("Channel closed for client %s (ID: %d). Total sent: %d bytes", 
 						remoteAddr, clientID, totalBytesSent)
 					return
 				}
 				
-				// Отправка данных клиенту
+				// Send data to client
 				n, err := w.Write(data)
 				if err != nil {
 					if isConnectionClosedError(err) {
-						// Только логируем, но не отправляем в Sentry
-						log.Printf("Клиент %d отключился: %s. Всего отправлено: %d байт", 
+						// Just log, don't send to Sentry
+						log.Printf("Client %d disconnected: %s. Total sent: %d bytes", 
 							clientID, err, totalBytesSent)
 					} else {
-						// Отправляем в Sentry только необычные ошибки
-						log.Printf("Ошибка при отправке данных клиенту %d: %s. Всего отправлено: %d байт", 
+						// Send to Sentry only for unusual errors
+						log.Printf("Error sending data to client %d: %s. Total sent: %d bytes", 
 							clientID, err, totalBytesSent)
-						sentry.CaptureException(fmt.Errorf("ошибка при отправке данных клиенту %d: %w", clientID, err))
+						sentry.CaptureException(fmt.Errorf("error sending data to client %d: %w", clientID, err))
 					}
 					return
 				}
 				
-				// Обновляем счетчик и метрики
+				// Update counter and metrics
 				totalBytesSent += int64(n)
 				bytesSent.WithLabelValues(route).Add(float64(n))
 				
-				// Периодически логируем количество отправленных данных
+				// Periodically log sent data amount
 				if totalBytesSent >= logEveryBytes && time.Since(lastLogTime) > 5*time.Second {
-					log.Printf("Клиенту %d (IP: %s) отправлено %d Мб данных", 
-						clientID, remoteAddr, totalBytesSent/1024/1024)
+					log.Printf("Sent %d Mbytes of data to client %d (IP: %s)", 
+						totalBytesSent/1024/1024, clientID, remoteAddr)
 					lastLogTime = time.Now()
 				}
 				
-				// ОБЯЗАТЕЛЬНО вызываем Flush после КАЖДОЙ отправки данных!
-				// Это гарантирует, что данные немедленно отправляются клиенту
+				// MUST call Flush after EACH data sent!
+				// This ensures data is sent immediately to client
 				flusher.Flush()
 			}
 		}
 	}
 }
 
-// ReloadPlaylist перезагружает плейлист для указанного маршрута
+// ReloadPlaylist reloads playlist for specified route
 func (s *Server) ReloadPlaylist(route string) error {
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("плейлист для маршрута %s не найден", route)
+		return fmt.Errorf("playlist for route %s not found", route)
 	}
 
 	return playlist.Reload()
 }
 
-// statusLoginHandler отображает страницу с формой для входа
+// statusLoginHandler displays login form page
 func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
-	// Если уже есть авторизация, перенаправляем на страницу статуса
+	// If already authenticated, redirect to status page
 	if s.checkAuth(r) {
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
 
-	// Загружаем и рендерим шаблон страницы входа
+	// Load and render login template page
 	tmpl, err := template.ParseFiles(
 		"templates/login.html",
 		"templates/partials/head.html",
 	)
 	if err != nil {
-		log.Printf("ОШИБКА: Невозможно загрузить шаблон login.html: %v", err)
-		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		log.Printf("ERROR: Unable to load login.html template: %v", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 
 	data := map[string]interface{}{
-		"Title": "Вход - Статус Аудио Потоков",
+		"Title": "Login - Audio Stream Status",
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
-		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+		log.Printf("ERROR: Unable to execute template: %v", err)
 	}
 }
 
-// statusLoginSubmitHandler обрабатывает отправку формы логина
+// statusLoginSubmitHandler handles login form submission
 func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseForm()
 	if err != nil {
-		log.Printf("ОШИБКА: Не удалось разобрать форму логина: %v", err)
-		http.Error(w, "Ошибка обработки формы", http.StatusInternalServerError)
+		log.Printf("ERROR: Unable to parse login form: %v", err)
+		http.Error(w, "Form processing error", http.StatusInternalServerError)
 		return
 	}
 
-	// Получаем пароль из формы
+	// Get password from form
 	password := r.FormValue("password")
 
-	// Проверяем пароль
+	// Check password
 	if password == s.statusPassword {
-		// Создаем куки для авторизации
+		// Create cookies for authentication
 		http.SetCookie(w, &http.Cookie{
 			Name:     "status_auth",
 			Value:    s.statusPassword,
@@ -680,49 +680,49 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 			HttpOnly: true,
 		})
 
-		// Перенаправляем на страницу статуса
+		// Redirect to status page
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
 
-	// Если пароль неверный, показываем сообщение об ошибке
+	// If password is incorrect, show error message
 	tmpl, err := template.ParseFiles(
 		"templates/login.html",
 		"templates/partials/head.html",
 	)
 	if err != nil {
-		log.Printf("ОШИБКА: Невозможно загрузить шаблон login.html: %v", err)
-		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		log.Printf("ERROR: Unable to load login.html template: %v", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 
 	data := map[string]interface{}{
-		"Title":        "Вход - Статус Аудио Потоков",
-		"ErrorMessage": "Неверный пароль",
+		"Title":        "Login - Audio Stream Status",
+		"ErrorMessage": "Invalid password",
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
-		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+		log.Printf("ERROR: Unable to execute template: %v", err)
 	}
 }
 
-// checkAuth проверяет авторизацию для доступа к странице статуса
+// checkAuth checks authentication for accessing status page
 func (s *Server) checkAuth(r *http.Request) bool {
 	cookie, err := r.Cookie("status_auth")
 	return err == nil && cookie.Value == s.statusPassword
 }
 
-// statusPageHandler отображает страницу со статусом всех потоков
+// statusPageHandler displays status page for all streams
 func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем авторизацию
+	// Check authentication
 	if !s.checkAuth(r) {
 		http.Redirect(w, r, "/status", http.StatusFound)
 		return
 	}
 
 	s.mutex.RLock()
-	// Копируем потоки и плейлисты
+	// Copy streams and playlists
 	streams := make(map[string]StreamHandler)
 	for k, v := range s.streams {
 		streams[k] = v
@@ -741,14 +741,14 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.trackMutex.RUnlock()
 	
-	// Сортируем ключи маршрутов для стабильного порядка отображения
+	// Sort route keys for stable display order
 	var routes []string
 	for route := range streams {
 		routes = append(routes, route)
 	}
 	sort.Strings(routes)
 
-	// Подготавливаем данные для шаблона
+	// Prepare data for template
 	type StreamInfo struct {
 		Route       string
 		RouteID     string
@@ -767,17 +767,17 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		
-		currentTrack := "Неизвестно"
+		currentTrack := "Unknown"
 		if track, exists := currentTracks[route]; exists {
 			currentTrack = track
 		}
 		
-		// Получаем историю треков
+		// Get track history
 		history := playlist.GetHistory()
 		historyHtml := "<ul>"
-		// История треков в обратном порядке (новые сверху)
+		// Track history in reverse order (newest on top)
 		for i := len(history) - 1; i >= 0; i-- {
-			// Используем type assertion для получения имени трека
+			// Use type assertion to get track name
 			if track, ok := history[i].(interface{ GetPath() string }); ok {
 				trackPath := track.GetPath()
 				trackName := filepath.Base(trackPath)
@@ -786,10 +786,10 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		historyHtml += "</ul>"
 		
-		// Форматируем время запуска
+		// Format start time
 		startTime := playlist.GetStartTime().Format("02.01.2006 15:04:05 MST")
 		
-		// Получаем ID маршрута для JS функций, удаляя ведущий слеш
+		// Get route ID for JS functions, removing leading slash
 		routeID := route[1:]
 		
 		streamInfos = append(streamInfos, StreamInfo{
@@ -802,86 +802,86 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Загружаем и рендерим шаблон
+	// Load and render template
 	tmpl, err := template.ParseFiles(
 		"templates/status.html",
 		"templates/partials/head.html",
 	)
 	if err != nil {
-		log.Printf("ОШИБКА: Невозможно загрузить шаблон status.html: %v", err)
-		http.Error(w, "Ошибка сервера", http.StatusInternalServerError)
+		log.Printf("ERROR: Unable to load status.html template: %v", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 
 	data := map[string]interface{}{
-		"Title":   "Статус Аудио Потоков",
+		"Title":   "Audio Stream Status",
 		"Streams": streamInfos,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
-		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+		log.Printf("ERROR: Unable to execute template: %v", err)
 	}
 }
 
-// nextTrackHandler обрабатывает запрос на переключение трека вперед
+// nextTrackHandler handles request for track switching forward
 func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем авторизацию
+	// Check authentication
 	if !s.checkAuth(r) {
 		http.Redirect(w, r, "/status", http.StatusFound)
 		return
 	}
 	
-	// Получаем маршрут из URL
+	// Get route from URL
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
 	
-	// Блокировка для доступа к плейлисту
+	// Lock for access to playlist
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
 	
 	if !exists {
-		http.Error(w, "Маршрут не найден", http.StatusNotFound)
+		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	
-	// Переключаем трек (игнорируем возвращаемое значение)
+	// Switch track (ignore return value)
 	nextTrack := playlist.NextTrack()
-	log.Printf("ДИАГНОСТИКА: Ручное переключение на следующий трек для маршрута %s", route)
+	log.Printf("DIAGNOSTICS: Manual track switch to next track for route %s", route)
 	
-	// Вызываем перезапуск воспроизведения, если менеджер станций доступен
+	// Call restart playback, if station manager is available
 	success := false
-	newTrackName := "Неизвестно"
+	newTrackName := "Unknown"
 	
 	if s.stationManager != nil {
 		success = s.stationManager.RestartPlayback(route)
 		if success {
-			log.Printf("ДИАГНОСТИКА: Перезапуск воспроизведения для маршрута %s выполнен успешно", route)
+			log.Printf("DIAGNOSTICS: Restart playback for route %s completed successfully", route)
 			
-			// Получаем имя нового трека
+			// Get new track name
 			if track, ok := nextTrack.(interface{ GetPath() string }); ok {
 				newTrackName = filepath.Base(track.GetPath())
 				
-				// Немедленно обновляем информацию о текущем треке
+				// Immediately update current track information
 				s.trackMutex.Lock()
 				s.currentTracks[route] = newTrackName
 				s.trackMutex.Unlock()
 				
-				log.Printf("ДИАГНОСТИКА: Немедленно обновлена информация о текущем треке для %s: %s", route, newTrackName)
+				log.Printf("DIAGNOSTICS: Immediately updated current track information for %s: %s", route, newTrackName)
 			}
 		} else {
-			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
+			log.Printf("ERROR: Unable to restart playback for route %s", route)
 		}
 	} else {
-		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Менеджер станций не установлен, перезапуск воспроизведения невозможен")
+		log.Printf("WARNING: Station manager not set, restart playback not possible")
 	}
 	
-	// Определяем, является ли запрос AJAX-запросом
+	// Determine if this is AJAX request
 	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
 	
 	if isAjax {
-		// Отправляем JSON-ответ для AJAX-запросов
+		// Send JSON response for AJAX requests
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]interface{}{
 			"success": success,
@@ -890,69 +890,69 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(response)
 	} else {
-		// Перенаправляем обратно на страницу статуса для обычных запросов
+		// Redirect back to status page for regular requests
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 	}
 }
 
-// prevTrackHandler обрабатывает запрос на переключение трека назад
+// prevTrackHandler handles request for track switching backward
 func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем авторизацию
+	// Check authentication
 	if !s.checkAuth(r) {
 		http.Redirect(w, r, "/status", http.StatusFound)
 		return
 	}
 	
-	// Получаем маршрут из URL
+	// Get route from URL
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
 	
-	// Блокировка для доступа к плейлисту
+	// Lock for access to playlist
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
 	
 	if !exists {
-		http.Error(w, "Маршрут не найден", http.StatusNotFound)
+		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	
-	// Переключаем трек (игнорируем возвращаемое значение)
+	// Switch track (ignore return value)
 	prevTrack := playlist.PreviousTrack()
-	log.Printf("ДИАГНОСТИКА: Ручное переключение на предыдущий трек для маршрута %s", route)
+	log.Printf("DIAGNOSTICS: Manual track switch to previous track for route %s", route)
 	
-	// Вызываем перезапуск воспроизведения, если менеджер станций доступен
+	// Call restart playback, if station manager is available
 	success := false
-	newTrackName := "Неизвестно"
+	newTrackName := "Unknown"
 	
 	if s.stationManager != nil {
 		success = s.stationManager.RestartPlayback(route)
 		if success {
-			log.Printf("ДИАГНОСТИКА: Перезапуск воспроизведения для маршрута %s выполнен успешно", route)
+			log.Printf("DIAGNOSTICS: Restart playback for route %s completed successfully", route)
 			
-			// Получаем имя нового трека
+			// Get new track name
 			if track, ok := prevTrack.(interface{ GetPath() string }); ok {
 				newTrackName = filepath.Base(track.GetPath())
 				
-				// Немедленно обновляем информацию о текущем треке
+				// Immediately update current track information
 				s.trackMutex.Lock()
 				s.currentTracks[route] = newTrackName
 				s.trackMutex.Unlock()
 				
-				log.Printf("ДИАГНОСТИКА: Немедленно обновлена информация о текущем треке для %s: %s", route, newTrackName)
+				log.Printf("DIAGNOSTICS: Immediately updated current track information for %s: %s", route, newTrackName)
 			}
 		} else {
-			log.Printf("ОШИБКА: Не удалось перезапустить воспроизведение для маршрута %s", route)
+			log.Printf("ERROR: Unable to restart playback for route %s", route)
 		}
 	} else {
-		log.Printf("ПРЕДУПРЕЖДЕНИЕ: Менеджер станций не установлен, перезапуск воспроизведения невозможен")
+		log.Printf("WARNING: Station manager not set, restart playback not possible")
 	}
 	
-	// Определяем, является ли запрос AJAX-запросом
+	// Determine if this is AJAX request
 	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
 	
 	if isAjax {
-		// Отправляем JSON-ответ для AJAX-запросов
+		// Send JSON response for AJAX requests
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]interface{}{
 			"success": success,
@@ -961,39 +961,39 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(response)
 	} else {
-		// Перенаправляем обратно на страницу статуса для обычных запросов
+		// Redirect back to status page for regular requests
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 	}
 }
 
-// notFoundHandler обрабатывает запросы к несуществующим маршрутам
+// notFoundHandler handles requests to non-existent routes
 func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("404 - маршрут не найден: %s", r.URL.Path)
+	log.Printf("404 - route not found: %s", r.URL.Path)
 	
-	// Загружаем и рендерим шаблон страницы 404
+	// Load and render 404 template page
 	tmpl, err := template.ParseFiles(
 		"templates/404.html",
 		"templates/partials/head.html",
 	)
 	if err != nil {
-		log.Printf("ОШИБКА: Невозможно загрузить шаблон 404.html: %v", err)
-		http.Error(w, "Страница не найдена", http.StatusNotFound)
+		log.Printf("ERROR: Unable to load 404.html template: %v", err)
+		http.Error(w, "Page not found", http.StatusNotFound)
 		return
 	}
 
 	data := map[string]interface{}{
-		"Title": "404 - Страница не найдена",
+		"Title": "404 - Page not found",
 		"Path":  r.URL.Path,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
 	if err := tmpl.Execute(w, data); err != nil {
-		log.Printf("ОШИБКА: Не удалось выполнить шаблон: %v", err)
+		log.Printf("ERROR: Unable to execute template: %v", err)
 	}
 }
 
-// SetStationManager устанавливает менеджер радиостанций для перезапуска воспроизведения
+// SetStationManager sets station manager for restarting playback
 func (s *Server) SetStationManager(manager interface { RestartPlayback(string) bool }) {
 	s.stationManager = manager
 } 

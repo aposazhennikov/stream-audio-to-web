@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	defaultBufferSize = 16384 // 16KB (уменьшен с 32KB для минимизации разрыва при переключении треков)
-	gracePeriodMs     = 50    // 50ms буфер между треками (уменьшен со 100ms)
-	// Минимальная задержка между отправками буферов
-	minPlaybackDelayMs = 10   // 10ms (уменьшен с 20ms)
+	defaultBufferSize = 16384 // 16KB (reduced from 32KB to minimize gap when switching tracks)
+	gracePeriodMs     = 50    // 50ms buffer between tracks (reduced from 100ms)
+	// Minimum delay between buffer sends
+	minPlaybackDelayMs = 10   // 10ms (reduced from 20ms)
 )
 
-// Streamer управляет стримингом аудио для одного "радио" потока
+// Streamer manages audio streaming for a single "radio" stream
 type Streamer struct {
 	bufferPool      *sync.Pool
 	bufferSize      int
@@ -35,11 +35,11 @@ type Streamer struct {
 	clientMutex     sync.RWMutex
 	transcodeFormat string
 	bitrate         int
-	lastChunk       []byte       // Последний отправленный кусок аудиоданных
-	lastChunkMutex  sync.RWMutex // Мьютекс для защиты lastChunk
+	lastChunk       []byte       // Last sent chunk of audio data
+	lastChunkMutex  sync.RWMutex // Mutex for protecting lastChunk
 }
 
-// NewStreamer создаёт новый аудио стример
+// NewStreamer creates a new audio streamer
 func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int) *Streamer {
 	if bufferSize <= 0 {
 		bufferSize = defaultBufferSize
@@ -64,269 +64,269 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 	}
 }
 
-// Close закрывает стример и все клиентские соединения
+// Close closes the streamer and all client connections
 func (s *Streamer) Close() {
-	// Сигнализируем о закрытии
+	// Signal closing
 	close(s.quit)
 	
-	// Очищаем последний буфер
+	// Clear the last buffer
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
 	
-	// Закрываем все каналы клиентов
+	// Close all client channels
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
 
 	for clientID, ch := range s.clientChannels {
 		close(ch)
-		log.Printf("ДИАГНОСТИКА: Закрыт канал клиента %d при закрытии стримера", clientID)
+		log.Printf("DIAGNOSTICS: Client channel %d closed when closing streamer", clientID)
 	}
 	
-	// Очищаем карту каналов
+	// Clear the channel map
 	s.clientChannels = make(map[int]chan []byte)
 	
-	log.Printf("ДИАГНОСТИКА: Стример полностью закрыт")
+	log.Printf("DIAGNOSTICS: Streamer completely closed")
 }
 
-// StopCurrentTrack немедленно останавливает воспроизведение текущего трека
-// Используется при переключении треков вручную
+// StopCurrentTrack immediately stops the playback of the current track
+// Used when manually switching tracks
 func (s *Streamer) StopCurrentTrack() {
-	// Сначала сигнализируем о необходимости остановки
-	// Безопасная проверка на уже закрытый канал
+	// First signal the need to stop
+	// Safe check for already closed channel
 	select {
 	case <-s.quit:
-		// Канал уже закрыт, создаем новый
-		log.Printf("ДИАГНОСТИКА: Канал quit уже закрыт, пропускаем закрытие")
+		// Channel already closed, create a new one
+		log.Printf("DIAGNOSTICS: Quit channel already closed, skipping closure")
 	default:
-		// Канал еще не закрыт, закрываем его
+		// Channel not yet closed, close it
 		close(s.quit)
 	}
 	
-	// Очищаем последний буфер - это критически важно для предотвращения 
-	// отправки данных из старого трека новым клиентам
+	// Clear the last buffer - this is critically important to prevent
+	// sending data from the old track to new clients
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
 	
-	// НЕ закрываем каналы клиентов, чтобы сохранить соединения
+	// DO NOT close client channels to maintain connections
 	// s.clientMutex.Lock()
-	// вместо закрытия каналов просто логируем
-	log.Printf("ДИАГНОСТИКА: Остановка текущего трека без закрытия клиентских соединений")
+	// instead of closing channels just log
+	log.Printf("DIAGNOSTICS: Stopping current track without closing client connections")
 	// s.clientMutex.Unlock()
 	
-	// Создаем новый канал для следующего трека
+	// Create new channel for next track
 	s.quit = make(chan struct{})
 	
-	log.Printf("ДИАГНОСТИКА: Текущий трек остановлен, буфер очищен")
+	log.Printf("DIAGNOSTICS: Current track stopped, buffer cleared")
 }
 
-// GetCurrentTrackChannel возвращает канал с информацией о текущем треке
+// GetCurrentTrackChannel returns a channel with information about the current track
 func (s *Streamer) GetCurrentTrackChannel() <-chan string {
 	return s.currentTrackCh
 }
 
-// StreamTrack стримит трек всем подключенным клиентам
+// StreamTrack streams a track to all connected clients
 func (s *Streamer) StreamTrack(trackPath string) error {
-	// Проверка на пустой путь
+	// Check for empty path
 	if trackPath == "" {
-		sentryErr := fmt.Errorf("пустой путь к аудиофайлу")
-		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
+		sentryErr := fmt.Errorf("empty audio file path")
+		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
 		return sentryErr
 	}
 
-	log.Printf("ДИАГНОСТИКА: Попытка воспроизведения файла: %s", trackPath)
+	log.Printf("DIAGNOSTICS: Attempting to play file: %s", trackPath)
 	
-	// Проверка существования файла
+	// Check if file exists
 	fileInfo, err := os.Stat(trackPath)
 	if err != nil {
-		log.Printf("ДИАГНОСТИКА: ОШИБКА при проверке файла %s: %v", trackPath, err)
-		sentryErr := fmt.Errorf("ошибка проверки файла: %w", err)
-		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
+		log.Printf("DIAGNOSTICS: ERROR checking file %s: %v", trackPath, err)
+		sentryErr := fmt.Errorf("error checking file: %w", err)
+		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
 		return sentryErr
 	}
 	
-	log.Printf("ДИАГНОСТИКА: Файл %s существует, размер: %d байт, права доступа: %v", 
+	log.Printf("DIAGNOSTICS: File %s exists, size: %d bytes, access rights: %v", 
 		trackPath, fileInfo.Size(), fileInfo.Mode())
 	
-	// Проверка, что это не директория
+	// Check that it's not a directory
 	if fileInfo.IsDir() {
-		sentryErr := fmt.Errorf("указанный путь %s является директорией, а не файлом", trackPath)
-		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
+		sentryErr := fmt.Errorf("specified path %s is a directory, not a file", trackPath)
+		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
 		return sentryErr
 	}
 	
-	// Открываем файл
-	log.Printf("ДИАГНОСТИКА: Попытка открыть файл: %s", trackPath)
+	// Open the file
+	log.Printf("DIAGNOSTICS: Attempting to open file: %s", trackPath)
 	file, err := os.Open(trackPath)
 	if err != nil {
-		log.Printf("ДИАГНОСТИКА: ОШИБКА при открытии файла %s: %v", trackPath, err)
-		sentryErr := fmt.Errorf("ошибка открытия файла: %w", err)
-		sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
+		log.Printf("DIAGNOSTICS: ERROR opening file %s: %v", trackPath, err)
+		sentryErr := fmt.Errorf("error opening file: %w", err)
+		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
 		return sentryErr
 	}
 	defer file.Close()
 	
-	// пропустить ID3v2, если он есть
+	// skip ID3v2 if it exists
 	header := make([]byte, 10)
 	if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
-		// размер хранится в 4 sync-safe byte (6..9)
+		// size is stored in 4 sync-safe bytes (6..9)
 		tagSize := int(header[6]&0x7F)<<21 | int(header[7]&0x7F)<<14 | int(header[8]&0x7F)<<7 | int(header[9]&0x7F)
-		log.Printf("ДИАГНОСТИКА: Обнаружен ID3v2-тег размером %d байт, пропускаем", tagSize)
+		log.Printf("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
 		if _, err := file.Seek(int64(tagSize), io.SeekCurrent); err != nil {
-			log.Printf("ПРЕДУПРЕЖДЕНИЕ: Ошибка при пропуске ID3-тега: %v", err)
+			log.Printf("WARNING: Error skipping ID3 tag: %v", err)
 		}
 	} else {
-		// тега нет – откатываемся в начало
+		// no tag - rewind to beginning
 		file.Seek(0, io.SeekStart)
-		log.Printf("ДИАГНОСТИКА: ID3v2-тег не обнаружен, начинаем чтение с начала файла")
+		log.Printf("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
 	}
 	
-	// Проверяем наличие ID3v1-тега (128 байт в конце файла)
+	// Check for ID3v1 tag (128 bytes at end of file)
 	fileSize := fileInfo.Size()
 	hasID3v1 := false
 	if fileSize > 128 {
-		// Сохраняем текущую позицию
+		// Save current position
 		currentPos, err := file.Seek(0, io.SeekCurrent)
 		if err == nil {
-			// Переходим к концу файла минус 128 байт
+			// Move to end of file minus 128 bytes
 			_, err = file.Seek(fileSize-128, io.SeekStart)
 			if err == nil {
-				// Читаем 3 байта для проверки тега
+				// Read 3 bytes to check tag
 				tagCheck := make([]byte, 3)
 				if _, err := io.ReadFull(file, tagCheck); err == nil && string(tagCheck) == "TAG" {
 					hasID3v1 = true
-					log.Printf("ДИАГНОСТИКА: Обнаружен ID3v1-тег в конце файла, будем игнорировать последние 128 байт")
+					log.Printf("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last 128 bytes")
 				}
 			}
-			// Возвращаем указатель на прежнюю позицию
+			// Return pointer to previous position
 			file.Seek(currentPos, io.SeekStart)
 		}
 	}
 	
-	// Устанавливаем эффективный размер файла (без ID3v1-тега)
+	// Set effective file size (without ID3v1 tag)
 	effectiveFileSize := fileSize
 	if hasID3v1 {
 		effectiveFileSize -= 128
 	}
 	
-	// Инициализация буфера и счетчика
+	// Initialize buffer and counter
 	buffer := s.bufferPool.Get().([]byte)
 	defer s.bufferPool.Put(buffer)
 	
-	// Для отслеживания прогресса
+	// For tracking progress
 	var bytesRead int64
 	
-	// Отправляем информацию о текущем треке в канал
+	// Send information about current track to channel
 	select {
 	case s.currentTrackCh <- filepath.Base(trackPath):
-		log.Printf("ДИАГНОСТИКА: Обновлена информация о текущем треке: %s", filepath.Base(trackPath))
+		log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
 	default:
-		log.Printf("ДИАГНОСТИКА: Не удалось обновить информацию о текущем треке: канал заполнен")
+		log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
 	}
 	
 	startTime := time.Now()
-	log.Printf("ДИАГНОСТИКА: Начало чтения файла %s", trackPath)
+	log.Printf("DIAGNOSTICS: Starting to read file %s", trackPath)
 	
 	for {
-		// ВАЖНО: Проверяем сигнал завершения перед чтением и отправкой данных
+		// IMPORTANT: Check completion signal before reading and sending data
 		select {
 		case <-s.quit:
-			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s (прочитано %d байт из %d)", 
+			log.Printf("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)", 
 				trackPath, bytesRead, effectiveFileSize)
 			return nil
 		default:
-			// Продолжаем выполнение
+			// Continue execution
 		}
 		
 		n, err := file.Read(buffer)
 		if err == io.EOF {
-			log.Printf("ДИАГНОСТИКА: Достигнут конец файла %s", trackPath)
+			log.Printf("DIAGNOSTICS: End of file %s reached", trackPath)
 			break
 		}
 		if err != nil {
-			log.Printf("ДИАГНОСТИКА: ОШИБКА при чтении файла %s: %v", trackPath, err)
-			sentryErr := fmt.Errorf("ошибка чтения файла: %w", err)
-			sentry.CaptureException(sentryErr) // Это ошибка, отправляем в Sentry
+			log.Printf("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, err)
+			sentryErr := fmt.Errorf("error reading file: %w", err)
+			sentry.CaptureException(sentryErr) // This is an error, send to Sentry
 			return sentryErr
 		}
 
 		bytesRead += int64(n)
 		
-		// Сохраняем копию последнего чанка для новых клиентов
+		// Save copy of last chunk for new clients
 		dataCopy := make([]byte, n)
 		copy(dataCopy, buffer[:n])
 		
-		// Сохраняем копию последнего чанка для новых клиентов
+		// Save copy of last chunk for new clients
 		s.lastChunkMutex.Lock()
 		s.lastChunk = dataCopy
 		s.lastChunkMutex.Unlock()
 		
-		// Отправляем данные всем клиентам
+		// Send data to all clients
 		if err := s.broadcastToClients(buffer[:n]); err != nil {
-			log.Printf("ДИАГНОСТИКА: ОШИБКА при отправке данных клиентам: %v", err)
-			sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
+			log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
+			sentry.CaptureException(err) // This is an error, send to Sentry
 			return err
 		}
 
-		// Вычисляем задержку на основе битрейта и размера буфера
-		// Формула: (размер буфера в байтах * 8) / (битрейт в кбит/с * 1000) * 1000 мс
-		// Упрощаем: (размер буфера в байтах * 8 * 1000) / (битрейт в кбит/с * 1000)
-		// Итоговая формула: (размер буфера в байтах * 8) / битрейт в кбит/с
+		// Calculate delay based on bitrate and buffer size
+		// Formula: (buffer size in bytes * 8) / (bitrate in kbit/s * 1000) * 1000 ms
+		// Simplify: (buffer size in bytes * 8 * 1000) / (bitrate in kbit/s * 1000)
+		// Final formula: (buffer size in bytes * 8) / bitrate in kbit/s
 		delayMs := (n * 8) / s.bitrate
 		
-		// Ограничиваем минимальную задержку
+		// Limit minimum delay
 		if delayMs < minPlaybackDelayMs {
 			delayMs = minPlaybackDelayMs
 		}
 		
-		// Логируем информацию о задержке раз в 10 секунд
+		// Log delay information once every 10 seconds
 		if time.Since(lastDelayLogTime) > 10*time.Second {
-			log.Printf("ДИАГНОСТИКА: Рассчитанная задержка: %d мс для %d байт данных при битрейте %d кбит/с", 
+			log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
 				delayMs, n, s.bitrate)
 			lastDelayLogTime = time.Now()
 		}
 		
-		// Используем time.After для проверки сигнала завершения во время ожидания
+		// Use time.After to check completion signal during wait
 		select {
 		case <-time.After(time.Duration(delayMs) * time.Millisecond):
-			// Продолжаем обработку
+			// Continue processing
 		case <-s.quit:
-			log.Printf("ДИАГНОСТИКА: Прервано воспроизведение файла %s во время задержки (прочитано %d байт из %d)", 
+			log.Printf("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)", 
 				trackPath, bytesRead, effectiveFileSize)
 			return nil
 		}
 	}
 	
 	duration := time.Since(startTime)
-	log.Printf("ДИАГНОСТИКА: Воспроизведение файла %s завершено (прочитано %d байт за %.2f сек)", 
+	log.Printf("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)", 
 		trackPath, bytesRead, duration.Seconds())
 
-	// Инкрементируем метрику времени проигрывания для Prometheus
-	// Метрика должна быть определена в http/server.go
+	// Increment playback time metric for Prometheus
+	// Metric should be defined in http/server.go
 	if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
 		routeName := getRouteFromTrackPath(trackPath)
 		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
-		log.Printf("ДИАГНОСТИКА: Метрика trackSecondsTotal увеличена на %.2f сек для %s", 
+		log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
 			duration.Seconds(), routeName)
 	}
 
-	// Добавляем паузу между треками для избежания обрезки начала - уменьшена с 200 до 100 мс
-	log.Printf("ДИАГНОСТИКА: Добавление паузы %d мс между треками", gracePeriodMs)
+	// Add pause between tracks to avoid cutting the beginning - reduced from 200 to 100 ms
+	log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
 	time.Sleep(gracePeriodMs * time.Millisecond)
 
 	return nil
 }
 
-// getRouteFromTrackPath пытается извлечь имя маршрута из пути к файлу
+// getRouteFromTrackPath tries to extract route name from file path
 func getRouteFromTrackPath(trackPath string) string {
-	// Извлекаем путь к директории
+	// Extract directory path
 	dir := filepath.Dir(trackPath)
 	
-	// Получаем последний компонент пути, который обычно соответствует имени маршрута
+	// Get last component of path, which usually corresponds to route name
 	route := filepath.Base(dir)
 	
-	// Добавляем ведущий слеш, если его нет
+	// Add leading slash if it doesn't exist
 	if !strings.HasPrefix(route, "/") {
 		route = "/" + route
 	}
@@ -334,23 +334,23 @@ func getRouteFromTrackPath(trackPath string) string {
 	return route
 }
 
-// Для обмена метриками между пакетами
+// For exchanging metrics between packages
 
 var (
 	trackSecondsMetric *prometheus.CounterVec
 	metricMutex        sync.RWMutex
 )
 
-// SetTrackSecondsMetric устанавливает метрику извне
+// SetTrackSecondsMetric sets the metric from outside
 func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
 	metricMutex.Lock()
 	defer metricMutex.Unlock()
 	
 	trackSecondsMetric = metric
-	log.Printf("ДИАГНОСТИКА: SetTrackSecondsMetric сохранила указатель на метрику")
+	log.Printf("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric")
 }
 
-// GetTrackSecondsMetric возвращает метрику, если она установлена
+// GetTrackSecondsMetric returns the metric if it's set
 func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
 	metricMutex.RLock()
 	defer metricMutex.RUnlock()
@@ -362,61 +362,61 @@ func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
 	return trackSecondsMetric, true
 }
 
-// Для отслеживания логов при отправке данных
+// For tracking logs when sending data
 var (
 	lastClientCount int
 	lastLogTime     time.Time
 	lastDelayLogTime time.Time
 )
 
-// AddClient добавляет нового клиента и возвращает канал для получения данных
+// AddClient adds a new client and returns a channel for receiving data
 func (s *Streamer) AddClient() (<-chan []byte, int, error) {
-	// Проверяем, не превышено ли максимальное количество клиентов
+	// Check if maximum number of clients has been exceeded
 	if s.maxClients > 0 && atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
-		err := fmt.Errorf("превышено максимальное количество клиентов (%d)", s.maxClients)
-		sentry.CaptureException(err) // Это ошибка, отправляем в Sentry
+		err := fmt.Errorf("maximum number of clients exceeded (%d)", s.maxClients)
+		sentry.CaptureException(err) // This is an error, send to Sentry
 		return nil, 0, err
 	}
 
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
 
-	// Увеличиваем счётчик клиентов
+	// Increase client counter
 	clientID := int(atomic.AddInt32(&s.clientCounter, 1))
 	
-	// Создаём канал для клиента с буфером
-	// Буферизованный канал нужен для предотвращения блокировки 
-	// при медленных клиентах
-	clientChannel := make(chan []byte, 32) // Увеличен размер буфера с 10 до 32
+	// Create channel for client with buffer
+	// Buffered channel is needed to prevent blocking
+	// with slow clients
+	clientChannel := make(chan []byte, 32) // Buffer size increased from 10 to 32
 	s.clientChannels[clientID] = clientChannel
 
-	log.Printf("Клиент %d подключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+	log.Printf("Client %d connected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
 
-	// ВАЖНО: Если у нас есть последний буфер данных, отправляем его сразу новому клиенту
-	// чтобы он не ждал следующего чтения из файла
+	// IMPORTANT: If we have the last data buffer, send it immediately to the new client
+	// so they don't have to wait for the next file read
 	s.lastChunkMutex.RLock()
 	if s.lastChunk != nil {
-		// Используем append для создания новой копии для клиента - одна аллокация вместо двух
+		// Use append to create a new copy for the client - one allocation instead of two
 		dataCopy := append([]byte(nil), s.lastChunk...)
 		
-		log.Printf("ДИАГНОСТИКА: Отправка последнего буфера (%d байт) новому клиенту %d", len(dataCopy), clientID)
+		log.Printf("DIAGNOSTICS: Sending last buffer (%d bytes) to new client %d", len(dataCopy), clientID)
 		
-		// Отправляем данные в канал нового клиента
+		// Send data to new client's channel
 		select {
 		case clientChannel <- dataCopy:
-			log.Printf("ДИАГНОСТИКА: Последний буфер успешно отправлен клиенту %d", clientID)
+			log.Printf("DIAGNOSTICS: Last buffer successfully sent to client %d", clientID)
 		default:
-			log.Printf("ДИАГНОСТИКА: Невозможно отправить последний буфер клиенту %d, канал заполнен", clientID)
+			log.Printf("DIAGNOSTICS: Unable to send last buffer to client %d, channel full", clientID)
 		}
 	} else {
-		log.Printf("ДИАГНОСТИКА: Нет последнего буфера для отправки клиенту %d", clientID)
+		log.Printf("DIAGNOSTICS: No last buffer to send to client %d", clientID)
 	}
 	s.lastChunkMutex.RUnlock()
 
 	return clientChannel, clientID, nil
 }
 
-// RemoveClient удаляет клиента
+// RemoveClient removes a client
 func (s *Streamer) RemoveClient(clientID int) {
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
@@ -425,66 +425,66 @@ func (s *Streamer) RemoveClient(clientID int) {
 		close(channel)
 		delete(s.clientChannels, clientID)
 		atomic.AddInt32(&s.clientCounter, -1)
-		log.Printf("Клиент %d отключен. Всего клиентов: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+		log.Printf("Client %d disconnected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
 	}
 }
 
-// GetClientCount возвращает текущее количество клиентов
+// GetClientCount returns the current number of clients
 func (s *Streamer) GetClientCount() int {
 	return int(atomic.LoadInt32(&s.clientCounter))
 }
 
-// broadcastToClients отправляет данные всем подключенным клиентам
+// broadcastToClients sends data to all connected clients
 func (s *Streamer) broadcastToClients(data []byte) error {
 	s.clientMutex.RLock()
 	defer s.clientMutex.RUnlock()
 
-	// Если нет клиентов, просто возвращаемся
+	// If there are no clients, just return
 	clientCount := len(s.clientChannels)
 	if clientCount == 0 {
 		return nil
 	}
 
-	// Сократим число диагностических сообщений - выводим только когда меняется количество клиентов
-	// или раз в 10 секунд
+	// Reduce number of diagnostic messages - only output when client count changes
+	// or once every 10 seconds
 	if clientCount > 0 {
-		// Выводим сообщение только при изменении количества клиентов 
-		// или не чаще раза в 10 секунд
+		// Output message only when client count changes
+		// or not more than once every 10 seconds
 		if clientCount != lastClientCount || time.Since(lastLogTime) > 10*time.Second {
-			log.Printf("ДИАГНОСТИКА: Отправка %d байт данных %d клиентам", len(data), clientCount)
+			log.Printf("DIAGNOSTICS: Sending %d bytes of data to %d clients", len(data), clientCount)
 			lastClientCount = clientCount
 			lastLogTime = time.Now()
 		}
 	}
 
-	// Если клиентов очень много, используем пакетный подход
+	// If there are many clients, use batch approach
 	const batchSize = 50
 	
-	// Для небольшого количества клиентов используем прямую отправку
+	// For small number of clients, use direct sending
 	if clientCount <= batchSize {
 		var g errgroup.Group
 		
-		// Отправляем данные каждому клиенту в отдельной горутине
+		// Send data to each client in a separate goroutine
 		for clientID, clientChan := range s.clientChannels {
 			clientID := clientID
 			clientChan := clientChan
 			
 			g.Go(func() error {
 				select {
-				case clientChan <- data: // Используем оригинальный буфер, а не копию
-					// Данные успешно отправлены
+				case clientChan <- data: // Use original buffer, not a copy
+					// Data successfully sent
 					return nil
 				case <-time.After(200 * time.Millisecond):
-					// Тайм-аут при отправке данных - делаем еще одну попытку
-					log.Printf("Первый тайм-аут при отправке данных клиенту %d, повторная попытка...", clientID)
+					// Timeout sending data - try one more time
+					log.Printf("First timeout sending data to client %d, retrying...", clientID)
 					
 					select {
 					case clientChan <- data:
-						log.Printf("Повторная отправка данных клиенту %d успешна", clientID)
+						log.Printf("Resending data to client %d successful", clientID)
 						return nil
 					case <-time.After(200 * time.Millisecond):
-						// Второй тайм-аут, теперь отключаем клиента
-						log.Printf("Второй тайм-аут при отправке данных клиенту %d, отключаем...", clientID)
+						// Second timeout, now disconnect client
+						log.Printf("Second timeout sending data to client %d, disconnecting...", clientID)
 						s.RemoveClient(clientID)
 						return nil
 					}
@@ -495,8 +495,8 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		return g.Wait()
 	}
 	
-	// Для большого количества клиентов используем пакетную обработку
-	// Создаем список всех клиентов
+	// For large number of clients use batch processing
+	// Create list of all clients
 	clients := make([]struct {
 		id  int
 		ch  chan []byte
@@ -509,7 +509,7 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		}{id, ch})
 	}
 	
-	// Обрабатываем клиентов пакетами
+	// Process clients in batches
 	var wg sync.WaitGroup
 	for i := 0; i < clientCount; i += batchSize {
 		end := i + batchSize
@@ -526,18 +526,18 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 			
 			for _, client := range batch {
 				select {
-				case client.ch <- data: // Используем оригинальный буфер, а не копию
-					// Данные успешно отправлены
+				case client.ch <- data: // Use original buffer, not a copy
+					// Data successfully sent
 				case <-time.After(200 * time.Millisecond):
-					// Тайм-аут при отправке данных - делаем еще одну попытку
-					log.Printf("Первый тайм-аут при отправке данных клиенту %d, повторная попытка...", client.id)
+					// Timeout sending data - try one more time
+					log.Printf("First timeout sending data to client %d, retrying...", client.id)
 					
 					select {
 					case client.ch <- data:
-						log.Printf("Повторная отправка данных клиенту %d успешна", client.id)
+						log.Printf("Resending data to client %d successful", client.id)
 					case <-time.After(200 * time.Millisecond):
-						// Второй тайм-аут, теперь отключаем клиента
-						log.Printf("Второй тайм-аут при отправке данных клиенту %d, отключаем...", client.id)
+						// Second timeout, now disconnect client
+						log.Printf("Second timeout sending data to client %d, disconnecting...", client.id)
 						s.RemoveClient(client.id)
 					}
 				}

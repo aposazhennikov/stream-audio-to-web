@@ -3,7 +3,7 @@
 .gitignore
 .github
 
-# Временные файлы Python
+# Temporary Python files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -37,13 +37,13 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Виртуальные окружения
+# Virtual environments
 venv/
 ENV/
 env/
 .env
 
-# Документация и IDE
+# Documentation and IDE
 .idea/
 .vscode/
 *.swp
@@ -52,10 +52,10 @@ env/
 docs/
 *.md
 
-# Не игнорировать README.md
+# Don't ignore README.md
 # !README.md
 
-# Локальные файлы
+# Local files
 *.log
 *.sqlite3
 data/
@@ -64,11 +64,11 @@ test/
 tests/
 examples/
 
-# Временные аудиофайлы для тестирования
+# Temporary audio files for testing
 *.mp3
 *.wav
 
-# Временные файлы Docker
+# Temporary Docker files
 .dockerignore
 docker-compose*.yml
 Dockerfile

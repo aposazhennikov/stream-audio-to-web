@@ -1,25 +1,25 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 {{template "head" .}}
 <body>
     <header class="header">
-        <h1>Статус Аудио Потоков</h1>
+        <h1>Audio Streams Status</h1>
     </header>
     <div class="container">
         {{range .Streams}}
         <div class="stream-container">
             <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.Route}}</a></div>
-            <div class="status-info start-time">Запущено: {{.StartTime}}</div>
+            <div class="status-info start-time">Started: {{.StartTime}}</div>
             <div class="status-info current-track">{{.CurrentTrack}}</div>
-            <div class="status-info listeners">Количество слушателей: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
             <div class="button-group">
                 <form method="post" action="/prev-track/{{.RouteID}}" style="flex: 1;">
-                    <button type="submit" class="prev-track">Переключить назад</button>
+                    <button type="submit" class="prev-track">Previous track</button>
                 </form>
                 <form method="post" action="/next-track/{{.RouteID}}" style="flex: 1;">
-                    <button type="submit" class="next-track">Переключить вперед</button>
+                    <button type="submit" class="next-track">Next track</button>
                 </form>
-                <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Показать историю треков</button>
+                <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
             </div>
             <div id="track-list-{{.RouteID}}" class="track-list">
                 {{.HistoryHTML}}
@@ -297,58 +297,58 @@
             const isVisible = trackList.style.display === 'block';
             trackList.style.display = isVisible ? 'none' : 'block';
             
-            // Изменяем текст кнопки
+            // Change button text
             const buttons = trackList.previousElementSibling.querySelectorAll('button');
             const historyButton = buttons[buttons.length - 1];
-            historyButton.textContent = isVisible ? 'Показать историю треков' : 'Скрыть историю треков';
+            historyButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
         }
 
-        // Функция для автоматического обновления плеера при изменении трека
+        // Function for automatic player updating when track changes
         const audioPlayers = {};
         const currentTracks = {};
 
-        // Функция для получения текущего трека для каждого маршрута
+        // Function to get the current track for each route
         function checkCurrentTracks() {
             fetch('/now-playing')
                 .then(response => response.json())
                 .then(tracks => {
                     Object.keys(tracks).forEach(route => {
-                        // Если трек изменился, перезагружаем плеер
+                        // If track changed, reload player
                         if (currentTracks[route] !== tracks[route]) {
-                            console.log('Трек изменился на маршруте ' + route + ': ' + tracks[route]);
+                            console.log('Track changed on route ' + route + ': ' + tracks[route]);
                             currentTracks[route] = tracks[route];
                             
-                            // Если у нас открыт этот маршрут, перезагружаем плеер
+                            // If this route is open, reload player
                             if (window.location.pathname === route) {
-                                console.log('Перезагрузка аудиоплеера для ' + route);
+                                console.log('Reloading audio player for ' + route);
                                 const audio = document.querySelector('audio');
                                 if (audio) {
-                                    // Сохраняем текущую громкость
+                                    // Save current volume
                                     const volume = audio.volume;
-                                    // Запоминаем URL для дальнейшего использования
+                                    // Save URL for later use
                                     const originalSrc = audio.src;
-                                    // Останавливаем текущий плеер
+                                    // Stop current player
                                     audio.pause();
-                                    // Перезагружаем источник с новым временным параметром для обхода кеширования
+                                    // Reload source with new timestamp parameter to bypass caching
                                     audio.src = originalSrc + '?t=' + new Date().getTime();
-                                    // Восстанавливаем громкость
+                                    // Restore volume
                                     audio.volume = volume;
-                                    // Запускаем воспроизведение
-                                    audio.play().catch(e => console.error('Ошибка воспроизведения:', e));
+                                    // Start playback
+                                    audio.play().catch(e => console.error('Playback error:', e));
                                 }
                             }
                         }
                     });
                 })
-                .catch(error => console.error('Ошибка при проверке текущего трека:', error));
+                .catch(error => console.error('Error checking current track:', error));
         }
 
-        // Проверяем текущий трек каждые 2 секунды
+        // Check current track every 2 seconds
         setInterval(checkCurrentTracks, 2000);
         
-        // Инициализация при загрузке страницы
+        // Initialization on page load
         window.addEventListener('DOMContentLoaded', () => {
-            // Начальная загрузка информации о треках
+            // Initial track information loading
             checkCurrentTracks();
         });
     </script>

@@ -1,189 +1,191 @@
-# Аудио Стриминг Сервер на Go
+# Audio Streaming Server on Go
 
-Высокопроизводительный сервер для потоковой передачи аудиофайлов в браузер, написанный на Go. Сервер имеет минимальный расход памяти, поддерживает множество форматов аудио и обеспечивает синхронизированное "радио-подобное" воспроизведение для всех подключенных клиентов.
+**Made by Aleksandr Posazhennkiov DevOps Giftery**
 
-## Возможности
+High-performance server for streaming audio files to a browser, written in Go. The server has minimal memory usage, supports multiple audio formats, and provides synchronized "radio-like" playback for all connected clients.
 
-- **Память < 100 МБ** — даже при стриминге треков длительностью в несколько часов
-- **Синхронное "настоящее радио"** — все слушатели слышат одинаковый контент в одно и то же время
-- **Множество "станций"** — сопоставление URL-путей и независимых директорий (например `/humor`, `/news`)
-- **Перезагрузка плейлиста на лету** — добавление или удаление медиафайлов без перезапуска сервера
-- **Docker-образ < 20 МБ** — многоэтапная сборка с проверкой работоспособности
-- **Поддержка форматов MP3, AAC, OGG**
-- **Эффективное использование памяти** благодаря использованию `io.CopyBuffer` и `sync.Pool`
-- **Мониторинг производительности** через Prometheus и Sentry
-- **Грациозное завершение работы** при получении сигналов
-- **Автоматическая обработка прав доступа** — работает даже с файлами, принадлежащими root
-- **Опциональное перемешивание треков** — можно включить или отключить
-- **Страница статуса с авторизацией** — защищенный доступ к информации о потоках и управлению плеером
-- **Управление плеером вручную** — возможность переключать треки вперед и назад через веб-интерфейс
-- **Отслеживание истории треков** — для каждой станции доступна история проигранных треков
+## Features
 
-## Требования
+- **Memory < 100 MB** — even when streaming tracks several hours long
+- **Synchronized "real radio"** — all listeners hear the same content at the same time
+- **Multiple "stations"** — mapping URL paths to independent directories (e.g., `/humor`, `/news`)
+- **On-the-fly playlist reload** — add or remove media files without restarting the server
+- **Docker image < 20 MB** — multi-stage build with health check
+- **Support for MP3, AAC, OGG formats**
+- **Efficient memory usage** thanks to the use of `io.CopyBuffer` and `sync.Pool`
+- **Performance monitoring** through Prometheus and Sentry
+- **Graceful shutdown** upon receiving signals
+- **Automatic access rights handling** — works even with files owned by root
+- **Optional track shuffling** — can be enabled or disabled
+- **Status page with authorization** — protected access to information about streams and player control
+- **Manual player control** — ability to switch tracks forward and backward through the web interface
+- **Track history tracking** — track history is available for each station
 
-- Go 1.22 или выше
-- Для сборки Docker-образа: Docker Engine
+## Requirements
 
-## Структура проекта
+- Go 1.22 or higher
+- Docker Engine for building Docker image
 
-Проект имеет модульную архитектуру с четким разделением ответственности:
+## Project Structure
 
-### Основные компоненты
+The project has a modular architecture with a clear separation of responsibilities:
 
-1. **`main.go`** - Основной файл приложения, содержит точку входа, обработку аргументов командной строки и инициализацию всех компонентов.
+### Main Components
 
-2. **`audio/`** - Пакет для работы с аудиоданными
-   - `streamer.go` - Содержит логику для стриминга аудиофайлов, управляет клиентскими соединениями и буферизацией данных.
+1. **`main.go`** - The main application file, contains the entry point, command line arguments processing, and initialization of all components.
 
-3. **`playlist/`** - Пакет для управления плейлистами
-   - `playlist.go` - Отвечает за сканирование директорий, отслеживание изменений в файловой системе, перемешивание треков, историю воспроизведения.
+2. **`audio/`** - Package for working with audio data
+   - `streamer.go` - Contains the logic for streaming audio files, manages client connections and data buffering.
 
-4. **`http/`** - Пакет для HTTP-сервера
-   - `server.go` - Реализует HTTP-сервер, обрабатывает запросы, управляет потоками и регистрирует маршруты.
+3. **`playlist/`** - Package for playlist management
+   - `playlist.go` - Responsible for scanning directories, tracking changes in the file system, shuffling tracks, playback history.
 
-5. **`radio/`** - Пакет для управления "радиостанциями"
-   - `radio.go` - Связывает плейлисты и аудиостримеры, управляет потоками воспроизведения.
+4. **`http/`** - Package for HTTP server
+   - `server.go` - Implements an HTTP server, handles requests, manages streams, and registers routes.
 
-6. **`web/`** - Веб-интерфейс
-   - `index.html` - HTML-страница с аудиоплеером и JavaScript для взаимодействия с сервером.
+5. **`radio/`** - Package for managing "radio stations"
+   - `radio.go` - Links playlists and audio streamers, manages playback streams.
 
-7. **`entrypoint.sh`** - Скрипт для обработки прав доступа к аудиофайлам перед запуском приложения.
+6. **`web/`** - Web interface
+   - `index.html` - HTML page with an audio player and JavaScript for interacting with the server.
 
-### Дополнительные файлы
+7. **`entrypoint.sh`** - Script for handling access rights to audio files before launching the application.
 
-- `go.mod` / `go.sum` - Файлы управления зависимостями Go
-- `Dockerfile` - Инструкции для сборки Docker-образа
-- `docker-compose.yml` - Конфигурация для запуска через Docker Compose
-- `kubernetes.yaml` - Манифест для развертывания в Kubernetes
+### Additional Files
 
-### Взаимодействие компонентов
+- `go.mod` / `go.sum` - Go dependency management files
+- `Dockerfile` - Instructions for building a Docker image
+- `docker-compose.yml` - Configuration for running via Docker Compose
+- `kubernetes.yaml` - Manifest for deploying to Kubernetes
 
-1. `main.go` загружает конфигурацию и инициализирует сервер
-2. Для каждого маршрута создается объект `playlist.Playlist`, который сканирует соответствующую директорию
-3. Для каждого плейлиста создается `audio.Streamer`, который отвечает за чтение и отправку аудиоданных
-4. `radio.RadioStation` связывает плейлисты и стримеры для непрерывного воспроизведения
-5. `http.Server` создает HTTP-обработчики для доступа к потокам
+### Component Interaction
 
-## Обработка прав доступа
+1. `main.go` loads the configuration and initializes the server
+2. For each route, a `playlist.Playlist` object is created, which scans the corresponding directory
+3. For each playlist, an `audio.Streamer` is created, which is responsible for reading and sending audio data
+4. `radio.RadioStation` links playlists and streamers for continuous playback
+5. `http.Server` creates HTTP handlers for accessing streams
 
-Приложение автоматически проверяет и корректирует права доступа к аудиофайлам при запуске. Процесс работает следующим образом:
+## Access Rights Handling
 
-1. При запуске контейнера сначала выполняется `entrypoint.sh` скрипт
-2. Скрипт проверяет все смонтированные директории с аудиофайлами
-3. Если обнаружены файлы без прав на чтение, скрипт автоматически добавляет необходимые права
-4. Это позволяет работать с файлами, принадлежащими root пользователю, без ручной настройки
+The application automatically checks and corrects access rights to audio files at startup. The process works as follows:
 
-## Конфигурация
+1. When the container starts, the `entrypoint.sh` script is executed first
+2. The script checks all mounted directories with audio files
+3. If files without read permissions are detected, the script automatically adds the necessary permissions
+4. This allows working with files owned by the root user without manual configuration
 
-Сервер можно настроить через флаги командной строки или переменные окружения:
+## Configuration
 
-| Флаг / ENV            | Назначение                                  | По умолчанию |
-|-----------------------|----------------------------------------------|---------|
-| `--port` / `PORT`     | Порт HTTP-сервера                           | `8000`   |
-| `--audio-dir` / `AUDIO_DIR` | Директория с аудиофайлами по умолчанию | `./audio` |
-| `--stream-format` / `STREAM_FORMAT` | Формат потока (mp3, aac, ogg)   | `mp3`   |
-| `--bitrate` / `BITRATE` | Целевой битрейт в kbps                    | `128`   |
-| `--max-clients` / `MAX_CLIENTS` | Максимальное количество одновременных клиентов | `500` |
-| `--log-level` / `LOG_LEVEL` | Уровень логирования (debug, info, warn, error) | `info` |
-| `--buffer-size` / `BUFFER_SIZE` | Размер буфера для чтения в байтах  | `65536` (64KB) |
-| `--directory-routes` / `DIRECTORY_ROUTES` | JSON строка с сопоставлением маршрутов и директорий | `{}` |
-| `--shuffle` / `SHUFFLE` | Включить/отключить перемешивание треков | `false` |
-| (нет флага) / `STATUS_PASSWORD` | Пароль для доступа к странице статуса | `1234554321` |
+The server can be configured through command line flags or environment variables:
 
-## Мониторинг и наблюдаемость
+| Flag / ENV           | Purpose                                    | Default   |
+|----------------------|--------------------------------------------|-----------|
+| `--port` / `PORT`    | HTTP server port                           | `8000`    |
+| `--audio-dir` / `AUDIO_DIR` | Default audio files directory        | `./audio` |
+| `--stream-format` / `STREAM_FORMAT` | Stream format (mp3, aac, ogg) | `mp3`     |
+| `--bitrate` / `BITRATE` | Target bitrate in kbps                  | `128`     |
+| `--max-clients` / `MAX_CLIENTS` | Maximum number of simultaneous clients | `500` |
+| `--log-level` / `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
+| `--buffer-size` / `BUFFER_SIZE` | Read buffer size in bytes        | `65536` (64KB) |
+| `--directory-routes` / `DIRECTORY_ROUTES` | JSON string with route-directory mapping | `{}` |
+| `--shuffle` / `SHUFFLE` | Enable/disable track shuffling         | `false`   |
+| (no flag) / `STATUS_PASSWORD` | Password for accessing the status page | `1234554321` |
 
-Сервер предоставляет следующие эндпоинты для мониторинга:
+## Monitoring and Observability
 
-- **/healthz** — мгновенный ответ 200 OK, если сервер работает
-- **/readyz** — проверяет свободное место на диске, использование RAM и доступность директорий
-- **/metrics** — метрики Prometheus (количество слушателей, переданные байты и т.д.)
-- **/status** — защищенная паролем страница со статусом и управлением для всех аудиопотоков
+The server provides the following endpoints for monitoring:
 
-## Запуск приложения
+- **/healthz** — instantaneous 200 OK response if the server is running
+- **/readyz** — checks free disk space, RAM usage, and directory availability
+- **/metrics** — Prometheus metrics (number of listeners, bytes transferred, etc.)
+- **/status** — password-protected page with status and control for all audio streams
 
-### Сборка из исходников
+## Running the Application
 
-1. Клонировать репозиторий
+### Building from Source
+
+1. Clone the repository
 ```bash
 git clone https://github.com/user/stream-audio-to-web.git
 cd stream-audio-to-web
 ```
 
-2. Сборка приложения
+2. Build the application
 ```bash
 go build -o audio-streamer .
 ```
 
-3. Запуск с настройками по умолчанию
+3. Run with default settings
 ```bash
 ./audio-streamer --audio-dir ./audio
 ```
 
-4. Запуск с несколькими "станциями" из разных директорий
+4. Run with multiple "stations" from different directories
 ```bash
 ./audio-streamer --audio-dir ./audio --directory-routes '{"humor":"/home/humor","science":"/home/science"}'
 ```
 
-При запуске с указанными настройками, сервер создаст следующие маршруты:
-- `:8000/` - трансляция аудио из директории `./audio`
-- `:8000/humor` - трансляция аудио из директории `/home/humor`
-- `:8000/science` - трансляция аудио из директории `/home/science`
+When run with these settings, the server will create the following routes:
+- `:8000/` - broadcasting audio from the `./audio` directory
+- `:8000/humor` - broadcasting audio from the `/home/humor` directory
+- `:8000/science` - broadcasting audio from the `/home/science` directory
 
-При подключении к этим маршрутам в браузере, аудиопоток будет запускаться автоматически.
+When connecting to these routes in the browser, the audio stream will start automatically.
 
-### Сборка и запуск с Docker
+### Building and Running with Docker
 
-1. Клонировать репозиторий
+1. Clone the repository
 ```bash
 git clone https://github.com/user/stream-audio-to-web.git
 cd stream-audio-to-web
 ```
 
-2. Сборка Docker образа
+2. Build Docker image
 ```bash
 docker build -t audio-streamer:latest .
 ```
 
-3. Запустить контейнер с аудио директориями
+3. Run the container with audio directories
 ```bash
 docker run -d --name audio-streamer \
   -p 8000:8000 \
-  -v /путь/к/аудио:/app/audio \
-  -v /путь/к/юмору:/app/humor \
-  -v /путь/к/науке:/app/science \
+  -v /path/to/audio:/app/audio \
+  -v /path/to/humor:/app/humor \
+  -v /path/to/science:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
-  -e STATUS_PASSWORD=ваш_пароль \
+  -e STATUS_PASSWORD=your_password \
   audio-streamer:latest
 ```
 
-> **Примечание**: Контейнер автоматически обрабатывает права доступа к аудиофайлам, поэтому работает даже с файлами, принадлежащими пользователю root.
+> **Note**: The container automatically handles access rights to audio files, so it works even with files owned by the root user.
 
-4. Проверка статуса контейнера
+4. Check container status
 ```bash
 docker ps
 ```
 
-5. Просмотр логов
+5. View logs
 ```bash
 docker logs audio-streamer
 ```
 
-6. Остановка контейнера
+6. Stop the container
 ```bash
 docker stop audio-streamer
 ```
 
-### С Docker Compose
+### With Docker Compose
 
-1. Создайте файл `docker-compose.yml`:
+1. Create a `docker-compose.yml` file:
 ```yaml
 version: '3.8'
 
 services:
   audio-streamer:
     image: audio-streamer:latest
-    # Для работы с файлами, принадлежащими root
+    # For working with files owned by root
     privileged: true
     ports:
       - "8000:8000"
@@ -199,7 +201,7 @@ services:
       - BUFFER_SIZE=65536
       - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
       - SHUFFLE=false
-      - STATUS_PASSWORD=ваш_пароль
+      - STATUS_PASSWORD=your_password
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -214,105 +216,105 @@ services:
     restart: unless-stopped
 ```
 
-2. Запуск
+2. Start
 ```bash
 docker-compose up -d
 ```
 
-3. Просмотр логов
+3. View logs
 ```bash
 docker-compose logs -f
 ```
 
-4. Остановка
+4. Stop
 ```bash
 docker-compose down
 ```
 
-## API и эндпоинты
+## API and Endpoints
 
-- **`/streams`** — список всех доступных аудиопотоков в формате JSON
-- **`/now-playing`** — информация о текущем треке
-- **`/reload-playlist`** — перезагрузка плейлистов
-- **`/web`** — веб-интерфейс с аудиоплеерами
-- **`/<route>`** — конечная точка для прослушивания аудиопотока
-- **`/status`** — защищенная паролем страница статуса потоков с возможностью управления воспроизведением
-- **`/next-track/<route>`** — переход к следующему треку для указанного маршрута
-- **`/prev-track/<route>`** — переход к предыдущему треку для указанного маршрута
+- **`/streams`** — list of all available audio streams in JSON format
+- **`/now-playing`** — information about the current track
+- **`/reload-playlist`** — playlist reload
+- **`/web`** — web interface with audio players
+- **`/<route>`** — endpoint for listening to the audio stream
+- **`/status`** — password-protected stream status page with playback control capabilities
+- **`/next-track/<route>`** — move to the next track for the specified route
+- **`/prev-track/<route>`** — move to the previous track for the specified route
 
-## Страница статуса и управление воспроизведением
+## Status Page and Playback Control
 
-Сервер имеет встроенный веб-интерфейс для мониторинга и управления аудиопотоками, доступный по адресу `/status`.
+The server has a built-in web interface for monitoring and controlling audio streams, accessible at `/status`.
 
-### Возможности страницы статуса:
+### Status Page Features:
 
-- **Защищенный доступ** — вход по паролю, задаваемому через переменную окружения `STATUS_PASSWORD`
-- **Информация о состоянии** — отображение текущего трека, времени запуска и количества слушателей для каждой станции
-- **Управление плеером** — кнопки для переключения треков вперед и назад
-- **История треков** — список последних проигранных треков для каждой станции (до 100 треков)
-- **Стабильный порядок станций** — станции всегда отображаются в одном и том же порядке (алфавитном)
+- **Protected access** — login with a password set through the `STATUS_PASSWORD` environment variable
+- **Status information** — display of current track, start time, and number of listeners for each station
+- **Player control** — buttons for switching tracks forward and backward
+- **Track history** — list of recently played tracks for each station (up to 100 tracks)
+- **Stable station order** — stations are always displayed in the same order (alphabetical)
 
-### Использование страницы статуса:
+### Using the Status Page:
 
-1. Откройте в браузере `http://сервер:порт/status`
-2. Введите пароль (по умолчанию `1234554321` или установленный через `STATUS_PASSWORD`)
-3. После авторизации вы увидите список всех зарегистрированных аудиопотоков
-4. Для каждого потока доступны:
-   - Кнопка "Переключить назад" — перейти к предыдущему треку
-   - Кнопка "Переключить вперед" — перейти к следующему треку
-   - Кнопка "Показать историю треков" — открыть список последних проигранных треков
+1. Open `http://server:port/status` in your browser
+2. Enter the password (default `1234554321` or set via `STATUS_PASSWORD`)
+3. After authorization, you will see a list of all registered audio streams
+4. For each stream, the following are available:
+   - "Switch back" button — go to the previous track
+   - "Switch forward" button — go to the next track
+   - "Show track history" button — open a list of recently played tracks
 
-## Поддержка разных директорий для разных маршрутов
+## Support for Different Directories for Different Routes
 
-Сервер поддерживает сопоставление URL-маршрутов и директорий с аудиофайлами. Это позволяет организовать несколько "радиостанций", каждая из которой транслирует свой контент:
+The server supports mapping URL routes and directories with audio files. This allows you to organize several "radio stations", each broadcasting its own content:
 
 ```
-/home/humor    →  http://localhost:8000/humor    (юмористический контент)
-/home/science  →  http://localhost:8000/science  (научный контент)
-./audio        →  http://localhost:8000/         (основной контент)
+/home/humor    →  http://localhost:8000/humor    (humorous content)
+/home/science  →  http://localhost:8000/science  (scientific content)
+./audio        →  http://localhost:8000/         (main content)
 ```
 
-Для настройки сопоставления можно использовать:
+To configure the mapping, you can use:
 
-1. Флаг командной строки:
+1. Command line flag:
 ```bash
 ./audio-streamer --directory-routes '{"humor":"/home/humor","science":"/home/science"}'
 ```
 
-2. Переменную окружения:
+2. Environment variable:
 ```bash
 export DIRECTORY_ROUTES='{"humor":"/home/humor","science":"/home/science"}'
 ./audio-streamer
 ```
 
-3. В Docker:
+3. In Docker:
 ```bash
 docker run -d -p 8000:8000 \
   -v /home/humor:/app/humor \
   -v /home/science:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
-  -e STATUS_PASSWORD=ваш_пароль \
+  -e STATUS_PASSWORD=your_password \
   audio-streamer:latest
 ```
 
-## Архитектура
+## Architecture
 
-Проект имеет модульную архитектуру с четким разделением обязанностей:
+The project has a modular architecture with a clear separation of responsibilities:
 
-- **audio** — управление аудиопотоками и клиентскими соединениями
-- **playlist** — сканирование директорий, управление плейлистами и историей треков
-- **http** — HTTP-сервер, обработчики запросов и страница статуса
-- **radio** — управление "радиостанциями" и воспроизведением треков
+- **audio** — managing audio streams and client connections
+- **playlist** — scanning directories, managing playlists and track history
+- **http** — HTTP server, request handlers, and status page
+- **radio** — managing "radio stations" and track playback
 
-## Производительность
+## Performance
 
-- **RAM < 100 МБ** даже при обслуживании сотен клиентов
-- **CPU < 5%** на современных серверах
-- **Размер Docker-образа < 20 МБ**
-- **Пиковая нагрузка ~1000 параллельных клиентов** (зависит от сервера)
+- **RAM < 100 MB** even when serving hundreds of clients
+- **CPU < 5%** on modern servers
+- **Docker image size < 20 MB**
+- **Peak load ~1000 parallel clients** (depends on the server)
 
-## Лицензия
+## License
 
 MIT
 

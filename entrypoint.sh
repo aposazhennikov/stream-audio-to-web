@@ -1,12 +1,12 @@
 #!/bin/sh
 set -e
 
-# Список директорий для проверки (убран /app/audio)
+# List of directories to check (removed /app/audio)
 AUDIO_DIRS=""
 
-# Добавление дополнительных директорий из переменной окружения DIRECTORY_ROUTES
+# Adding additional directories from the DIRECTORY_ROUTES environment variable
 if [ -n "$DIRECTORY_ROUTES" ]; then
-    # Извлечение путей директорий из JSON строки
+    # Extracting directory paths from JSON string
     DIRS_FROM_ENV=$(echo "$DIRECTORY_ROUTES" | grep -o '"/app/[^"]*"' | tr -d '"')
     for dir in $DIRS_FROM_ENV; do
         if [ -d "$dir" ]; then
@@ -15,63 +15,63 @@ if [ -n "$DIRECTORY_ROUTES" ]; then
     done
 fi
 
-# Если переменная пустая, выставляем значения по умолчанию для юмора и науки
+# If the variable is empty, set default values for humor and science
 if [ -z "$AUDIO_DIRS" ]; then
     AUDIO_DIRS="/app/humor /app/science"
 fi
 
-echo "Проверка директорий с аудио: $AUDIO_DIRS"
+echo "Checking audio directories: $AUDIO_DIRS"
 
-# Проверка и исправление прав доступа для директорий и файлов
+# Checking and fixing access permissions for directories and files
 for dir in $AUDIO_DIRS; do
     if [ -d "$dir" ]; then
-        echo "Проверка директории: $dir"
+        echo "Checking directory: $dir"
         
-        # Если директория не читаема для текущего пользователя
+        # If the directory is not readable for the current user
         if [ ! -r "$dir" ]; then
-            echo "Недостаточно прав для чтения директории: $dir"
+            echo "Insufficient permissions to read directory: $dir"
             
-            # Попытка применить права только если запущено от root
+            # Attempt to apply permissions only if running as root
             if [ "$(id -u)" = "0" ]; then
-                echo "Устанавливаем права на чтение для директории: $dir"
-                chmod -R +r "$dir" || echo "Не удалось установить права на чтение для $dir"
+                echo "Setting read permissions for directory: $dir"
+                chmod -R +r "$dir" || echo "Failed to set read permissions for $dir"
             else
-                echo "ПРЕДУПРЕЖДЕНИЕ: Недостаточно прав для изменения прав доступа. Директория $dir может быть недоступна."
+                echo "WARNING: Insufficient permissions to change access rights. Directory $dir may be unavailable."
             fi
         fi
         
-        # Проверка прав на чтение для всех файлов в директории
+        # Checking read permissions for all files in the directory
         find "$dir" -type f \( -name "*.mp3" -o -name "*.aac" -o -name "*.ogg" \) | while read -r file; do
             if [ ! -r "$file" ]; then
-                echo "Недостаточно прав для чтения файла: $file"
+                echo "Insufficient permissions to read file: $file"
                 
-                # Попытка применить права только если запущено от root
+                # Attempt to apply permissions only if running as root
                 if [ "$(id -u)" = "0" ]; then
-                    echo "Устанавливаем права на чтение для файла: $file"
-                    chmod +r "$file" || echo "Не удалось установить права на чтение для $file"
+                    echo "Setting read permissions for file: $file"
+                    chmod +r "$file" || echo "Failed to set read permissions for $file"
                 else
-                    echo "ПРЕДУПРЕЖДЕНИЕ: Недостаточно прав для изменения прав доступа. Файл $file может быть недоступен."
+                    echo "WARNING: Insufficient permissions to change access rights. File $file may be unavailable."
                 fi
             fi
         done
     else
-        echo "Директория $dir не существует, создаем..."
+        echo "Directory $dir does not exist, creating..."
         mkdir -p "$dir"
         chmod -R 755 "$dir"
     fi
 done
 
-# Проверка сетевых привилегий
+# Checking network privileges
 if [ "$(id -u)" = "0" ]; then
-    echo "Настройка сетевого стека для надежной работы HTTP сервера..."
-    # Разрешаем повторное использование портов
-    sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || echo "Пропуск настройки sysctl (не поддерживается)"
+    echo "Configuring network stack for reliable HTTP server operation..."
+    # Allow port reuse
+    sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || echo "Skipping sysctl configuration (not supported)"
 fi
 
-# Увеличиваем лимит файловых дескрипторов, если это возможно
-ulimit -n 4096 2>/dev/null || echo "Пропуск увеличения лимита дескрипторов (не поддерживается)"
+# Increasing file descriptor limit if possible
+ulimit -n 4096 2>/dev/null || echo "Skipping descriptor limit increase (not supported)"
 
-echo "Подготовка завершена, запуск приложения..."
+echo "Preparation completed, starting the application..."
 
-# Запуск основного приложения
+# Running the main application
 exec "$@" 
