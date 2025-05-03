@@ -1,7 +1,6 @@
 package playlist
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"math/rand"
