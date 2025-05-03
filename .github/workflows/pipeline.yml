@@ -7,7 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      
+      - name: Run unit tests
+        run: |
+          go test -v ./unit/...
+
   build-and-push:
+    needs: unit-tests
     runs-on: ubuntu-latest
     
     steps:
@@ -142,4 +159,25 @@ jobs:
               fi
             done
             
-            echo "All stream endpoints testing completed!" 
+            echo "All stream endpoints testing completed!"
+
+  e2e-tests:
+    needs: deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      
+      - name: Run E2E tests
+        env:
+          TEST_SERVER_URL: http://${{ secrets.SERVER_IP }}:8000
+          STATUS_PASSWORD: ${{ secrets.STATUS_PASSWORD }}
+        run: |
+          echo "Running E2E tests against $TEST_SERVER_URL"
+          go test -v ./e2e/... 

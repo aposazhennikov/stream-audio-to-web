@@ -355,6 +355,39 @@ To use this CI/CD pipeline, you need to set up the following secrets in your Git
 
 This ensures that every push to the main branch results in an updated Docker image available in your Docker Hub repository.
 
+## Testing
+
+The project includes both unit tests and end-to-end tests:
+
+### Unit Tests
+
+Unit tests are located in the `unit/` directory and test individual components:
+- `playlist_test.go` - Tests for playlist management functionality
+- `http_test.go` - Tests for HTTP server and endpoints
+
+To run unit tests:
+```bash
+go test ./unit/...
+```
+
+### End-to-End (E2E) Tests
+
+E2E tests are located in the `e2e/` directory and test the system as a whole:
+- `stream_test.go` - Tests for audio streaming functionality
+- `api_test.go` - Tests for API endpoints and track control
+
+To run E2E tests:
+```bash
+# Run against a local server
+go test ./e2e/...
+
+# Run against a custom server
+TEST_SERVER_URL=http://yourserver:8000 go test ./e2e/...
+
+# Run with custom auth
+TEST_SERVER_URL=http://yourserver:8000 STATUS_PASSWORD=yourpassword go test ./e2e/...
+```
+
 ## License
 
 MIT
@@ -367,9 +400,9 @@ MIT
 
 - Check how it's work if we addin new audio to folder, while stream working. - NOT DONE ❌
 
-- Add unit tests - NOT DONE ❌
+- Add unit tests - DONE ✅
 
-- Add e2e tests - NOT DONE ❌
+- Add e2e tests - DONE ✅
 
 - Add github actions - DONE ✅
 
