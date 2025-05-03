@@ -752,6 +752,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	type StreamInfo struct {
 		Route       string
 		RouteID     string
+		DisplayName string
 		StartTime   string
 		CurrentTrack string
 		Listeners   int
@@ -792,9 +793,13 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Get route ID for JS functions, removing leading slash
 		routeID := route[1:]
 		
+		// Remove leading slash for display name
+		displayName := route[1:]
+		
 		streamInfos = append(streamInfos, StreamInfo{
 			Route:       route,
 			RouteID:     routeID,
+			DisplayName: displayName,
 			StartTime:   startTime,
 			CurrentTrack: currentTrack,
 			Listeners:   stream.GetClientCount(),

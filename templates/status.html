@@ -5,9 +5,10 @@
     <header class="header">
         <div class="theme-toggle-wrapper">
             <div class="theme-toggle" id="theme-toggle">
-                <span class="icon sun-icon">☀️</span>
-                <span class="icon moon-icon">🌙</span>
-                <span class="toggle-ball"></span>
+                <div class="toggle-ball">
+                    <span class="icon sun-icon">☀️</span>
+                    <span class="icon moon-icon">🌙</span>
+                </div>
             </div>
         </div>
         <h1>Audio Streams Status</h1>
@@ -15,7 +16,7 @@
     <div class="container">
         {{range .Streams}}
         <div class="stream-container">
-            <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.Route}}</a></div>
+            <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
             <div class="status-info start-time">Started: {{.StartTime}}</div>
             <div class="status-info current-track">{{.CurrentTrack}}</div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>

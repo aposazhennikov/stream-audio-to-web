@@ -69,11 +69,10 @@
         }
 
         .theme-toggle {
-            width: 3.5rem;
-            height: 1.75rem;
+            width: 5.5rem;
+            height: 2.4rem;
             background-color: var(--color-border);
-            border-radius: 2rem;
-            padding: 0.2rem;
+            border-radius: 2.4rem;
             position: relative;
             cursor: pointer;
             display: flex;
@@ -86,37 +85,78 @@
             opacity: 0.9;
         }
 
-        .theme-toggle .icon {
-            font-size: 1rem;
-            line-height: 1;
-            z-index: 1;
-            color: var(--color-text);
-        }
-
-        .sun-icon {
-            margin-left: 0.3rem;
-            color: #f39c12;
-        }
-
-        .moon-icon {
-            margin-right: 0.3rem;
-            color: #f2f4f5;
-        }
-
         .toggle-ball {
             position: absolute;
-            top: 0.15rem;
-            left: 0.15rem;
-            width: 1.45rem;
-            height: 1.45rem;
+            top: 0.3rem;
+            left: 0.3rem;
+            width: 1.8rem;
+            height: 1.8rem;
             background-color: var(--color-surface);
             border-radius: 50%;
             transition: transform 0.3s ease;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .icon {
+            position: absolute;
+            font-size: 1.2rem;
+            line-height: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        .sun-icon {
+            opacity: 1;
+            color: #ff9800;
+        }
+
+        .moon-icon {
+            opacity: 0;
+            color: #b0c4de;
         }
 
         [data-theme="dark"] .toggle-ball {
-            transform: translateX(1.75rem);
+            transform: translateX(3.1rem);
+        }
+
+        [data-theme="dark"] .sun-icon {
+            opacity: 0;
+        }
+
+        [data-theme="dark"] .moon-icon {
+            opacity: 1;
+        }
+        
+        /* Адаптация для мобильных устройств */
+        @media (max-width: 768px) {
+            .theme-toggle-wrapper {
+                top: 0.7rem;
+                right: 0.7rem;
+            }
+            
+            .theme-toggle {
+                width: 4.5rem;
+                height: 2rem;
+            }
+            
+            .toggle-ball {
+                width: 1.5rem;
+                height: 1.5rem;
+                top: 0.25rem;
+                left: 0.25rem;
+            }
+            
+            [data-theme="dark"] .toggle-ball {
+                transform: translateX(2.5rem);
+            }
+            
+            .icon {
+                font-size: 0.65rem;
+                letter-spacing: 0.03em;
+            }
         }
     </style>
     {{block "additional_styles" .}}{{end}}
