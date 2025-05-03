@@ -31,6 +31,21 @@
             --transition: all 0.3s ease;
         }
 
+        [data-theme="dark"] {
+            --color-primary: #2196f3;
+            --color-primary-dark: #1976d2;
+            --color-secondary: #607d8b;
+            --color-background: #121212;
+            --color-surface: #1e1e1e;
+            --color-success: #4caf50;
+            --color-error: #f44336;
+            --color-warning: #ff9800;
+            --color-text: #e0e0e0;
+            --color-text-secondary: #b0b0b0;
+            --color-border: #333333;
+            --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -42,6 +57,66 @@
             background-color: var(--color-background);
             color: var(--color-text);
             line-height: 1.6;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* Theme toggle styles */
+        .theme-toggle-wrapper {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            z-index: 10;
+        }
+
+        .theme-toggle {
+            width: 3.5rem;
+            height: 1.75rem;
+            background-color: var(--color-border);
+            border-radius: 2rem;
+            padding: 0.2rem;
+            position: relative;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: var(--transition);
+        }
+
+        .theme-toggle:hover {
+            opacity: 0.9;
+        }
+
+        .theme-toggle .icon {
+            font-size: 1rem;
+            line-height: 1;
+            z-index: 1;
+            color: var(--color-text);
+        }
+
+        .sun-icon {
+            margin-left: 0.3rem;
+            color: #f39c12;
+        }
+
+        .moon-icon {
+            margin-right: 0.3rem;
+            color: #f2f4f5;
+        }
+
+        .toggle-ball {
+            position: absolute;
+            top: 0.15rem;
+            left: 0.15rem;
+            width: 1.45rem;
+            height: 1.45rem;
+            background-color: var(--color-surface);
+            border-radius: 50%;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        [data-theme="dark"] .toggle-ball {
+            transform: translateX(1.75rem);
         }
     </style>
     {{block "additional_styles" .}}{{end}}
