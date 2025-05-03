@@ -415,6 +415,40 @@ TEST_SERVER_URL=http://yourserver:8000 STATUS_PASSWORD=yourpassword go test ./e2
 MANUAL_TEST=1 TEST_AUDIO_DIR=/path/to/audio/dir TEST_AUDIO_FILE=/path/to/test.mp3 go test ./e2e/playlist_update_test.go
 ```
 
+## User Interface
+
+The application features a modern, responsive web interface with both light and dark themes to enhance user experience.
+
+### Status Page
+
+The status page provides real-time information about all running radio stations, including current tracks, playback history, and listener count.
+
+#### Light Theme
+![Status Page - Light Theme](docs/images/status-page-day.png)
+
+#### Dark Theme
+![Status Page - Dark Theme](docs/images/status-page-night.png)
+
+### Authentication
+
+Access to the status page and control features is protected by authentication to prevent unauthorized access.
+
+#### Light Theme
+![Login Screen - Light Theme](docs/images/login-day.png)
+
+#### Dark Theme
+![Login Screen - Dark Theme](docs/images/login-night.png)
+
+### Error Handling
+
+The application includes user-friendly error pages for improved user experience.
+
+#### Light Theme
+![404 Error - Light Theme](docs/images/404-day.png)
+
+#### Dark Theme
+![404 Error - Dark Theme](docs/images/404-night.png)
+
 ## License
 
 MIT
