@@ -150,8 +150,8 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 		log.Printf("ОШИБКА: Поток для маршрута '%s' не был добавлен в map streams!", route)
 	}
 	
-	// ВАЖНО: Регистрируем обработчик маршрута в роутере
-	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET")
+	// ВАЖНО: Регистрируем обработчик маршрута в роутере для GET и HEAD запросов
+	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET", "HEAD")
 	log.Printf("ДИАГНОСТИКА: Зарегистрирован HTTP обработчик для маршрута '%s'", route)
 
 	// Запуск горутины для отслеживания текущего трека
@@ -214,8 +214,8 @@ func hasUnicodeChars(s string) bool {
 // setupRoutes настраивает маршруты HTTP сервера
 func (s *Server) setupRoutes() {
 	// Эндпоинты мониторинга и здоровья
-	s.router.HandleFunc("/healthz", s.healthzHandler).Methods("GET")
-	s.router.HandleFunc("/readyz", s.readyzHandler).Methods("GET")
+	s.router.HandleFunc("/healthz", s.healthzHandler).Methods("GET", "HEAD")
+	s.router.HandleFunc("/readyz", s.readyzHandler).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", promhttp.Handler()).Methods("GET")
 
 	// API для управления плейлистами
@@ -224,7 +224,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
 	
 	// Добавляем страницу статуса с проверкой пароля
-	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET")
+	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
 	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
 	
@@ -244,7 +244,7 @@ func (s *Server) setupRoutes() {
 // healthzHandler возвращает 200 OK, если сервер работает
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	// Логирование запроса healthz
-	log.Printf("Получен запрос healthz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
+	log.Printf("Получен запрос %s healthz от %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
 	
 	// Проверка наличия зарегистрированных потоков
 	s.mutex.RLock()
@@ -262,14 +262,23 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Статус healthz: %d потоков зарегистрировано. Маршруты: %v", streamsCount, streamsList)
 	}
 	
-	// Всегда возвращаем успешный ответ, так как потоки могут настраиваться асинхронно
+	// Добавляем заголовки для предотвращения кеширования
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
 	
-	// Принудительно отправляем ответ
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	// Всегда возвращаем успешный ответ, так как потоки могут настраиваться асинхронно
+	w.WriteHeader(http.StatusOK)
+	
+	// Если это не HEAD запрос, отправляем тело ответа
+	if r.Method != "HEAD" {
+		w.Write([]byte("OK"))
+		
+		// Принудительно отправляем ответ
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 	}
 	
 	// Дополнительное логирование успешного ответа
@@ -279,7 +288,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 // readyzHandler проверяет готовность к работе
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// Логирование запроса readyz
-	log.Printf("Получен запрос readyz от %s (URI: %s)", r.RemoteAddr, r.RequestURI)
+	log.Printf("Получен запрос %s readyz от %s (URI: %s)", r.Method, r.RemoteAddr, r.RequestURI)
 	
 	// Добавляем заголовки для предотвращения кеширования
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -301,11 +310,15 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Всегда возвращаем OK для readyz, чтобы избежать перезапусков контейнера
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("Ready - %d streams registered", streamsCount)))
 	
-	// Отправка данных немедленно
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	// Если это не HEAD запрос, отправляем тело ответа
+	if r.Method != "HEAD" {
+		w.Write([]byte(fmt.Sprintf("Ready - %d streams registered", streamsCount)))
+		
+		// Отправка данных немедленно
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 	}
 	
 	// Дополнительное логирование успешного ответа
@@ -461,7 +474,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	log.Printf("Формат аудиопотока для маршрута %s: %s (MIME: %s)", route, s.streamFormat, contentType)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Получен запрос на аудиопоток %s от %s", route, r.RemoteAddr)
+		log.Printf("Получен запрос %s на аудиопоток %s от %s", r.Method, route, r.RemoteAddr)
 		
 		s.mutex.RLock()
 		stream, exists := s.streams[route]
@@ -488,6 +501,13 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// НЕ устанавливаем Transfer-Encoding: chunked, Go сделает это сам
 		// НЕ устанавливаем Connection: keep-alive, это базовое поведение HTTP/1.1
+		
+		// Для HEAD запросов только отправляем заголовки и возвращаемся
+		if r.Method == "HEAD" {
+			log.Printf("Обработан HEAD запрос для потока %s от %s", route, r.RemoteAddr)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		
 		// ВАЖНО: НЕ устанавливать Content-Length для стримов, иначе браузер будет ждать точное количество байт
 

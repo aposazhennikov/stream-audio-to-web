@@ -320,6 +320,13 @@ MIT
 # TODO 
 
 
-- Fix shuffe mode, it doesn't work right now.
-- Check how circle play working, after last audio in playlist should play first one
-- Check how it's work if we addin new audio to folder, while stream working.
+- Fix shuffle mode, it doesn't work right now. - NOT DONE ❌
+
+
+- Check how circle play working, after last audio in playlist should play first one  - DONE ✅
+
+- Check how it's work if we addin new audio to folder, while stream working. - NOT DONE ❌
+
+- Add HEAD requeests for monitoring DONE ✅
+
+- Add routes to switch audio forward/backward(It should be available by curl with specific header, to protect from random internet scanners) - NOT DONE ❌

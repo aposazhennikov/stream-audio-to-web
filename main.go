@@ -133,9 +133,18 @@ func main() {
 	
 	// Заменяем временный обработчик для корневого маршрута на перенаправление
 	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Перенаправление с / на %s", redirectTo)
+		log.Printf("Перенаправление с / на %s (метод: %s)", redirectTo, r.Method)
+		// Для HEAD запросов возвращаем только заголовки без редиректа
+		if r.Method == "HEAD" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
-	}).Methods("GET")
+	}).Methods("GET", "HEAD")
 	
 	log.Printf("Настроено перенаправление с / на %s", redirectTo)
 
