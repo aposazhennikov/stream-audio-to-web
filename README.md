@@ -315,3 +315,11 @@ docker run -d -p 8000:8000 \
 ## Лицензия
 
 MIT
+
+
+# TODO 
+
+
+- Fix shuffe mode, it doesn't work right now.
+- Check how circle play working, after last audio in playlist should play first one
+- Check how it's work if we addin new audio to folder, while stream working.
