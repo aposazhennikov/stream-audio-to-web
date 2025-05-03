@@ -29,10 +29,6 @@ func TestVolumeNormalization(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 	
-	// Create test configuration
-	configPath := filepath.Join(tempDir, "test_config.json")
-	testPort := "8765"
-	
 	// Create test directories
 	quietDir := filepath.Join(tempDir, "quiet")
 	loudDir := filepath.Join(tempDir, "loud")
@@ -43,6 +39,9 @@ func TestVolumeNormalization(t *testing.T) {
 	if err := os.Mkdir(loudDir, 0755); err != nil {
 		t.Fatalf("Failed to create loud directory: %v", err)
 	}
+	
+	// Порт для тестового сервера
+	const testPort = "8765"
 	
 	// Copy audio files from test directory
 	// We assume there are different volume files in the test directory
