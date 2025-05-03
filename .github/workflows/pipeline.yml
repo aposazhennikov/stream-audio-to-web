@@ -47,8 +47,10 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             clear
-            cd /home/stream-audio-to-web/
-            git pull origin
+            cd /home/
+            rm -rf stream-audio-to-web/
+            git clone https://github.com/aposazhennikov/stream-audio-to-web.git
+            cd stream-audio-to-web/
             docker pull aposazhennikov/audio-streamer:latest
             docker compose down
             docker compose up -d
