@@ -435,11 +435,34 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 			// Just logging, don't send to Sentry
 			log.Printf("Request for track information for %s: %s", route, track)
 			
-			// Send JSON response
-			json.NewEncoder(w).Encode(map[string]string{
+			// Try to get current track with timeout protection in case playlists are busy
+			s.mutex.RLock()
+			playlist, playlistExists := s.playlists[route]
+			s.mutex.RUnlock()
+			
+			currentTrackInfo := map[string]string{
 				"route": route,
 				"track": track,
-			})
+			}
+			
+			// If playlist exists, try to get additional info about current track
+			if playlistExists {
+				// Get current track with protection against nil/timeout
+				for attempt := 0; attempt < 3; attempt++ {
+					if currentTrack := playlist.GetCurrentTrack(); currentTrack != nil {
+						// If we have more detailed track info, add it
+						if trackWithPath, ok := currentTrack.(interface{ GetPath() string }); ok {
+							currentTrackInfo["path"] = trackWithPath.GetPath()
+						}
+						break
+					}
+					// Small delay before retry
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+			
+			// Send JSON response
+			json.NewEncoder(w).Encode(currentTrackInfo)
 		} else {
 			errorMsg := fmt.Sprintf("Stream %s not found", route)
 			log.Printf("ERROR: %s", errorMsg)
@@ -777,22 +800,50 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			currentTrack = track
 		}
 		
-		// Get track history
-		history := playlist.GetHistory()
+		// Get track history with timeout retry protection
+		var history []interface{}
+		// Try to get history with simple timeout protection
+		historyObtained := false
+		for attempt := 0; attempt < 3; attempt++ {
+			// Try to get history, might return nil or empty on timeout
+			history = playlist.GetHistory()
+			if history != nil {
+				historyObtained = true
+				break
+			}
+			log.Printf("WARNING: GetHistory timeout for route %s, attempt %d/3", route, attempt+1)
+			time.Sleep(50 * time.Millisecond) // Small delay before retry
+		}
+		
 		historyHtml := "<ul>"
 		// Track history in reverse order (newest on top)
-		for i := len(history) - 1; i >= 0; i-- {
-			// Use type assertion to get track name
-			if track, ok := history[i].(interface{ GetPath() string }); ok {
-				trackPath := track.GetPath()
-				trackName := filepath.Base(trackPath)
-				historyHtml += "<li>" + trackName + "</li>"
+		if historyObtained && len(history) > 0 {
+			for i := len(history) - 1; i >= 0; i-- {
+				// Use type assertion to get track name
+				if track, ok := history[i].(interface{ GetPath() string }); ok {
+					trackPath := track.GetPath()
+					trackName := filepath.Base(trackPath)
+					historyHtml += "<li>" + trackName + "</li>"
+				}
 			}
+		} else {
+			historyHtml += "<li>History unavailable - playlist busy</li>"
 		}
 		historyHtml += "</ul>"
 		
-		// Format start time
-		startTime := playlist.GetStartTime().Format("02.01.2006 15:04:05 MST")
+		// Format start time with protection against nil/timeout
+		startTime := "Unknown"
+		// Try to get start time with timeout protection
+		for attempt := 0; attempt < 3; attempt++ {
+			// Get playlist start time or fallback to current time
+			t := playlist.GetStartTime()
+			if !t.IsZero() {
+				startTime = t.Format("02.01.2006 15:04:05 MST")
+				break
+			}
+			log.Printf("WARNING: GetStartTime returned zero time for route %s, attempt %d/3", route, attempt+1)
+			time.Sleep(50 * time.Millisecond) // Small delay before retry
+		}
 		
 		// Get route ID for JS functions, removing leading slash
 		routeID := route[1:]
@@ -855,8 +906,33 @@ func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Switch track (ignore return value)
+	// Switch track (check return value)
 	nextTrack := playlist.NextTrack()
+	
+	// Handle possible nil return (timeout or error)
+	if nextTrack == nil {
+		log.Printf("WARNING: NextTrack returned nil for route %s, likely timeout", route)
+		
+		// Determine if this is AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			response := map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Failed to switch track, operation timed out",
+			}
+			json.NewEncoder(w).Encode(response)
+		} else {
+			// Show error for regular requests
+			http.Error(w, "Failed to switch track, operation timed out", http.StatusInternalServerError)
+		}
+		return
+	}
+	
 	log.Printf("DIAGNOSTICS: Manual track switch to next track for route %s", route)
 	
 	// Call restart playback, if station manager is available
@@ -926,8 +1002,33 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Switch track (ignore return value)
+	// Switch track (check return value)
 	prevTrack := playlist.PreviousTrack()
+	
+	// Handle possible nil return (timeout or error)
+	if prevTrack == nil {
+		log.Printf("WARNING: PreviousTrack returned nil for route %s, likely timeout", route)
+		
+		// Determine if this is AJAX request
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || r.URL.Query().Get("ajax") == "1"
+		
+		if isAjax {
+			// Return error for AJAX requests
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			response := map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Failed to switch track, operation timed out",
+			}
+			json.NewEncoder(w).Encode(response)
+		} else {
+			// Show error for regular requests
+			http.Error(w, "Failed to switch track, operation timed out", http.StatusInternalServerError)
+		}
+		return
+	}
+	
 	log.Printf("DIAGNOSTICS: Manual track switch to previous track for route %s", route)
 	
 	// Call restart playback, if station manager is available
@@ -1033,19 +1134,58 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Call Shuffle method on the playlist
+	// Call Shuffle method on the playlist with error handling
 	log.Printf("Manual shuffle requested for route %s", route)
-	playlist.Shuffle()
+	
+	// Execute shuffle in goroutine with timeout protection
+	shuffleDone := make(chan bool, 1)
+	
+	go func() {
+		defer func() {
+			// Catch any panics from Shuffle operation
+			if r := recover(); r != nil {
+				log.Printf("ERROR: Shuffle operation panicked: %v", r)
+				shuffleDone <- false
+			}
+		}()
+		
+		// Call shuffle
+		playlist.Shuffle()
+		shuffleDone <- true
+	}()
+	
+	// Wait for shuffle to complete with timeout
+	var success bool
+	select {
+	case success = <-shuffleDone:
+		if success {
+			log.Printf("Manual shuffle completed successfully for route %s", route)
+		} else {
+			log.Printf("Manual shuffle failed for route %s", route)
+		}
+	case <-time.After(1 * time.Second):
+		log.Printf("WARNING: Shuffle operation timed out for route %s", route)
+		success = false
+	}
 	
 	// Check if need to return JSON or perform redirect
 	ajax := r.URL.Query().Get("ajax")
 	if ajax == "1" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Playlist shuffled successfully",
-			"route": route,
-		})
+		if success {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Playlist shuffled successfully",
+				"route": route,
+			})
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Playlist shuffle failed or timed out",
+				"route": route,
+			})
+		}
 	} else {
 		// Redirect back to status page
 		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
