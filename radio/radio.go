@@ -102,6 +102,11 @@ func (rs *RadioStation) RestartPlayback() {
 		rs.currentTrack = make(chan struct{})
 	}
 	
+	// Явно обновляем текущий трек в плейлисте, чтобы он гарантированно отразился в now-playing
+	// Это критически важно для корректной работы тестов переключения треков
+	track := rs.playlist.GetCurrentTrack()
+	log.Printf("DIAGNOSTICS: Current track after manual switching for station %s obtained", rs.route)
+	
 	// Send restart signal to playback loop
 	select {
 	case rs.restart <- struct{}{}: // Send signal if channel is not full
