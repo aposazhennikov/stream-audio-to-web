@@ -16,7 +16,7 @@ import (
 )
 
 // Minimal valid MP3 file data for testing
-var minimumMP3Data = []byte{
+var audioMinimumMP3Data = []byte{
 	0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Minimal data
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -124,7 +124,7 @@ func TestBroadcastToClients(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, minimumMP3Data, 0644)
+	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
 	require.NoError(t, err)
 
 	// Start streaming in a separate goroutine
@@ -154,7 +154,7 @@ func TestStreamTrackHappyPath(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, minimumMP3Data, 0644)
+	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
 	require.NoError(t, err)
 
 	// Add a test client
@@ -228,7 +228,7 @@ func TestLastChunkDelivery(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, minimumMP3Data, 0644)
+	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
 	require.NoError(t, err)
 
 	// Start streaming in a separate goroutine
@@ -271,7 +271,7 @@ func TestStopCurrentTrack(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.mp3")
 	// Create a larger file for longer playback
 	largerData := make([]byte, 10000)
-	copy(largerData, minimumMP3Data)
+	copy(largerData, audioMinimumMP3Data)
 	err = ioutil.WriteFile(testFile, largerData, 0644)
 	require.NoError(t, err)
 
