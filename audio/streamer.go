@@ -177,17 +177,24 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	
 	// Create pipe for normalized audio
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	// Не закрываем pipe reader здесь, так как это может произойти раньше, чем завершится запись
+	// defer pr.Close() 
 	
 	// Start normalization in separate goroutine if enabled
 	var streamErr error
+	var streamErrMutex sync.Mutex // Мьютекс для защиты доступа к streamErr
+	var normalizationDone = make(chan struct{}) // Сигнал завершения нормализации
+	
 	if s.normalizeVolume {
 		go func() {
 			defer pw.Close()
+			defer close(normalizationDone) // Сигнализируем о завершении нормализации
 			
 			// Use NormalizeMP3Stream to normalize the audio
 			if err := NormalizeMP3Stream(file, pw); err != nil {
+				streamErrMutex.Lock()
 				streamErr = err
+				streamErrMutex.Unlock()
 				log.Printf("DIAGNOSTICS: ERROR during audio normalization: %v", err)
 				sentry.CaptureException(err)
 			}
@@ -212,70 +219,109 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		startTime := time.Now()
 		log.Printf("DIAGNOSTICS: Starting to read normalized file %s", trackPath)
 		
-		for {
-			// Check completion signal before reading
-			select {
-			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted", trackPath)
-				return nil
-			default:
-				// Continue execution
+		// Гарантируем закрытие pipe reader при выходе из функции
+		defer pr.Close()
+		
+		// Канал для мониторинга завершения горутины
+		processingDone := make(chan struct{})
+		
+		// Запускаем чтение из pipe в отдельной горутине
+		go func() {
+			defer close(processingDone)
+			
+			for {
+				// Check completion signal before reading
+				select {
+				case <-s.quit:
+					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted", trackPath)
+					return
+				default:
+					// Continue execution
+				}
+				
+				// Read from pipe
+				n, err := pr.Read(buffer)
+				if err == io.EOF {
+					log.Printf("DIAGNOSTICS: End of normalized file %s reached", trackPath)
+					return
+				}
+				if err != nil {
+					// Если pipe был закрыт, это может быть результатом штатного завершения горутины нормализации
+					if err == io.ErrClosedPipe || strings.Contains(err.Error(), "closed pipe") {
+						log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
+						return
+					}
+					
+					log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, err)
+					streamErrMutex.Lock()
+					streamErr = fmt.Errorf("error reading normalized file: %w", err)
+					streamErrMutex.Unlock()
+					sentry.CaptureException(streamErr)
+					return
+				}
+				
+				bytesRead += int64(n)
+				
+				// Save copy of last chunk for new clients
+				dataCopy := make([]byte, n)
+				copy(dataCopy, buffer[:n])
+				
+				// Save copy of last chunk for new clients
+				s.lastChunkMutex.Lock()
+				s.lastChunk = dataCopy
+				s.lastChunkMutex.Unlock()
+				
+				// Send data to all clients
+				if err := s.broadcastToClients(buffer[:n]); err != nil {
+					log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
+					streamErrMutex.Lock()
+					streamErr = err
+					streamErrMutex.Unlock()
+					sentry.CaptureException(err)
+					return
+				}
+				
+				// Calculate delay based on bitrate and buffer size
+				delayMs := (n * 8) / s.bitrate
+				
+				// Limit minimum delay
+				if delayMs < minPlaybackDelayMs {
+					delayMs = minPlaybackDelayMs
+				}
+				
+				// Log delay information once every 10 seconds
+				if time.Since(lastDelayLogTime) > 10*time.Second {
+					log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
+						delayMs, n, s.bitrate)
+					lastDelayLogTime = time.Now()
+				}
+				
+				// Wait for delay with completion check
+				select {
+				case <-time.After(time.Duration(delayMs) * time.Millisecond):
+					// Continue processing
+				case <-s.quit:
+					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted during delay", trackPath)
+					return
+				}
 			}
-			
-			// Read from pipe
-			n, err := pr.Read(buffer)
-			if err == io.EOF {
-				log.Printf("DIAGNOSTICS: End of normalized file %s reached", trackPath)
-				break
-			}
-			if err != nil {
-				log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, err)
-				sentryErr := fmt.Errorf("error reading normalized file: %w", err)
-				sentry.CaptureException(sentryErr)
-				return sentryErr
-			}
-			
-			bytesRead += int64(n)
-			
-			// Save copy of last chunk for new clients
-			dataCopy := make([]byte, n)
-			copy(dataCopy, buffer[:n])
-			
-			// Save copy of last chunk for new clients
-			s.lastChunkMutex.Lock()
-			s.lastChunk = dataCopy
-			s.lastChunkMutex.Unlock()
-			
-			// Send data to all clients
-			if err := s.broadcastToClients(buffer[:n]); err != nil {
-				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
-				sentry.CaptureException(err)
-				return err
-			}
-			
-			// Calculate delay based on bitrate and buffer size
-			delayMs := (n * 8) / s.bitrate
-			
-			// Limit minimum delay
-			if delayMs < minPlaybackDelayMs {
-				delayMs = minPlaybackDelayMs
-			}
-			
-			// Log delay information once every 10 seconds
-			if time.Since(lastDelayLogTime) > 10*time.Second {
-				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
-					delayMs, n, s.bitrate)
-				lastDelayLogTime = time.Now()
-			}
-			
-			// Wait for delay with completion check
-			select {
-			case <-time.After(time.Duration(delayMs) * time.Millisecond):
-				// Continue processing
-			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted during delay", trackPath)
-				return nil
-			}
+		}()
+		
+		// Ожидаем завершения обработки или сигнала остановки
+		select {
+		case <-processingDone:
+			log.Printf("DIAGNOSTICS: Finished processing normalized file %s", trackPath)
+		case <-s.quit:
+			log.Printf("DIAGNOSTICS: Processing of normalized file %s interrupted", trackPath)
+			return nil
+		}
+		
+		// Дождемся завершения горутины нормализации перед проверкой ошибок
+		select {
+		case <-normalizationDone:
+			log.Printf("DIAGNOSTICS: Normalization of file %s completed", trackPath)
+		case <-time.After(1 * time.Second):
+			log.Printf("DIAGNOSTICS: Timeout waiting for normalization of %s to complete", trackPath)
 		}
 		
 		duration := time.Since(startTime)
@@ -291,8 +337,12 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 		
 		// Check if there was an error in the normalization goroutine
-		if streamErr != nil {
-			return streamErr
+		streamErrMutex.Lock()
+		err := streamErr
+		streamErrMutex.Unlock()
+		
+		if err != nil {
+			return err
 		}
 		
 		// Add pause between tracks
