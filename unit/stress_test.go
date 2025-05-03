@@ -25,7 +25,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 	// Set shorter test timeout and force exit after 50 seconds
 	timer := time.AfterFunc(50*time.Second, func() {
 		t.Logf("FATAL: Test timed out after 50 seconds - forcing exit due to deadlock")
-		// Принудительное завершение при таймауте
+		// Force termination on timeout
 		os.Exit(1)
 	})
 	defer timer.Stop()
@@ -151,7 +151,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		t.Log("All goroutines completed normally")
 	case <-time.After(45 * time.Second):
 		t.Log("WARNING: Wait timeout occurred - not all goroutines completed in time")
-		// Принудительное завершение при таймауте
+		// Force termination on timeout
 		t.Fatalf("Test force-terminated after 45 seconds due to timeout")
 	}
 	

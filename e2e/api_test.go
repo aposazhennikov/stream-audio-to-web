@@ -160,18 +160,18 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Fatalf("Failed to get current track: %v", err)
 	}
 	
-	// Подробное логирование ответа
+	// Detailed response logging
 	t.Logf("Now-playing status code: %d", nowPlayingResp.StatusCode)
 	t.Logf("Now-playing Content-Type: %s", nowPlayingResp.Header.Get("Content-Type"))
 	
-	// Читаем тело ответа для анализа
+	// Read response body for analysis
 	bodyBytes, err := ioutil.ReadAll(nowPlayingResp.Body)
 	nowPlayingResp.Body.Close()
 	if err != nil {
 		t.Fatalf("Failed to read now-playing response body: %v", err)
 	}
 	
-	// Логируем первые 200 символов тела ответа для диагностики
+	// Log first 200 characters of response body for diagnostics
 	responseBody := string(bodyBytes)
 	if len(responseBody) > 200 {
 		t.Logf("Now-playing response body (first 200 chars): %s...", responseBody[:200])
@@ -179,13 +179,13 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Logf("Now-playing response body: %s", responseBody)
 	}
 	
-	// Проверяем на заголовок Content-Type
+	// Check for Content-Type header
 	contentType := nowPlayingResp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
 		t.Fatalf("Expected JSON response, got Content-Type: %s", contentType)
 	}
 	
-	// Пытаемся декодировать JSON
+	// Try to decode JSON
 	var currentTrackInfo map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &currentTrackInfo); err != nil {
 		t.Fatalf("Failed to decode current track info: %v, body: %s", err, responseBody)
@@ -219,18 +219,18 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Fatalf("Failed to get new current track: %v", err)
 	}
 	
-	// Подробное логирование ответа
+	// Detailed response logging
 	t.Logf("Now-playing (after switch) status code: %d", newPlayingResp.StatusCode)
 	t.Logf("Now-playing (after switch) Content-Type: %s", newPlayingResp.Header.Get("Content-Type"))
 	
-	// Читаем тело ответа для анализа
+	// Read response body for analysis
 	newBodyBytes, err := ioutil.ReadAll(newPlayingResp.Body)
 	newPlayingResp.Body.Close()
 	if err != nil {
 		t.Fatalf("Failed to read now-playing response body: %v", err)
 	}
 	
-	// Логируем первые 200 символов тела ответа для диагностики
+	// Log first 200 characters of response body for diagnostics
 	newResponseBody := string(newBodyBytes)
 	if len(newResponseBody) > 200 {
 		t.Logf("Now-playing (after switch) response body (first 200 chars): %s...", newResponseBody[:200])
@@ -238,13 +238,13 @@ func TestTrackControlEndpoints(t *testing.T) {
 		t.Logf("Now-playing (after switch) response body: %s", newResponseBody)
 	}
 	
-	// Проверяем на заголовок Content-Type
+	// Check for Content-Type header
 	newContentType := newPlayingResp.Header.Get("Content-Type")
 	if !strings.Contains(newContentType, "application/json") {
 		t.Fatalf("Expected JSON response for second request, got Content-Type: %s", newContentType)
 	}
 	
-	// Пытаемся декодировать JSON
+	// Try to decode JSON
 	var newTrackInfo map[string]interface{}
 	if err := json.Unmarshal(newBodyBytes, &newTrackInfo); err != nil {
 		t.Fatalf("Failed to decode new track info: %v, body: %s", err, newResponseBody)

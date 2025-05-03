@@ -1179,12 +1179,12 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Check authentication (same as for status page)
 	if !s.checkAuth(r) {
-		// Проверяем, является ли запрос AJAX
+		// Check if this is an AJAX request
 		ajax := r.URL.Query().Get("ajax")
 		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || ajax == "1"
 		
 		if isAjax {
-			// Для AJAX запросов отправляем JSON с ошибкой
+			// For AJAX requests, send JSON error response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1195,7 +1195,7 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		// Для обычных запросов делаем редирект
+		// For regular requests, redirect to login page
 		s.redirectToLogin(w, r)
 		return
 	}

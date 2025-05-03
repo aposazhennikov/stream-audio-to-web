@@ -100,7 +100,7 @@ func TestShuffleMode(t *testing.T) {
 	}
 	defer configResp.Body.Close()
 	
-	// Логируем ответ API для диагностики
+	// Log API response for diagnostics
 	configBytes, err := io.ReadAll(configResp.Body)
 	if err != nil {
 		t.Fatalf("Error reading config response: %v", err)
@@ -113,19 +113,19 @@ func TestShuffleMode(t *testing.T) {
 		t.Fatalf("Error decoding configuration: %v", err)
 	}
 	
-	// Режим перемешивания не отдается через API в /streams
-	// Поэтому определяем его на основе проверки порядка треков
-	// Если порядок разный, считаем что перемешивание включено
+	// Mode of shuffling is not returned via API in /streams
+	// So we determine it based on checking the order of tracks
+	// If order is different, assume shuffling is enabled
 	shuffleEnabled := !sameSequence
 	
-	// Логгируем информацию о треках
+	// Log track information
 	t.Logf("Sequence 1: %v", trackList1)
 	t.Logf("Sequence 2: %v", trackList2)
 	t.Logf("Sequences are identical: %v", sameSequence)
 	t.Logf("Shuffle mode determined from sequences: %v", shuffleEnabled)
 	
-	// Не проверяем ошибки перемешивания, так как мы определяем shuffleEnabled на основе сравнения последовательностей
-	// Вместо этого просто логируем результаты
+	// We don't check shuffle errors because we determine shuffleEnabled based on comparing sequences
+	// Instead, we just log the results
 }
 
 // TestAddAudioFile tests that the playlist updates when adding new files
@@ -172,19 +172,19 @@ func getCurrentTrackName(t *testing.T, client *http.Client, baseURL, routeName s
 	}
 	defer resp.Body.Close()
 	
-	// Проверяем заголовок Content-Type
+	// Check Content-Type header
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
 		t.Fatalf("Expected JSON response, got: %s", contentType)
 	}
 	
-	// Читаем тело ответа для анализа
+	// Read response body for analysis
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Error reading response body: %v", err)
 	}
 	
-	// Логируем для диагностики
+	// Log for diagnostics
 	t.Logf("Current track API response: %s", string(bodyBytes))
 	
 	var trackInfo map[string]interface{}
