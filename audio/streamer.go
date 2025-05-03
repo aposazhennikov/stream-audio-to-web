@@ -193,8 +193,113 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			}
 		}()
 		
-		// Use pipe reader for subsequent operations
-		file = os.NewFile(pr.Fd(), trackPath)
+		// Не используем file = os.NewFile(pr.Fd(), trackPath), т.к. у PipeReader нет метода Fd()
+		// Вместо этого читаем напрямую из pipe reader
+		buffer := s.bufferPool.Get().([]byte)
+		defer s.bufferPool.Put(buffer)
+		
+		// For tracking progress
+		var bytesRead int64
+		
+		// Send information about current track to channel
+		select {
+		case s.currentTrackCh <- filepath.Base(trackPath):
+			log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
+		default:
+			log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
+		}
+		
+		startTime := time.Now()
+		log.Printf("DIAGNOSTICS: Starting to read normalized file %s", trackPath)
+		
+		for {
+			// Check completion signal before reading
+			select {
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted", trackPath)
+				return nil
+			default:
+				// Continue execution
+			}
+			
+			// Read from pipe
+			n, err := pr.Read(buffer)
+			if err == io.EOF {
+				log.Printf("DIAGNOSTICS: End of normalized file %s reached", trackPath)
+				break
+			}
+			if err != nil {
+				log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, err)
+				sentryErr := fmt.Errorf("error reading normalized file: %w", err)
+				sentry.CaptureException(sentryErr)
+				return sentryErr
+			}
+			
+			bytesRead += int64(n)
+			
+			// Save copy of last chunk for new clients
+			dataCopy := make([]byte, n)
+			copy(dataCopy, buffer[:n])
+			
+			// Save copy of last chunk for new clients
+			s.lastChunkMutex.Lock()
+			s.lastChunk = dataCopy
+			s.lastChunkMutex.Unlock()
+			
+			// Send data to all clients
+			if err := s.broadcastToClients(buffer[:n]); err != nil {
+				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
+				sentry.CaptureException(err)
+				return err
+			}
+			
+			// Calculate delay based on bitrate and buffer size
+			delayMs := (n * 8) / s.bitrate
+			
+			// Limit minimum delay
+			if delayMs < minPlaybackDelayMs {
+				delayMs = minPlaybackDelayMs
+			}
+			
+			// Log delay information once every 10 seconds
+			if time.Since(lastDelayLogTime) > 10*time.Second {
+				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
+					delayMs, n, s.bitrate)
+				lastDelayLogTime = time.Now()
+			}
+			
+			// Wait for delay with completion check
+			select {
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
+				// Continue processing
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted during delay", trackPath)
+				return nil
+			}
+		}
+		
+		duration := time.Since(startTime)
+		log.Printf("DIAGNOSTICS: Playback of normalized file %s completed (read %d bytes in %.2f sec)", 
+			trackPath, bytesRead, duration.Seconds())
+		
+		// Increment playback time metric for Prometheus
+		if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+			routeName := getRouteFromTrackPath(trackPath)
+			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
+			log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
+				duration.Seconds(), routeName)
+		}
+		
+		// Check if there was an error in the normalization goroutine
+		if streamErr != nil {
+			return streamErr
+		}
+		
+		// Add pause between tracks
+		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
+		time.Sleep(gracePeriodMs * time.Millisecond)
+		
+		return nil
 	} else {
 		// Normal operation mode - skip ID3v2 if it exists
 		header := make([]byte, 10)
@@ -210,147 +315,142 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			file.Seek(0, io.SeekStart)
 			log.Printf("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
 		}
-	}
-	
-	// Check for ID3v1 tag (128 bytes at end of file)
-	fileSize := fileInfo.Size()
-	hasID3v1 := false
-	if fileSize > 128 {
-		// Save current position
-		currentPos, err := file.Seek(0, io.SeekCurrent)
-		if err == nil {
-			// Move to end of file minus 128 bytes
-			_, err = file.Seek(fileSize-128, io.SeekStart)
+		
+		// Check for ID3v1 tag (128 bytes at end of file)
+		fileSize := fileInfo.Size()
+		hasID3v1 := false
+		if fileSize > 128 {
+			// Save current position
+			currentPos, err := file.Seek(0, io.SeekCurrent)
 			if err == nil {
-				// Read 3 bytes to check tag
-				tagCheck := make([]byte, 3)
-				if _, err := io.ReadFull(file, tagCheck); err == nil && string(tagCheck) == "TAG" {
-					hasID3v1 = true
-					log.Printf("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last 128 bytes")
+				// Move to end of file minus 128 bytes
+				_, err = file.Seek(fileSize-128, io.SeekStart)
+				if err == nil {
+					// Read 3 bytes to check tag
+					tagCheck := make([]byte, 3)
+					if _, err := io.ReadFull(file, tagCheck); err == nil && string(tagCheck) == "TAG" {
+						hasID3v1 = true
+						log.Printf("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last 128 bytes")
+					}
 				}
+				// Return pointer to previous position
+				file.Seek(currentPos, io.SeekStart)
 			}
-			// Return pointer to previous position
-			file.Seek(currentPos, io.SeekStart)
 		}
-	}
-	
-	// Set effective file size (without ID3v1 tag)
-	effectiveFileSize := fileSize
-	if hasID3v1 {
-		effectiveFileSize -= 128
-	}
-	
-	// Initialize buffer and counter
-	buffer := s.bufferPool.Get().([]byte)
-	defer s.bufferPool.Put(buffer)
-	
-	// For tracking progress
-	var bytesRead int64
-	
-	// Send information about current track to channel
-	select {
-	case s.currentTrackCh <- filepath.Base(trackPath):
-		log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
-	default:
-		log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
-	}
-	
-	startTime := time.Now()
-	log.Printf("DIAGNOSTICS: Starting to read file %s", trackPath)
-	
-	for {
-		// IMPORTANT: Check completion signal before reading and sending data
+		
+		// Set effective file size (without ID3v1 tag)
+		effectiveFileSize := fileSize
+		if hasID3v1 {
+			effectiveFileSize -= 128
+		}
+		
+		// Initialize buffer and counter
+		buffer := s.bufferPool.Get().([]byte)
+		defer s.bufferPool.Put(buffer)
+		
+		// For tracking progress
+		var bytesRead int64
+		
+		// Send information about current track to channel
 		select {
-		case <-s.quit:
-			log.Printf("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)", 
-				trackPath, bytesRead, effectiveFileSize)
-			return nil
+		case s.currentTrackCh <- filepath.Base(trackPath):
+			log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
 		default:
-			// Continue execution
+			log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
 		}
 		
-		n, err := file.Read(buffer)
-		if err == io.EOF {
-			log.Printf("DIAGNOSTICS: End of file %s reached", trackPath)
-			break
+		startTime := time.Now()
+		log.Printf("DIAGNOSTICS: Starting to read file %s", trackPath)
+		
+		for {
+			// IMPORTANT: Check completion signal before reading and sending data
+			select {
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)", 
+					trackPath, bytesRead, effectiveFileSize)
+				return nil
+			default:
+				// Continue execution
+			}
+			
+			n, err := file.Read(buffer)
+			if err == io.EOF {
+				log.Printf("DIAGNOSTICS: End of file %s reached", trackPath)
+				break
+			}
+			if err != nil {
+				log.Printf("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, err)
+				sentryErr := fmt.Errorf("error reading file: %w", err)
+				sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+				return sentryErr
+			}
+
+			bytesRead += int64(n)
+			
+			// Save copy of last chunk for new clients
+			dataCopy := make([]byte, n)
+			copy(dataCopy, buffer[:n])
+			
+			// Save copy of last chunk for new clients
+			s.lastChunkMutex.Lock()
+			s.lastChunk = dataCopy
+			s.lastChunkMutex.Unlock()
+			
+			// Send data to all clients
+			if err := s.broadcastToClients(buffer[:n]); err != nil {
+				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
+				sentry.CaptureException(err) // This is an error, send to Sentry
+				return err
+			}
+
+			// Calculate delay based on bitrate and buffer size
+			// Formula: (buffer size in bytes * 8) / (bitrate in kbit/s * 1000) * 1000 ms
+			// Simplify: (buffer size in bytes * 8 * 1000) / (bitrate in kbit/s * 1000)
+			// Final formula: (buffer size in bytes * 8) / bitrate in kbit/s
+			delayMs := (n * 8) / s.bitrate
+			
+			// Limit minimum delay
+			if delayMs < minPlaybackDelayMs {
+				delayMs = minPlaybackDelayMs
+			}
+			
+			// Log delay information once every 10 seconds
+			if time.Since(lastDelayLogTime) > 10*time.Second {
+				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
+					delayMs, n, s.bitrate)
+				lastDelayLogTime = time.Now()
+			}
+			
+			// Use time.After to check completion signal during wait
+			select {
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
+				// Continue processing
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)", 
+					trackPath, bytesRead, effectiveFileSize)
+				return nil
+			}
 		}
-		if err != nil {
-			log.Printf("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, err)
-			sentryErr := fmt.Errorf("error reading file: %w", err)
-			sentry.CaptureException(sentryErr) // This is an error, send to Sentry
-			return sentryErr
+		
+		duration := time.Since(startTime)
+		log.Printf("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)", 
+			trackPath, bytesRead, duration.Seconds())
+
+		// Increment playback time metric for Prometheus
+		// Metric should be defined in http/server.go
+		if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+			routeName := getRouteFromTrackPath(trackPath)
+			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
+			log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
+				duration.Seconds(), routeName)
 		}
 
-		bytesRead += int64(n)
-		
-		// Save copy of last chunk for new clients
-		dataCopy := make([]byte, n)
-		copy(dataCopy, buffer[:n])
-		
-		// Save copy of last chunk for new clients
-		s.lastChunkMutex.Lock()
-		s.lastChunk = dataCopy
-		s.lastChunkMutex.Unlock()
-		
-		// Send data to all clients
-		if err := s.broadcastToClients(buffer[:n]); err != nil {
-			log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
-			sentry.CaptureException(err) // This is an error, send to Sentry
-			return err
-		}
+		// Add pause between tracks to avoid cutting the beginning - reduced from 200 to 100 ms
+		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
+		time.Sleep(gracePeriodMs * time.Millisecond)
 
-		// Calculate delay based on bitrate and buffer size
-		// Formula: (buffer size in bytes * 8) / (bitrate in kbit/s * 1000) * 1000 ms
-		// Simplify: (buffer size in bytes * 8 * 1000) / (bitrate in kbit/s * 1000)
-		// Final formula: (buffer size in bytes * 8) / bitrate in kbit/s
-		delayMs := (n * 8) / s.bitrate
-		
-		// Limit minimum delay
-		if delayMs < minPlaybackDelayMs {
-			delayMs = minPlaybackDelayMs
-		}
-		
-		// Log delay information once every 10 seconds
-		if time.Since(lastDelayLogTime) > 10*time.Second {
-			log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
-				delayMs, n, s.bitrate)
-			lastDelayLogTime = time.Now()
-		}
-		
-		// Use time.After to check completion signal during wait
-		select {
-		case <-time.After(time.Duration(delayMs) * time.Millisecond):
-			// Continue processing
-		case <-s.quit:
-			log.Printf("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)", 
-				trackPath, bytesRead, effectiveFileSize)
-			return nil
-		}
+		return nil
 	}
-	
-	duration := time.Since(startTime)
-	log.Printf("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)", 
-		trackPath, bytesRead, duration.Seconds())
-
-	// Increment playback time metric for Prometheus
-	// Metric should be defined in http/server.go
-	if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
-		routeName := getRouteFromTrackPath(trackPath)
-		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
-		log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
-			duration.Seconds(), routeName)
-	}
-
-	// Check if there was an error in the normalization goroutine
-	if streamErr != nil {
-		return streamErr
-	}
-
-	// Add pause between tracks to avoid cutting the beginning - reduced from 200 to 100 ms
-	log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
-	time.Sleep(gracePeriodMs * time.Millisecond)
-
-	return nil
 }
 
 // getRouteFromTrackPath tries to extract route name from file path

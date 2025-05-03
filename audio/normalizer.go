@@ -2,7 +2,6 @@ package audio
 
 import (
 	"bufio"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
