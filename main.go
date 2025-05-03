@@ -33,6 +33,7 @@ const (
 	defaultLogLevel     = "info"
 	defaultBufferSize   = 65536 // 64KB
 	defaultShuffle      = false  // Shuffle tracks is disabled by default
+	defaultNormalizeVolume = true // Volume normalization is enabled by default
 )
 
 // Application configuration
@@ -47,6 +48,7 @@ type Config struct {
 	BufferSize      int
 	Shuffle         bool              // Global shuffle tracks setting
 	PerStreamShuffle map[string]bool  // Per-stream shuffle configuration
+	NormalizeVolume bool              // Global volume normalization setting
 }
 
 // Global variables for routes
@@ -80,6 +82,7 @@ func main() {
 	log.Printf("Max clients: %d", config.MaxClients)
 	log.Printf("Buffer size: %d", config.BufferSize)
 	log.Printf("Global shuffle setting: %v", config.Shuffle)
+	log.Printf("Volume normalization: %v", config.NormalizeVolume)
 	log.Printf("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
 		log.Printf("  - Route '%s': Shuffle = %v", route, shuffle)
@@ -304,6 +307,10 @@ func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioSt
 	
 	log.Printf("Creating audio streamer for route %s...", route)
 	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
+	
+	// Configure volume normalization
+	streamer.SetVolumeNormalization(config.NormalizeVolume)
+	
 	log.Printf("Audio streamer for route %s successfully created", route)
 	
 	log.Printf("Adding radio station %s to manager...", route)
@@ -353,6 +360,7 @@ func loadConfig() *Config {
 	flag.StringVar(&config.LogLevel, "log-level", defaultLogLevel, "Logging level: debug, info, warn, error")
 	flag.IntVar(&config.BufferSize, "buffer-size", defaultBufferSize, "Buffer size for reading audio files in bytes")
 	flag.BoolVar(&config.Shuffle, "shuffle", defaultShuffle, "Shuffle tracks in playlist")
+	flag.BoolVar(&config.NormalizeVolume, "normalize-volume", defaultNormalizeVolume, "Normalize volume across all audio files")
 
 	// For mapping directories and routes we use JSON
 	var directoryRoutesJSON string
@@ -438,6 +446,15 @@ func loadConfig() *Config {
 			config.Shuffle = shuffle
 		} else {
 			sentry.CaptureException(fmt.Errorf("error parsing SHUFFLE: %w", err))
+		}
+	}
+	
+	// Parse normalize volume setting from environment
+	if envNormalizeVolume := os.Getenv("NORMALIZE_VOLUME"); envNormalizeVolume != "" {
+		if normalizeVolume, err := strconv.ParseBool(envNormalizeVolume); err == nil {
+			config.NormalizeVolume = normalizeVolume
+		} else {
+			sentry.CaptureException(fmt.Errorf("error parsing NORMALIZE_VOLUME: %w", err))
 		}
 	}
 	

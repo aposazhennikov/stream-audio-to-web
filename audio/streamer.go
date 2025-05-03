@@ -37,6 +37,7 @@ type Streamer struct {
 	bitrate         int
 	lastChunk       []byte       // Last sent chunk of audio data
 	lastChunkMutex  sync.RWMutex // Mutex for protecting lastChunk
+	normalizeVolume bool         // Flag to enable/disable volume normalization
 }
 
 // NewStreamer creates a new audio streamer
@@ -61,7 +62,14 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		bitrate:         bitrate,
 		lastChunk:       nil,
 		lastChunkMutex:  sync.RWMutex{},
+		normalizeVolume: true, // Enable volume normalization by default
 	}
+}
+
+// SetVolumeNormalization enables or disables volume normalization
+func (s *Streamer) SetVolumeNormalization(enabled bool) {
+	s.normalizeVolume = enabled
+	log.Printf("DIAGNOSTICS: Volume normalization %s", map[bool]string{true: "enabled", false: "disabled"}[enabled])
 }
 
 // Close closes the streamer and all client connections
@@ -167,19 +175,41 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	defer file.Close()
 	
-	// skip ID3v2 if it exists
-	header := make([]byte, 10)
-	if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
-		// size is stored in 4 sync-safe bytes (6..9)
-		tagSize := int(header[6]&0x7F)<<21 | int(header[7]&0x7F)<<14 | int(header[8]&0x7F)<<7 | int(header[9]&0x7F)
-		log.Printf("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
-		if _, err := file.Seek(int64(tagSize), io.SeekCurrent); err != nil {
-			log.Printf("WARNING: Error skipping ID3 tag: %v", err)
-		}
+	// Create pipe for normalized audio
+	pr, pw := io.Pipe()
+	defer pr.Close()
+	
+	// Start normalization in separate goroutine if enabled
+	var streamErr error
+	if s.normalizeVolume {
+		go func() {
+			defer pw.Close()
+			
+			// Use NormalizeMP3Stream to normalize the audio
+			if err := NormalizeMP3Stream(file, pw); err != nil {
+				streamErr = err
+				log.Printf("DIAGNOSTICS: ERROR during audio normalization: %v", err)
+				sentry.CaptureException(err)
+			}
+		}()
+		
+		// Use pipe reader for subsequent operations
+		file = os.NewFile(pr.Fd(), trackPath)
 	} else {
-		// no tag - rewind to beginning
-		file.Seek(0, io.SeekStart)
-		log.Printf("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
+		// Normal operation mode - skip ID3v2 if it exists
+		header := make([]byte, 10)
+		if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
+			// size is stored in 4 sync-safe bytes (6..9)
+			tagSize := int(header[6]&0x7F)<<21 | int(header[7]&0x7F)<<14 | int(header[8]&0x7F)<<7 | int(header[9]&0x7F)
+			log.Printf("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
+			if _, err := file.Seek(int64(tagSize), io.SeekCurrent); err != nil {
+				log.Printf("WARNING: Error skipping ID3 tag: %v", err)
+			}
+		} else {
+			// no tag - rewind to beginning
+			file.Seek(0, io.SeekStart)
+			log.Printf("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
+		}
 	}
 	
 	// Check for ID3v1 tag (128 bytes at end of file)
@@ -309,6 +339,11 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
 		log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
 			duration.Seconds(), routeName)
+	}
+
+	// Check if there was an error in the normalization goroutine
+	if streamErr != nil {
+		return streamErr
 	}
 
 	// Add pause between tracks to avoid cutting the beginning - reduced from 200 to 100 ms

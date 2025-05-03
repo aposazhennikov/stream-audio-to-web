@@ -20,6 +20,7 @@ High-performance server for streaming audio files to a browser, written in Go. T
 - **Status page with authorization** — protected access to information about streams and player control
 - **Manual player control** — ability to switch tracks forward and backward through the web interface
 - **Track history tracking** — track history is available for each station
+- **Volume normalization** — automatic volume normalization across all audio tracks prevents sudden volume changes
 
 ## Requirements
 
@@ -91,6 +92,7 @@ The server can be configured through command line flags or environment variables
 | `--directory-routes` / `DIRECTORY_ROUTES` | JSON string with route-directory mapping | `{}` |
 | `--shuffle` / `SHUFFLE` | Enable/disable track shuffling globally  | `false`   |
 | `--per-stream-shuffle` / `PER_STREAM_SHUFFLE` | JSON string with per-stream shuffle settings | `{}` |
+| `--normalize-volume` / `NORMALIZE_VOLUME` | Enable/disable volume normalization | `true` |
 | (no flag) / `ROUTES_SHUFFLE` | Alternative for PER_STREAM_SHUFFLE with string values | `{}` |
 | (no flag) / `STATUS_PASSWORD` | Password for accessing the status page | `1234554321` |
 | (no flag) / `SENTRY_DSN` | Sentry DSN for error tracking | Empty (disabled) |
@@ -353,6 +355,7 @@ The project has a modular architecture with a clear separation of responsibiliti
 - **Dynamic playlist updates** — add or remove audio files without restarting
 - **Shuffle mode** — randomize track playback order
 - **Track history** — keep track of 100 recently played tracks per station
+- **Volume normalization** — automatically adjusts volume levels across all audio files to provide consistent listening experience
 - **Comprehensive healthchecks** — for reliable container orchestration
 
 ## CI/CD with GitHub Actions
@@ -446,6 +449,12 @@ All tasks completed:
 - Add HEAD http requests for monitoring (UptimeRobot has only this type of requests in free ver.) - DONE ✅
   - Added support for HEAD requests for monitoring
 
+- Add volume normalization to prevent sudden volume changes - DONE ✅
+  - Added audio normalization module for consistent volume levels
+  - Implemented volume level analysis and adjustments
+  - Added configuration options to enable/disable normalization
+  - Created unit and e2e tests for the new functionality
+
 ## Shuffle Mode
 
 The application supports automatic track shuffling with flexible configuration options:
@@ -528,3 +537,36 @@ curl -X POST -b "status_auth=your_password" http://server:port/shuffle-playlist/
 # Get JSON response
 curl -X POST -b "status_auth=your_password" "http://server:port/shuffle-playlist/route_name?ajax=1"
 ```
+
+## Volume Normalization
+
+The application includes automatic volume normalization to provide a consistent listening experience when playing audio files with different volume levels:
+
+- **RMS-based Analysis** — the system analyzes each audio file to determine its volume level using Root Mean Square (RMS) calculation
+- **Consistent Volume Levels** — automatically adjusts volume to ensure consistent levels between tracks
+- **Configurable** — can be enabled or disabled through command line flags or environment variables
+- **Caching** — analyzes each file only once and caches results for better performance
+- **Intelligent Range Limiting** — prevents excessive amplification or reduction by limiting gain factors to reasonable ranges
+- **No Quality Loss** — normalizes audio without degrading audio quality
+
+Volume normalization is enabled by default but can be disabled if needed:
+
+```bash
+# Disable volume normalization via command line
+./audio-streamer --normalize-volume=false
+
+# Disable via environment variable
+export NORMALIZE_VOLUME=false
+./audio-streamer
+
+# In Docker
+docker run -e NORMALIZE_VOLUME=false -p 8000:8000 audio-streamer:latest
+```
+
+The normalization process:
+
+1. When a track is played for the first time, the system analyzes its volume level
+2. The result is stored in a memory cache to avoid repeated analysis
+3. A gain factor is calculated to adjust the volume to a target level
+4. The audio data is streamed with the adjusted volume level
+5. The process is repeated for each audio file, creating a consistent listening experience
