@@ -104,7 +104,7 @@ func (rs *RadioStation) RestartPlayback() {
 	
 	// Явно обновляем текущий трек в плейлисте, чтобы он гарантированно отразился в now-playing
 	// Это критически важно для корректной работы тестов переключения треков
-	track := rs.playlist.GetCurrentTrack()
+	_ = rs.playlist.GetCurrentTrack() // Получаем текущий трек, но не сохраняем в переменную
 	log.Printf("DIAGNOSTICS: Current track after manual switching for station %s obtained", rs.route)
 	
 	// Send restart signal to playback loop
