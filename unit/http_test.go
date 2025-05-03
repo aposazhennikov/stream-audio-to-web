@@ -150,4 +150,114 @@ func TestStreamRegistration(t *testing.T) {
 	if !server.IsStreamRegistered("/test") {
 		t.Errorf("Stream not registered properly")
 	}
+}
+
+// AddTestSetShuffleMode tests the SetShuffleMode handler
+func TestSetShuffleMode(t *testing.T) {
+	// Create HTTP server
+	server := httpServer.NewServer("mp3", 10)
+
+	// Напрямую вызывать SetStatusPassword нельзя, 
+	// поэтому будем полагаться на пароль по умолчанию ("1234554321")
+	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword")
+
+	// Create mocks for stream and playlist
+	mockStream := &mockStreamHandler{
+		clientCount: 0,
+		trackChan:   make(chan string),
+	}
+
+	mockPlaylist := &mockPlaylistManager{
+		currentTrack: "test.mp3",
+		history:      []interface{}{"test.mp3"},
+		startTime:    time.Now(),
+	}
+
+	// Register stream
+	server.RegisterStream("/test", mockStream, mockPlaylist)
+
+	// Используем пароль по умолчанию для тестов
+	defaultPassword := "1234554321"
+
+	// Test cases
+	testCases := []struct {
+		name           string
+		path           string
+		method         string
+		cookieAuth     bool
+		expectedStatus int
+	}{
+		{
+			name:           "SetShuffleOnWithAuth",
+			path:           "/set-shuffle/test/on",
+			method:         "POST",
+			cookieAuth:     true,
+			expectedStatus: http.StatusSeeOther, // Redirect to status page
+		},
+		{
+			name:           "SetShuffleOffWithAuth",
+			path:           "/set-shuffle/test/off",
+			method:         "POST",
+			cookieAuth:     true,
+			expectedStatus: http.StatusSeeOther, // Redirect to status page
+		},
+		{
+			name:           "SetShuffleOnWithoutAuth",
+			path:           "/set-shuffle/test/on",
+			method:         "POST",
+			cookieAuth:     false,
+			expectedStatus: http.StatusSeeOther, // Redirect to login page
+		},
+		{
+			name:           "SetShuffleOffWithoutAuth",
+			path:           "/set-shuffle/test/off",
+			method:         "POST",
+			cookieAuth:     false,
+			expectedStatus: http.StatusSeeOther, // Redirect to login page
+		},
+		{
+			name:           "SetShuffleInvalidMode",
+			path:           "/set-shuffle/test/invalid",
+			method:         "POST",
+			cookieAuth:     true,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "SetShuffleNonExistentRoute",
+			path:           "/set-shuffle/nonexistent/on",
+			method:         "POST",
+			cookieAuth:     true,
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create test HTTP request
+			req, err := http.NewRequest(tc.method, tc.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Add authentication cookie if needed
+			if tc.cookieAuth {
+				req.AddCookie(&http.Cookie{
+					Name:  "status_auth",
+					Value: defaultPassword,
+				})
+			}
+
+			// Create ResponseRecorder to record the response
+			rr := httptest.NewRecorder()
+
+			// Process the request
+			server.Handler().ServeHTTP(rr, req)
+
+			// Check response code
+			if status := rr.Code; status != tc.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v",
+					status, tc.expectedStatus)
+			}
+		})
+	}
 } 

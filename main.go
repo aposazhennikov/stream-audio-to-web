@@ -37,15 +37,16 @@ const (
 
 // Application configuration
 type Config struct {
-	Port           int
-	AudioDir       string
+	Port            int
+	AudioDir        string
 	DirectoryRoutes map[string]string
-	StreamFormat   string
-	Bitrate        int
-	MaxClients     int
-	LogLevel       string
-	BufferSize     int
-	Shuffle        bool // Shuffle tracks in playlist
+	StreamFormat    string
+	Bitrate         int
+	MaxClients      int
+	LogLevel        string
+	BufferSize      int
+	Shuffle         bool              // Global shuffle tracks setting
+	PerStreamShuffle map[string]bool  // Per-stream shuffle configuration
 }
 
 // Global variables for routes
@@ -78,12 +79,16 @@ func main() {
 	log.Printf("Bitrate: %d", config.Bitrate)
 	log.Printf("Max clients: %d", config.MaxClients)
 	log.Printf("Buffer size: %d", config.BufferSize)
-	log.Printf("Shuffle tracks: %v", config.Shuffle)
+	log.Printf("Global shuffle setting: %v", config.Shuffle)
+	log.Printf("Per-stream shuffle settings:")
+	for route, shuffle := range config.PerStreamShuffle {
+		log.Printf("  - Route '%s': Shuffle = %v", route, shuffle)
+	}
 	log.Printf("Additional directory routes:")
 	for route, dir := range config.DirectoryRoutes {
 		log.Printf("  - Route '%s' -> Directory '%s'", route, dir)
 	}
-	log.Printf("============================================")
+	log.Printf("=============================================")
 
 	// Create HTTP server
 	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
@@ -277,7 +282,18 @@ func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioSt
 
 	// Create playlist and configure stream synchronously
 	log.Printf("Creating playlist for route %s...", route)
-	pl, err := playlist.NewPlaylist(dir, nil, config.Shuffle)
+	
+	// Determine shuffle setting for this specific stream
+	// 1. Check if there's a specific setting for this route
+	shuffleSetting := config.Shuffle // Default to global setting
+	if specificShuffle, exists := config.PerStreamShuffle[route]; exists {
+		shuffleSetting = specificShuffle
+		log.Printf("Using specific shuffle setting for route %s: %v", route, shuffleSetting)
+	} else {
+		log.Printf("Using global shuffle setting for route %s: %v", route, shuffleSetting)
+	}
+	
+	pl, err := playlist.NewPlaylist(dir, nil, shuffleSetting)
 	if err != nil {
 		log.Printf("ERROR creating playlist: %s", err)
 		sentry.CaptureException(fmt.Errorf("error creating playlist: %w", err))
@@ -340,19 +356,30 @@ func loadConfig() *Config {
 
 	// For mapping directories and routes we use JSON
 	var directoryRoutesJSON string
+	var perStreamShuffleJSON string
 	flag.StringVar(&directoryRoutesJSON, "directory-routes", "{}", "JSON string with route to directory mapping")
+	flag.StringVar(&perStreamShuffleJSON, "per-stream-shuffle", "{}", "JSON string with route to shuffle setting mapping")
 
 	// Priority: environment variables > command line flags > default values
 	flag.Parse()
 
-	// Initialize DirectoryRoutes
+	// Initialize DirectoryRoutes and PerStreamShuffle
 	config.DirectoryRoutes = make(map[string]string)
+	config.PerStreamShuffle = make(map[string]bool)
 
 	// Parse JSON string with directory routes
 	if directoryRoutesJSON != "" {
 		if err := json.Unmarshal([]byte(directoryRoutesJSON), &config.DirectoryRoutes); err != nil {
 			log.Printf("Error parsing JSON string with directory routes: %s", err)
 			sentry.CaptureException(fmt.Errorf("error parsing JSON string with directory routes: %w", err))
+		}
+	}
+	
+	// Parse JSON string with per-stream shuffle settings
+	if perStreamShuffleJSON != "" {
+		if err := json.Unmarshal([]byte(perStreamShuffleJSON), &config.PerStreamShuffle); err != nil {
+			log.Printf("Error parsing JSON string with per-stream shuffle settings: %s", err)
+			sentry.CaptureException(fmt.Errorf("error parsing JSON string with per-stream shuffle settings: %w", err))
 		}
 	}
 
@@ -411,6 +438,45 @@ func loadConfig() *Config {
 			config.Shuffle = shuffle
 		} else {
 			sentry.CaptureException(fmt.Errorf("error parsing SHUFFLE: %w", err))
+		}
+	}
+	
+	// Parse per-stream shuffle settings from environment
+	if envPerStreamShuffle := os.Getenv("PER_STREAM_SHUFFLE"); envPerStreamShuffle != "" {
+		var perStreamShuffle map[string]bool
+		if err := json.Unmarshal([]byte(envPerStreamShuffle), &perStreamShuffle); err == nil {
+			for k, v := range perStreamShuffle {
+				config.PerStreamShuffle[k] = v
+			}
+		} else {
+			log.Printf("Error parsing JSON from environment variable PER_STREAM_SHUFFLE: %s", err)
+			sentry.CaptureException(fmt.Errorf("error parsing JSON from environment variable PER_STREAM_SHUFFLE: %w", err))
+		}
+	}
+
+	// Alternative environment variable for per-stream shuffle (ROUTES_SHUFFLE)
+	if envRouteShuffle := os.Getenv("ROUTES_SHUFFLE"); envRouteShuffle != "" {
+		var routesShuffle map[string]string
+		if err := json.Unmarshal([]byte(envRouteShuffle), &routesShuffle); err == nil {
+			for k, v := range routesShuffle {
+				// Skip if already set by PER_STREAM_SHUFFLE
+				if _, exists := config.PerStreamShuffle[k]; exists {
+					continue
+				}
+				
+				// Convert string value to boolean
+				shuffleValue, err := strconv.ParseBool(v)
+				if err == nil {
+					config.PerStreamShuffle[k] = shuffleValue
+				} else {
+					log.Printf("Error parsing boolean value '%s' from ROUTES_SHUFFLE: %s", v, err)
+					sentry.CaptureException(fmt.Errorf("error parsing boolean value '%s' from ROUTES_SHUFFLE: %w", v, err))
+				}
+			}
+			log.Printf("Successfully parsed ROUTES_SHUFFLE environment variable")
+		} else {
+			log.Printf("Error parsing JSON from environment variable ROUTES_SHUFFLE: %s", err)
+			sentry.CaptureException(fmt.Errorf("error parsing JSON from environment variable ROUTES_SHUFFLE: %w", err))
 		}
 	}
 

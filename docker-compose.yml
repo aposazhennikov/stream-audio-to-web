@@ -25,6 +25,7 @@ services:
       - LOG_LEVEL=debug
       - "DIRECTORY_ROUTES={\"test_audio\":\"/app/test_audio\",\"humor\":\"/app/humor\",\"science\":\"/app/science\",\"politics\":\"/app/politics\",\"nature\":\"/app/nature\", \"shaov\":\"/app/shaov\", \"troshin\":\"/app/troshin\"}"
       - SHUFFLE=true
+      # - ROUTES_SHUFFLE={"humor":"true","science":"true","politics":"true","nature":"false","shaov":"true","troshin":"true"}
       - STATUS_PASSWORD=1234554321
       - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
     healthcheck:

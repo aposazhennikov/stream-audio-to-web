@@ -28,7 +28,13 @@
                     <button type="submit" class="next-track">Next track</button>
                 </form>
                 <form method="post" action="/shuffle-playlist/{{.RouteID}}" style="flex: 1;">
-                    <button type="submit" class="shuffle-playlist">Shuffle playlist</button>
+                    <button type="submit" class="shuffle-playlist">Shuffle now</button>
+                </form>
+                <form method="post" action="/set-shuffle/{{.RouteID}}/on" style="flex: 1;">
+                    <button type="submit" class="enable-shuffle">Enable Shuffle</button>
+                </form>
+                <form method="post" action="/set-shuffle/{{.RouteID}}/off" style="flex: 1;">
+                    <button type="submit" class="disable-shuffle">Disable Shuffle</button>
                 </form>
                 <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
             </div>
@@ -221,6 +227,18 @@
 
         button.next-track:before {
             content: '⏭️';
+        }
+        
+        button.shuffle-playlist:before {
+            content: '🔀';
+        }
+        
+        button.enable-shuffle:before {
+            content: '✅';
+        }
+        
+        button.disable-shuffle:before {
+            content: '❌';
         }
         
         button.show-history:before {

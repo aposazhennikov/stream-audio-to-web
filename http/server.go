@@ -237,6 +237,9 @@ func (s *Server) setupRoutes() {
 	// Endpoint to shuffle playlist manually
 	s.router.HandleFunc("/shuffle-playlist/{route}", s.handleShufflePlaylist).Methods("POST")
 
+	// Endpoint to set shuffle mode for specific stream
+	s.router.HandleFunc("/set-shuffle/{route}/{mode}", s.SetShuffleMode).Methods("POST")
+
 	// Add static files for web interface
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 	
@@ -1269,4 +1272,138 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 		// Redirect back to status page
 		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
 	}
+}
+
+// SetShuffleMode toggles the shuffle mode for a specific stream
+func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
+	// Check authentication (same as for status page)
+	if !s.checkAuth(r) {
+		// Check if this is an AJAX request
+		ajax := r.URL.Query().Get("ajax")
+		isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest" || ajax == "1"
+		
+		if isAjax {
+			// For AJAX requests, send JSON error response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Authentication required",
+				"route":   "",
+			})
+			return
+		}
+		
+		// For regular requests, redirect to login page
+		s.redirectToLogin(w, r)
+		return
+	}
+	
+	// Get route and mode from URL
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	mode := vars["mode"]
+	
+	if mode != "on" && mode != "off" {
+		http.Error(w, "Invalid mode. Use 'on' or 'off'", http.StatusBadRequest)
+		return
+	}
+	
+	shuffleEnabled := mode == "on"
+	
+	// Get playlist by route
+	s.mutex.RLock()
+	playlist, ok := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !ok {
+		http.Error(w, "Playlist not found", http.StatusNotFound)
+		return
+	}
+	
+	// Get the playlist type to check if we can set shuffle mode
+	log.Printf("Setting shuffle mode %s for route %s", mode, route)
+	
+	// If shuffle mode is enabled, call Shuffle method, otherwise reload the playlist
+	// This will result in a sequential playlist
+	var success bool
+	var errorMsg string
+	
+	if shuffleEnabled {
+		// Execute shuffle in goroutine with timeout protection
+		shuffleDone := make(chan bool, 1)
+		
+		go func() {
+			defer func() {
+				// Catch any panics from Shuffle operation
+				if r := recover(); r != nil {
+					log.Printf("ERROR: Shuffle operation panicked: %v", r)
+					shuffleDone <- false
+				}
+			}()
+			
+			// Call shuffle
+			playlist.Shuffle()
+			shuffleDone <- true
+		}()
+		
+		// Wait for shuffle to complete with timeout
+		select {
+		case success = <-shuffleDone:
+			if success {
+				log.Printf("Shuffle mode enabled for route %s", route)
+				errorMsg = ""
+			} else {
+				log.Printf("Failed to enable shuffle mode for route %s", route)
+				errorMsg = "Failed to enable shuffle mode"
+			}
+		case <-time.After(1 * time.Second):
+			log.Printf("WARNING: Shuffle operation timed out for route %s", route)
+			success = false
+			errorMsg = "Shuffle operation timed out"
+		}
+	} else {
+		// To effectively disable shuffle, we need to reload the playlist
+		// which will reset it to sequential order
+		err := playlist.Reload()
+		if err != nil {
+			log.Printf("ERROR: Failed to disable shuffle mode for route %s: %v", route, err)
+			success = false
+			errorMsg = "Failed to disable shuffle mode: " + err.Error()
+		} else {
+			log.Printf("Shuffle mode disabled for route %s", route)
+			success = true
+			errorMsg = ""
+		}
+	}
+	
+	// Check if need to return JSON or perform redirect
+	ajax := r.URL.Query().Get("ajax")
+	if ajax == "1" {
+		w.Header().Set("Content-Type", "application/json")
+		if success {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": fmt.Sprintf("Shuffle mode %s for route %s", mode, route),
+				"route":   route,
+				"mode":    mode,
+			})
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": errorMsg,
+				"route":   route,
+				"mode":    mode,
+			})
+		}
+	} else {
+		// Redirect back to status page
+		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
+	}
+}
+
+// SetStatusPassword sets the password for status page (used for testing)
+func (s *Server) SetStatusPassword(password string) {
+	s.statusPassword = password
 } 

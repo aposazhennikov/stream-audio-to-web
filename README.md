@@ -16,7 +16,7 @@ High-performance server for streaming audio files to a browser, written in Go. T
 - **Performance monitoring** through Prometheus and Sentry
 - **Graceful shutdown** upon receiving signals
 - **Automatic access rights handling** — works even with files owned by root
-- **Optional track shuffling** — can be enabled or disabled
+- **Flexible shuffle settings** — can be enabled/disabled globally or per-stream
 - **Status page with authorization** — protected access to information about streams and player control
 - **Manual player control** — ability to switch tracks forward and backward through the web interface
 - **Track history tracking** — track history is available for each station
@@ -89,7 +89,9 @@ The server can be configured through command line flags or environment variables
 | `--log-level` / `LOG_LEVEL` | Logging level (debug, info, warn, error) | `info` |
 | `--buffer-size` / `BUFFER_SIZE` | Read buffer size in bytes        | `65536` (64KB) |
 | `--directory-routes` / `DIRECTORY_ROUTES` | JSON string with route-directory mapping | `{}` |
-| `--shuffle` / `SHUFFLE` | Enable/disable track shuffling         | `false`   |
+| `--shuffle` / `SHUFFLE` | Enable/disable track shuffling globally  | `false`   |
+| `--per-stream-shuffle` / `PER_STREAM_SHUFFLE` | JSON string with per-stream shuffle settings | `{}` |
+| (no flag) / `ROUTES_SHUFFLE` | Alternative for PER_STREAM_SHUFFLE with string values | `{}` |
 | (no flag) / `STATUS_PASSWORD` | Password for accessing the status page | `1234554321` |
 | (no flag) / `SENTRY_DSN` | Sentry DSN for error tracking | Empty (disabled) |
 
@@ -156,6 +158,7 @@ docker run -d --name audio-streamer \
   -v /path/to/science:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
+  -e ROUTES_SHUFFLE='{"humor":"true","science":"false"}' \
   -e STATUS_PASSWORD=your_password \
   -e SENTRY_DSN=your_sentry_dsn \
   audio-streamer:latest
@@ -203,6 +206,7 @@ services:
       - BUFFER_SIZE=65536
       - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
       - SHUFFLE=false
+      - ROUTES_SHUFFLE={"humor":"true","science":"false"}
       - STATUS_PASSWORD=your_password
       - SENTRY_DSN=your_sentry_dsn
     healthcheck:
@@ -245,6 +249,8 @@ docker-compose down
 - **`/next-track/<route>`** — move to the next track for the specified route
 - **`/prev-track/<route>`** — move to the previous track for the specified route
 - **`/shuffle-playlist/<route>`** — manually shuffle the playlist for the specified route
+- **`/set-shuffle/<route>/on`** — enable shuffle mode for the specified route
+- **`/set-shuffle/<route>/off`** — disable shuffle mode for the specified route
 - **`/playlist-info`** — detailed information about the playlist (for diagnostics and testing)
 - **`/healthz`** — health check endpoint that returns "OK" if the server is running
 - **`/readyz`** — readiness check endpoint for Kubernetes integration
@@ -323,6 +329,7 @@ docker run -d -p 8000:8000 \
   -v /home/science:/app/science \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
+  -e ROUTES_SHUFFLE='{"humor":"true","science":"false"}' \
   -e STATUS_PASSWORD=your_password \
   -e SENTRY_DSN=your_sentry_dsn \
   audio-streamer:latest
@@ -441,15 +448,20 @@ All tasks completed:
 
 ## Shuffle Mode
 
-The application supports automatic track shuffling when the `SHUFFLE` parameter is enabled:
+The application supports automatic track shuffling with flexible configuration options:
 
+- **Global shuffle setting** — enable or disable shuffling for all streams using the `SHUFFLE` parameter
+- **Per-stream shuffle settings** — configure shuffle mode individually for each stream using the `PER_STREAM_SHUFFLE` parameter
+- **Runtime control** — enable or disable shuffle mode at runtime via the status page or API
 - **Automatic shuffling** — tracks are automatically randomized when the playlist is loaded
 - **Periodic reshuffling** — to maintain unpredictability, the playlist is reshuffled each time it reaches the end
 - **Manual reshuffling** — you can shuffle the playlist at any time via the status page or API
 - **Smart reordering** — when shuffling, the system tries to maintain the current track position
 - **Detailed logging** — the system logs shuffle operations for debugging purposes
 
-To enable shuffle mode, set the `SHUFFLE` environment variable or the `--shuffle` command line flag to `true`:
+### Global Shuffle Configuration
+
+To enable shuffle mode for all streams, set the `SHUFFLE` environment variable or the `--shuffle` command line flag to `true`:
 
 ```bash
 # Via command line
@@ -463,7 +475,51 @@ export SHUFFLE=true
 docker run -e SHUFFLE=true -p 8000:8000 audio-streamer:latest
 ```
 
-You can also manually shuffle any playlist through the API:
+### Per-Stream Shuffle Configuration
+
+For more flexibility, you can configure shuffle mode individually for each stream using the `PER_STREAM_SHUFFLE` parameter as a JSON object:
+
+```bash
+# Via command line
+./audio-streamer --per-stream-shuffle='{"humor":true,"science":false}'
+
+# Via environment variable
+export PER_STREAM_SHUFFLE='{"humor":true,"science":false}'
+./audio-streamer
+
+# In Docker
+docker run -e PER_STREAM_SHUFFLE='{"humor":true,"science":false}' -p 8000:8000 audio-streamer:latest
+```
+
+You can also use the alternative environment variable `ROUTES_SHUFFLE` which accepts string values for shuffle settings:
+
+```bash
+# Via environment variable
+export ROUTES_SHUFFLE='{"humor":"true","science":"false"}'
+./audio-streamer
+
+# In Docker
+docker run -e ROUTES_SHUFFLE='{"humor":"true","science":"false"}' -p 8000:8000 audio-streamer:latest
+```
+
+This example will enable shuffle mode for the `/humor` stream while keeping the `/science` stream in sequential order, regardless of the global shuffle setting.
+
+### Runtime Shuffle Control
+
+You can toggle shuffle mode for any stream at runtime through the status page or API:
+
+```bash
+# Enable shuffle mode for a stream
+curl -X POST -b "status_auth=your_password" http://server:port/set-shuffle/route_name/on
+
+# Disable shuffle mode for a stream
+curl -X POST -b "status_auth=your_password" http://server:port/set-shuffle/route_name/off
+
+# Get JSON response (for API usage)
+curl -X POST -b "status_auth=your_password" "http://server:port/set-shuffle/route_name/on?ajax=1"
+```
+
+You can also manually shuffle any playlist at any time without changing the shuffle mode setting:
 
 ```bash
 # Manually shuffle with auth cookie
