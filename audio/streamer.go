@@ -177,18 +177,18 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	
 	// Create pipe for normalized audio
 	pr, pw := io.Pipe()
-	// Не закрываем pipe reader здесь, так как это может произойти раньше, чем завершится запись
+	// Don't close pipe reader here as it might happen before the write operation completes
 	// defer pr.Close() 
 	
 	// Start normalization in separate goroutine if enabled
 	var streamErr error
-	var streamErrMutex sync.Mutex // Мьютекс для защиты доступа к streamErr
-	var normalizationDone = make(chan struct{}) // Сигнал завершения нормализации
+	var streamErrMutex sync.Mutex // Mutex to protect access to streamErr
+	var normalizationDone = make(chan struct{}) // Signal for normalization completion
 	
 	if s.normalizeVolume {
 		go func() {
 			defer pw.Close()
-			defer close(normalizationDone) // Сигнализируем о завершении нормализации
+			defer close(normalizationDone) // Signal that normalization is complete
 			
 			// Use NormalizeMP3Stream to normalize the audio
 			if err := NormalizeMP3Stream(file, pw); err != nil {
@@ -200,8 +200,8 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			}
 		}()
 		
-		// Не используем file = os.NewFile(pr.Fd(), trackPath), т.к. у PipeReader нет метода Fd()
-		// Вместо этого читаем напрямую из pipe reader
+		// Don't use file = os.NewFile(pr.Fd(), trackPath) as PipeReader doesn't have Fd() method
+		// Instead, read directly from the pipe reader
 		buffer := s.bufferPool.Get().([]byte)
 		defer s.bufferPool.Put(buffer)
 		
@@ -219,13 +219,13 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		startTime := time.Now()
 		log.Printf("DIAGNOSTICS: Starting to read normalized file %s", trackPath)
 		
-		// Гарантируем закрытие pipe reader при выходе из функции
+		// Ensure pipe reader is closed when function exits
 		defer pr.Close()
 		
-		// Канал для мониторинга завершения горутины
+		// Channel for monitoring goroutine completion
 		processingDone := make(chan struct{})
 		
-		// Запускаем чтение из pipe в отдельной горутине
+		// Start reading from pipe in a separate goroutine
 		go func() {
 			defer close(processingDone)
 			
@@ -246,7 +246,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 					return
 				}
 				if err != nil {
-					// Если pipe был закрыт, это может быть результатом штатного завершения горутины нормализации
+					// If pipe was closed, this might be the result of normal termination of the normalization goroutine
 					if err == io.ErrClosedPipe || strings.Contains(err.Error(), "closed pipe") {
 						log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
 						return
@@ -307,7 +307,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			}
 		}()
 		
-		// Ожидаем завершения обработки или сигнала остановки
+		// Wait for processing completion or stop signal
 		select {
 		case <-processingDone:
 			log.Printf("DIAGNOSTICS: Finished processing normalized file %s", trackPath)
@@ -316,7 +316,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			return nil
 		}
 		
-		// Дождемся завершения горутины нормализации перед проверкой ошибок
+		// Wait for the normalization goroutine to complete before checking errors
 		select {
 		case <-normalizationDone:
 			log.Printf("DIAGNOSTICS: Normalization of file %s completed", trackPath)

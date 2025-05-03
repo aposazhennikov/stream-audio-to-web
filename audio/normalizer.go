@@ -102,11 +102,11 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer) error {
 		// Write data to output writer
 		_, err = writer.Write(buffer[:n])
 		if err != nil {
-			// Проверяем, является ли ошибка связанной с закрытым pipe
+			// Check if the error is related to a closed pipe
 			if strings.Contains(err.Error(), "closed pipe") || 
 			   strings.Contains(err.Error(), "broken pipe") {
-				// Pipe был закрыт, что может произойти при переключении трека или остановке стрима
-				// Это не считается критической ошибкой, просто логируем и завершаем нормализацию
+				// The pipe was closed, which can happen when switching tracks or stopping the stream
+				// This is not considered a critical error, just log and stop normalization
 				log.Printf("DIAGNOSTICS: Pipe closed during normalization of %s, stopping: %v", filePath, err)
 				return nil
 			}

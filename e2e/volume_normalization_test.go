@@ -40,7 +40,7 @@ func TestVolumeNormalization(t *testing.T) {
 		t.Fatalf("Failed to create loud directory: %v", err)
 	}
 	
-	// Порт для тестового сервера
+	// Port for test server
 	const testPort = "8765"
 	
 	// Copy audio files from test directory

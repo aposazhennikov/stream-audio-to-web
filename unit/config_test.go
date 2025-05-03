@@ -7,18 +7,18 @@ import (
 	"testing"
 )
 
-// Создаем собственную мини-копию Config для тестирования
+// Create our own mini-copy of Config for testing
 type Config struct {
 	PerStreamShuffle map[string]bool
 }
 
-// Тестовая функция loadConfig для проверки функциональности ROUTES_SHUFFLE и PER_STREAM_SHUFFLE
+// Test function loadConfig to verify functionality of ROUTES_SHUFFLE and PER_STREAM_SHUFFLE
 func loadConfig() *Config {
 	config := &Config{
 		PerStreamShuffle: make(map[string]bool),
 	}
 	
-	// Обработка PER_STREAM_SHUFFLE
+	// Processing PER_STREAM_SHUFFLE
 	if envPerStreamShuffle := os.Getenv("PER_STREAM_SHUFFLE"); envPerStreamShuffle != "" {
 		var perStreamShuffle map[string]bool
 		if err := json.Unmarshal([]byte(envPerStreamShuffle), &perStreamShuffle); err == nil {
@@ -28,17 +28,17 @@ func loadConfig() *Config {
 		}
 	}
 	
-	// Обработка ROUTES_SHUFFLE
+	// Processing ROUTES_SHUFFLE
 	if envRouteShuffle := os.Getenv("ROUTES_SHUFFLE"); envRouteShuffle != "" {
 		var routesShuffle map[string]string
 		if err := json.Unmarshal([]byte(envRouteShuffle), &routesShuffle); err == nil {
 			for k, v := range routesShuffle {
-				// Пропускаем, если ключ уже установлен через PER_STREAM_SHUFFLE
+				// Skip if key already set through PER_STREAM_SHUFFLE
 				if _, exists := config.PerStreamShuffle[k]; exists {
 					continue
 				}
 				
-				// Преобразуем строковое значение в boolean
+				// Convert string value to boolean
 				shuffleValue, err := strconv.ParseBool(v)
 				if err == nil {
 					config.PerStreamShuffle[k] = shuffleValue

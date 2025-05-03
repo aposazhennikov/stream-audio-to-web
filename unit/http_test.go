@@ -157,8 +157,8 @@ func TestSetShuffleMode(t *testing.T) {
 	// Create HTTP server
 	server := httpServer.NewServer("mp3", 10)
 
-	// Напрямую вызывать SetStatusPassword нельзя, 
-	// поэтому будем полагаться на пароль по умолчанию ("1234554321")
+	// We cannot directly call SetStatusPassword,
+	// so we will rely on the default password ("1234554321")
 	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword")
 
 	// Create mocks for stream and playlist
@@ -176,7 +176,7 @@ func TestSetShuffleMode(t *testing.T) {
 	// Register stream
 	server.RegisterStream("/test", mockStream, mockPlaylist)
 
-	// Используем пароль по умолчанию для тестов
+	// Use default password for tests
 	defaultPassword := "1234554321"
 
 	// Test cases

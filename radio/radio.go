@@ -102,9 +102,9 @@ func (rs *RadioStation) RestartPlayback() {
 		rs.currentTrack = make(chan struct{})
 	}
 	
-	// Явно обновляем текущий трек в плейлисте, чтобы он гарантированно отразился в now-playing
-	// Это критически важно для корректной работы тестов переключения треков
-	_ = rs.playlist.GetCurrentTrack() // Получаем текущий трек, но не сохраняем в переменную
+	// Explicitly update the current track in the playlist to ensure it appears in the now-playing
+	// This is critically important for the proper functioning of track switching tests
+	_ = rs.playlist.GetCurrentTrack() // Get the current track but don't save it to a variable
 	log.Printf("DIAGNOSTICS: Current track after manual switching for station %s obtained", rs.route)
 	
 	// Send restart signal to playback loop
