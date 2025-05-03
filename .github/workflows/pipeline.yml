@@ -70,7 +70,7 @@ jobs:
           script: |
             clear
             cd /home/
-            rm -rf stream-audio-to-web/
+            rm -rf ./stream-audio-to-web
             git clone https://github.com/aposazhennikov/stream-audio-to-web.git
             cd stream-audio-to-web/
             docker pull aposazhennikov/audio-streamer:latest

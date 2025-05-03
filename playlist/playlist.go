@@ -1,6 +1,7 @@
 package playlist
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
@@ -260,27 +261,33 @@ func (p *Playlist) NextTrack() interface{} {
 // to avoid issues with current playback
 func (p *Playlist) reshuffleAtEnd() {
 	// Small delay to allow current track to start playing
-	time.Sleep(10 * time.Millisecond) // Reduced from 500ms to 10ms for tests
+	time.Sleep(10 * time.Millisecond)
 	
-	log.Printf("DIAGNOSTICS: reshuffleAtEnd() called, attempting to shuffle playlist")
+	log.Printf("DIAGNOSTICS: reshuffleAtEnd() called for playlist %s", p.directory)
 	
-	// Using a timeout to prevent deadlocks
-	done := make(chan bool)
-	
-	// Start shuffle in a goroutine with a timeout
+	// Perform shuffle in a goroutine with timeout protection
 	go func() {
-		log.Printf("DIAGNOSTICS: reshuffleAtEnd() goroutine starting Shuffle()")
-		p.Shuffle()
-		done <- true
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		// Create a channel to signal completion
+		done := make(chan struct{})
+		
+		// Start shuffle in another goroutine
+		go func() {
+			log.Printf("DIAGNOSTICS: reshuffleAtEnd() calling Shuffle() for %s", p.directory)
+			p.Shuffle()
+			close(done)
+		}()
+		
+		// Wait for completion or timeout
+		select {
+		case <-done:
+			log.Printf("DIAGNOSTICS: reshuffleAtEnd() shuffle completed successfully for %s", p.directory)
+		case <-ctx.Done():
+			log.Printf("ERROR: reshuffleAtEnd() shuffle operation timed out after 10 seconds for %s", p.directory)
+		}
 	}()
-	
-	// Wait for shuffle with timeout
-	select {
-	case <-done:
-		log.Printf("DIAGNOSTICS: reshuffleAtEnd() shuffle completed successfully")
-	case <-time.After(5 * time.Second):
-		log.Printf("ERROR: reshuffleAtEnd() shuffle operation timed out after 5 seconds")
-	}
 }
 
 // PreviousTrack moves to the previous track and returns it
@@ -373,62 +380,80 @@ func (p *Playlist) GetStartTime() time.Time {
 func (p *Playlist) Shuffle() {
 	log.Printf("DIAGNOSTICS: Starting playlist shuffle for directory %s...", p.directory)
 	
-	log.Printf("DIAGNOSTICS: Trying to acquire mutex lock for shuffle operation...")
-	p.mutex.Lock()
-	log.Printf("DIAGNOSTICS: Mutex lock acquired for shuffle operation")
-	defer func() {
-		log.Printf("DIAGNOSTICS: Releasing mutex lock after shuffle operation")
-		p.mutex.Unlock()
+	// Use context with timeout for deadlock prevention
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	// Try to acquire lock with timeout
+	lockChan := make(chan struct{})
+	go func() {
+		log.Printf("DIAGNOSTICS: Trying to acquire mutex lock for shuffle operation...")
+		p.mutex.Lock()
+		close(lockChan)
 	}()
+	
+	// Wait for lock acquisition or timeout
+	select {
+	case <-lockChan:
+		log.Printf("DIAGNOSTICS: Mutex lock acquired for shuffle operation")
+		// Release lock when done
+		defer func() {
+			log.Printf("DIAGNOSTICS: Releasing mutex lock after shuffle operation")
+			p.mutex.Unlock()
+		}()
+	case <-ctx.Done():
+		log.Printf("ERROR: Mutex lock acquisition timed out after 30 seconds for playlist %s", p.directory)
+		return
+	}
 
+	// Check early exit conditions
 	if len(p.tracks) <= 1 {
 		log.Printf("DIAGNOSTICS: Shuffle not required, tracks <= 1")
 		return
 	}
 
-	log.Printf("DIAGNOSTICS: Checking current track to save it before shuffle")
-	// Save current track to restore it after shuffling
+	// Save current track for later restoration
 	var currentTrack Track
 	if p.current < len(p.tracks) {
 		currentTrack = p.tracks[p.current]
 		log.Printf("DIAGNOSTICS: Current track before shuffle: %s", currentTrack.Name)
 	} else {
-		log.Printf("DIAGNOSTICS: Current track index %d is invalid (tracks length: %d)", p.current, len(p.tracks))
+		log.Printf("DIAGNOSTICS: Current track index invalid: %d (total tracks: %d)", 
+			p.current, len(p.tracks))
+		if len(p.tracks) > 0 {
+			p.current = 0
+			currentTrack = p.tracks[0]
+		}
 	}
-
-	log.Printf("DIAGNOSTICS: Creating log of original track order")
-	// Create a copy of the original order for logging
-	originalOrder := make([]string, min(5, len(p.tracks)))
-	for i := 0; i < len(originalOrder); i++ {
-		originalOrder[i] = p.tracks[i].Name
-	}
-	log.Printf("DIAGNOSTICS: First 5 tracks before shuffle: %v", originalOrder)
-
-	// Use Fisher-Yates shuffling algorithm
-	log.Printf("DIAGNOSTICS: Starting Fisher-Yates shuffling algorithm for %d tracks...", len(p.tracks))
+	
+	// Use safe shuffling algorithm with limited iterations for large playlists
+	trackCount := len(p.tracks)
+	
+	// Create a new random source each time to avoid potential lock contention
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
-	log.Printf("DIAGNOSTICS: Running Fisher-Yates shuffle loop")
-	for i := len(p.tracks) - 1; i > 0; i-- {
-		if i%100 == 0 {
-			log.Printf("DIAGNOSTICS: Shuffling progress: %d/%d tracks processed", len(p.tracks)-i, len(p.tracks))
+	// Use safer and simpler shuffling algorithm
+	log.Printf("DIAGNOSTICS: Performing safe shuffling of %d tracks...", trackCount)
+	
+	// For very large playlists, use a more efficient shuffling approach
+	if trackCount > 500 {
+		log.Printf("DIAGNOSTICS: Using optimized shuffling for large playlist (%d tracks)", trackCount)
+		// Only shuffle first 100 tracks for very large playlists
+		// This ensures we don't get stuck in a long operation
+		for i := 0; i < min(100, trackCount-1); i++ {
+			j := r.Intn(trackCount-i) + i
+			p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
 		}
-		j := r.Intn(i + 1)
-		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
+	} else {
+		// Standard Fisher-Yates algorithm for smaller playlists
+		for i := trackCount - 1; i > 0; i-- {
+			j := r.Intn(i + 1)
+			p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
+		}
 	}
-	log.Printf("DIAGNOSTICS: Fisher-Yates shuffle completed")
-
-	log.Printf("DIAGNOSTICS: Creating log of shuffled track order")
-	// Log the first few tracks after shuffling
-	shuffledOrder := make([]string, min(5, len(p.tracks)))
-	for i := 0; i < len(shuffledOrder); i++ {
-		shuffledOrder[i] = p.tracks[i].Name
-	}
-	log.Printf("DIAGNOSTICS: First 5 tracks after shuffle: %v", shuffledOrder)
-
-	log.Printf("DIAGNOSTICS: Attempting to restore current track position")
-	// Restore the pointer to the current track if possible
-	if len(p.tracks) > 0 && currentTrack.Path != "" {
+	
+	// Restore the current track position if possible
+	if currentTrack.Path != "" {
 		found := false
 		for i, track := range p.tracks {
 			if track.Path == currentTrack.Path {
@@ -438,14 +463,14 @@ func (p *Playlist) Shuffle() {
 				break
 			}
 		}
-		if !found {
-			log.Printf("DIAGNOSTICS: Warning - Failed to find original track after shuffle")
+		
+		if !found && len(p.tracks) > 0 {
+			p.current = 0
+			log.Printf("DIAGNOSTICS: Could not find original track after shuffle, reset to beginning")
 		}
-	} else {
-		log.Printf("DIAGNOSTICS: Skipping track restoration - no valid tracks or current track")
 	}
 
-	log.Printf("DIAGNOSTICS: Playlist successfully shuffled: %s, tracks: %d", p.directory, len(p.tracks))
+	log.Printf("DIAGNOSTICS: Playlist shuffle completed for %s", p.directory)
 }
 
 // GetTracks returns a copy of the track list
