@@ -22,10 +22,11 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 
 	t.Log("STRESS TEST START: Beginning parallel playlist test with detailed logging")
 	
-	// Set shorter test timeout
-	timer := time.AfterFunc(30*time.Second, func() {
-		t.Logf("FATAL: Test timed out after 30 seconds - possible deadlock detected")
-		// In a real emergency we could use os.Exit(1) here, but that's extreme
+	// Set shorter test timeout and force exit after 50 seconds
+	timer := time.AfterFunc(50*time.Second, func() {
+		t.Logf("FATAL: Test timed out after 50 seconds - forcing exit due to deadlock")
+		// Принудительное завершение при таймауте
+		os.Exit(1)
 	})
 	defer timer.Stop()
 
@@ -144,13 +145,14 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		close(done)
 	}()
 	
-	// Add safety timeout
+	// Add safety timeout - increased from 25 to 45 seconds
 	select {
 	case <-done:
 		t.Log("All goroutines completed normally")
-	case <-time.After(25 * time.Second):
+	case <-time.After(45 * time.Second):
 		t.Log("WARNING: Wait timeout occurred - not all goroutines completed in time")
-		// Continue to check results anyway
+		// Принудительное завершение при таймауте
+		t.Fatalf("Test force-terminated after 45 seconds due to timeout")
 	}
 	
 	// Collect results

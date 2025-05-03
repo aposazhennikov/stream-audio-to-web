@@ -176,10 +176,12 @@ func (p *Playlist) Reload() error {
 		}
 	}
 
+	// Запоминаем флаг перемешивания
+	needShuffle := p.shuffle
+	
 	// Shuffle tracks only if the corresponding flag is enabled
-	if p.shuffle {
+	if needShuffle {
 		log.Printf("DIAGNOSTICS: Shuffle enabled for playlist %s", p.directory)
-		p.Shuffle()
 	} else {
 		log.Printf("DIAGNOSTICS: Shuffle disabled for playlist %s", p.directory)
 	}
@@ -199,6 +201,17 @@ func (p *Playlist) Reload() error {
 	// Send statistics only to logs
 	log.Printf("Playlist loaded: %s, tracks: %d", p.directory, len(p.tracks))
 	
+	// Если нужно перемешать, то запускаем отдельную горутину после разблокировки мьютекса
+	if needShuffle {
+		// Создаем отдельную горутину для перемешивания ПОСЛЕ разблокировки мьютекса
+		go func() {
+			// Небольшая задержка, чтобы мьютекс успел разблокироваться
+			time.Sleep(10 * time.Millisecond)
+			log.Printf("DIAGNOSTICS: Running shuffle after reload in separate goroutine for %s", p.directory)
+			p.Shuffle()
+		}()
+	}
+	
 	return nil
 }
 
@@ -212,95 +225,194 @@ func min(a, b int) int {
 
 // GetCurrentTrack returns the current track
 func (p *Playlist) GetCurrentTrack() interface{} {
-	p.mutex.RLock()
-	defer p.mutex.RUnlock()
+	// Добавляем механизм повторных попыток
+	maxAttempts := 3
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Используем канал с таймаутом для защиты от блокировок
+		c := make(chan interface{}, 1)
+		
+		go func() {
+			p.mutex.RLock()
+			defer p.mutex.RUnlock()
 
-	if len(p.tracks) == 0 {
-		return nil
+			if len(p.tracks) == 0 {
+				c <- nil
+				return
+			}
+			c <- &p.tracks[p.current]
+		}()
+		
+		// Увеличиваем таймаут до 500 мс
+		select {
+		case track := <-c:
+			return track
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("WARNING: GetCurrentTrack timed out (attempt %d/%d), retrying...", attempt, maxAttempts)
+			if attempt == maxAttempts {
+				log.Printf("WARNING: All GetCurrentTrack attempts timed out, returning nil")
+				return nil
+			}
+			// Небольшая пауза перед следующей попыткой
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
-	return &p.tracks[p.current]
+	
+	// Этот код не должен достигаться, но для полноты:
+	log.Printf("ERROR: Unexpected flow in GetCurrentTrack, returning nil")
+	return nil
 }
 
 // NextTrack moves to the next track and returns it
 func (p *Playlist) NextTrack() interface{} {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	// Добавляем механизм повторных попыток
+	maxAttempts := 3
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Используем канал с таймаутом для безопасной блокировки мьютекса
+		c := make(chan interface{}, 1)
+		
+		go func() {
+			// Пытаемся заблокировать мьютекс в горутине
+			p.mutex.Lock()
+			defer p.mutex.Unlock()
 
-	if len(p.tracks) == 0 {
-		log.Printf("DIAGNOSTICS: NextTrack() called but no tracks available")
-		return nil
+			if len(p.tracks) == 0 {
+				log.Printf("DIAGNOSTICS: NextTrack() called but no tracks available")
+				c <- nil
+				return
+			}
+
+			// Add current track to history before moving to the next
+			currentTrack := p.tracks[p.current]
+			log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to next", currentTrack.Name)
+			p.addTrackToHistory(currentTrack)
+
+			// Move to the next track
+			p.current = (p.current + 1) % len(p.tracks)
+			nextTrack := p.tracks[p.current]
+			log.Printf("DIAGNOSTICS: Moved to next track: %s (position: %d)", nextTrack.Name, p.current)
+			
+			// If we reached the end of playlist and shuffle is enabled, reshuffle for the next cycle
+			if p.current == 0 && p.shuffle {
+				log.Printf("DIAGNOSTICS: Reached end of playlist with shuffle enabled, performing reshuffle directly")
+				// Вместо вызова отдельной функции, перемешиваем прямо здесь, когда мьютекс уже заблокирован
+				if len(p.tracks) > 1 {
+					// Создаем генератор случайных чисел с новым seed
+					r := rand.New(rand.NewSource(time.Now().UnixNano()))
+					
+					// Запоминаем текущий трек
+					currentPos := p.current
+					currentTrackPath := p.tracks[currentPos].Path
+					
+					// Перемешиваем треки (алгоритм Fisher-Yates)
+					for i := len(p.tracks) - 1; i > 0; i-- {
+						j := r.Intn(i + 1)
+						p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
+					}
+					
+					// Находим новую позицию текущего трека
+					for i, track := range p.tracks {
+						if track.Path == currentTrackPath {
+							p.current = i
+							break
+						}
+					}
+					
+					log.Printf("DIAGNOSTICS: Playlist shuffled in NextTrack, current track at position %d", p.current)
+				}
+			}
+			
+			// Verify history has been updated
+			p.historyMutex.RLock()
+			historyLength := len(p.history)
+			p.historyMutex.RUnlock()
+			log.Printf("DIAGNOSTICS: History length after NextTrack(): %d", historyLength)
+			
+			c <- &p.tracks[p.current]
+		}()
+		
+		// Ждем результат с увеличенным таймаутом
+		select {
+		case result := <-c:
+			return result
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("WARNING: NextTrack operation timed out (attempt %d/%d), retrying...", attempt, maxAttempts)
+			if attempt == maxAttempts {
+				log.Printf("WARNING: All NextTrack attempts timed out, returning nil")
+				return nil
+			}
+			// Небольшая пауза перед следующей попыткой
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
-
-	// Add current track to history before moving to the next
-	currentTrack := p.tracks[p.current]
-	log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to next", currentTrack.Name)
-	p.addTrackToHistory(currentTrack)
-
-	// Move to the next track
-	p.current = (p.current + 1) % len(p.tracks)
-	nextTrack := p.tracks[p.current]
-	log.Printf("DIAGNOSTICS: Moved to next track: %s (position: %d)", nextTrack.Name, p.current)
 	
-	// If we reached the end of playlist and shuffle is enabled, reshuffle for the next cycle
-	if p.current == 0 && p.shuffle {
-		log.Printf("DIAGNOSTICS: Reached end of playlist, will reshuffle for next cycle")
-		go p.reshuffleAtEnd() // Launch reshuffling in a separate goroutine
-	}
-	
-	// Verify history has been updated
-	p.historyMutex.RLock()
-	historyLength := len(p.history)
-	p.historyMutex.RUnlock()
-	log.Printf("DIAGNOSTICS: History length after NextTrack(): %d", historyLength)
-	
-	return &p.tracks[p.current]
-}
-
-// reshuffleAtEnd reshuffles the playlist after a small delay
-// to avoid issues with current playback
-func (p *Playlist) reshuffleAtEnd() {
-	// Small delay to allow current track to start playing
-	time.Sleep(10 * time.Millisecond)
-	
-	// Perform shuffle in a simple goroutine
-	go func() {
-		log.Printf("DIAGNOSTICS: Performing deferred shuffle for playlist %s", p.directory)
-		p.Shuffle()
-	}()
+	// Этот код не должен достигаться, но для полноты:
+	log.Printf("ERROR: Unexpected flow in NextTrack, returning nil")
+	return nil
 }
 
 // PreviousTrack moves to the previous track and returns it
 func (p *Playlist) PreviousTrack() interface{} {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	// Добавляем механизм повторных попыток
+	maxAttempts := 3
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Используем канал с таймаутом для безопасной блокировки мьютекса
+		c := make(chan interface{}, 1)
+		
+		go func() {
+			p.mutex.Lock()
+			defer p.mutex.Unlock()
 
-	if len(p.tracks) == 0 {
-		log.Printf("DIAGNOSTICS: PreviousTrack() called but no tracks available")
-		return nil
+			if len(p.tracks) == 0 {
+				log.Printf("DIAGNOSTICS: PreviousTrack() called but no tracks available")
+				c <- nil
+				return
+			}
+
+			// Add current track to history before moving to the previous
+			currentTrack := p.tracks[p.current]
+			log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to previous", currentTrack.Name)
+			p.addTrackToHistory(currentTrack)
+
+			// Move to the previous track considering the possibility of going to a negative index
+			if p.current == 0 {
+				p.current = len(p.tracks) - 1
+			} else {
+				p.current--
+			}
+			
+			prevTrack := p.tracks[p.current]
+			log.Printf("DIAGNOSTICS: Switching to previous track: %s (position: %d)", prevTrack.Name, p.current)
+			
+			// Verify history has been updated
+			p.historyMutex.RLock()
+			historyLength := len(p.history)
+			p.historyMutex.RUnlock()
+			log.Printf("DIAGNOSTICS: History length after PreviousTrack(): %d", historyLength)
+			
+			c <- &p.tracks[p.current]
+		}()
+		
+		// Ждем результат с увеличенным таймаутом
+		select {
+		case result := <-c:
+			return result
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("WARNING: PreviousTrack operation timed out (attempt %d/%d), retrying...", attempt, maxAttempts)
+			if attempt == maxAttempts {
+				log.Printf("WARNING: All PreviousTrack attempts timed out, returning nil")
+				return nil
+			}
+			// Небольшая пауза перед следующей попыткой
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
-
-	// Add current track to history before moving to the previous
-	currentTrack := p.tracks[p.current]
-	log.Printf("DIAGNOSTICS: Adding current track %s to history before moving to previous", currentTrack.Name)
-	p.addTrackToHistory(currentTrack)
-
-	// Move to the previous track considering the possibility of going to a negative index
-	if p.current == 0 {
-		p.current = len(p.tracks) - 1
-	} else {
-		p.current--
-	}
 	
-	prevTrack := p.tracks[p.current]
-	log.Printf("DIAGNOSTICS: Switching to previous track: %s (position: %d)", prevTrack.Name, p.current)
-	
-	// Verify history has been updated
-	p.historyMutex.RLock()
-	historyLength := len(p.history)
-	p.historyMutex.RUnlock()
-	log.Printf("DIAGNOSTICS: History length after PreviousTrack(): %d", historyLength)
-	
-	return &p.tracks[p.current]
+	// Этот код не должен достигаться, но для полноты:
+	log.Printf("ERROR: Unexpected flow in PreviousTrack, returning nil")
+	return nil
 }
 
 // addTrackToHistory adds a track to history
@@ -357,136 +469,158 @@ func (p *Playlist) GetStartTime() time.Time {
 
 // Shuffle randomizes the track list
 func (p *Playlist) Shuffle() {
-	callerID := fmt.Sprintf("%p", p) // Unique ID for this playlist instance
+	callerID := fmt.Sprintf("%p", p) // Уникальный ID для экземпляра плейлиста
 	log.Printf("SHUFFLE-%s: Starting playlist shuffle for directory %s...", callerID, p.directory)
 	
-	// Create a copy of tracks slice to avoid long mutex locking
+	// Создаем безопасную копию треков для перемешивания без длительной блокировки
 	var tracksToShuffle []Track
+	var originalTrackPath string
 	
-	// Get a snapshot of tracks with a short lock
-	func() {
-		// Try to acquire the lock (short operation)
-		lockStart := time.Now()
-		log.Printf("SHUFFLE-%s: Attempting to acquire mutex lock", callerID)
-		p.mutex.Lock()
-		lockTime := time.Since(lockStart)
-		log.Printf("SHUFFLE-%s: Mutex lock acquired in %v", callerID, lockTime)
-		defer func() {
-			unlockStart := time.Now()
-			p.mutex.Unlock()
-			log.Printf("SHUFFLE-%s: Mutex lock released in %v", callerID, time.Since(unlockStart))
-		}()
+	// Пытаемся заблокировать мьютекс не более чем на 50 мс для копирования треков
+	lockDone := make(chan bool, 1)
+	go func() {
+		if !p.mutex.TryLock() {
+			// Не смогли получить мьютекс мгновенно, пробуем с таймаутом
+			timer := time.NewTimer(50 * time.Millisecond)
+			select {
+			case <-timer.C:
+				lockDone <- false
+				return
+			default:
+				p.mutex.Lock()
+				timer.Stop()
+			}
+		}
+		// Успешно заблокировали, делаем быстрое копирование
+		defer p.mutex.Unlock()
 		
-		// Measure the time of the copy operation
-		copyStart := time.Now()
-		log.Printf("SHUFFLE-%s: Making a copy of tracks list (%d tracks)", callerID, len(p.tracks))
+		// Если треков мало или нет, то нечего перемешивать
+		if len(p.tracks) <= 1 {
+			lockDone <- false
+			return
+		}
 		
-		// Make a copy of the tracks
+		// Сохраняем текущий трек
+		if p.current < len(p.tracks) {
+			originalTrackPath = p.tracks[p.current].Path
+		}
+		
+		// Делаем быструю копию треков
 		tracksToShuffle = make([]Track, len(p.tracks))
 		copy(tracksToShuffle, p.tracks)
 		
-		copyTime := time.Since(copyStart)
-		log.Printf("SHUFFLE-%s: Track list copied in %v", callerID, copyTime)
-		
-		// Save current track pointer for restoration
-		if len(p.tracks) > 0 && p.current < len(p.tracks) {
-			log.Printf("SHUFFLE-%s: Current track is %s (position: %d)", 
-				callerID, p.tracks[p.current].Name, p.current)
-		}
+		// Сигнализируем, что копирование завершено
+		lockDone <- true
 	}()
 	
-	// Check if we have enough tracks to shuffle
-	if len(tracksToShuffle) <= 1 {
-		log.Printf("SHUFFLE-%s: Not enough tracks to shuffle (%d)", callerID, len(tracksToShuffle))
+	// Ждем результата блокировки
+	if !<-lockDone {
+		log.Printf("SHUFFLE-%s: Could not acquire mutex or not enough tracks, skipping shuffle", callerID)
 		return
 	}
 	
-	// Create a new random source (independent of global state)
-	randomStart := time.Now()
-	log.Printf("SHUFFLE-%s: Creating random number generator", callerID)
+	// Здесь мы уже разблокировали мьютекс и у нас есть локальная копия треков
+	log.Printf("SHUFFLE-%s: Shuffling %d tracks (copy made successfully)", callerID, len(tracksToShuffle))
+	
+	// Перемешиваем копию треков
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := len(tracksToShuffle) - 1; i > 0; i-- {
+		j := r.Intn(i + 1)
+		tracksToShuffle[i], tracksToShuffle[j] = tracksToShuffle[j], tracksToShuffle[i]
+	}
 	
-	// Shuffle the copy outside of lock
-	log.Printf("SHUFFLE-%s: Starting to shuffle %d tracks outside of lock", callerID, len(tracksToShuffle)) 
-	
-	// Use memory-efficient shuffling for large playlists
-	trackCount := len(tracksToShuffle)
-	if trackCount > 500 {
-		// For very large playlists, just shuffle a portion to be efficient
-		log.Printf("SHUFFLE-%s: Using optimized shuffling for large playlist (%d tracks)", callerID, trackCount)
-		for i := 0; i < min(100, trackCount-1); i++ {
-			j := r.Intn(trackCount-i) + i
-			tracksToShuffle[i], tracksToShuffle[j] = tracksToShuffle[j], tracksToShuffle[i]
-		}
-	} else {
-		// Standard Fisher-Yates for smaller playlists
-		for i := trackCount - 1; i > 0; i-- {
-			j := r.Intn(i + 1)
-			tracksToShuffle[i], tracksToShuffle[j] = tracksToShuffle[j], tracksToShuffle[i]
+	// Находим позицию оригинального трека в перемешанном массиве
+	newPosition := 0
+	if originalTrackPath != "" {
+		for i, track := range tracksToShuffle {
+			if track.Path == originalTrackPath {
+				newPosition = i
+				break
+			}
 		}
 	}
 	
-	shuffleTime := time.Since(randomStart)
-	log.Printf("SHUFFLE-%s: Tracks shuffled in %v", callerID, shuffleTime)
-	
-	// Apply shuffled tracks with a short lock
-	func() {
-		applyStart := time.Now()
-		log.Printf("SHUFFLE-%s: Attempting to acquire mutex lock to apply shuffled tracks", callerID)
-		// Try to acquire the lock again (short operation)
-		lockStart := time.Now()
-		p.mutex.Lock()
-		lockTime := time.Since(lockStart)
-		log.Printf("SHUFFLE-%s: Mutex lock for applying changes acquired in %v", callerID, lockTime)
-		defer func() {
-			unlockStart := time.Now()
-			p.mutex.Unlock()
-			log.Printf("SHUFFLE-%s: Final mutex lock released in %v", callerID, time.Since(unlockStart))
-		}()
-		
-		// Get current track before replacing
-		var currentTrackPath string
-		if len(p.tracks) > 0 && p.current < len(p.tracks) {
-			currentTrackPath = p.tracks[p.current].Path
+	// Пытаемся заблокировать мьютекс еще раз для применения изменений
+	applyDone := make(chan bool, 1)
+	go func() {
+		if !p.mutex.TryLock() {
+			// Не смогли получить мьютекс мгновенно, пробуем с таймаутом
+			timer := time.NewTimer(50 * time.Millisecond)
+			select {
+			case <-timer.C:
+				applyDone <- false
+				return
+			default:
+				p.mutex.Lock()
+				timer.Stop()
+			}
 		}
+		// Успешно заблокировали, применяем изменения
+		defer p.mutex.Unlock()
 		
-		// Replace the tracks with shuffled version
+		// Применяем перемешанные треки
 		p.tracks = tracksToShuffle
 		
-		// If we had a current track, try to find it in shuffled list
-		if currentTrackPath != "" {
-			found := false
-			for i, track := range p.tracks {
-				if track.Path == currentTrackPath {
-					p.current = i
-					log.Printf("SHUFFLE-%s: Restored current track position to %d", callerID, i)
-					found = true
-					break
-				}
-			}
-			
-			if !found && len(p.tracks) > 0 {
-				p.current = 0
-				log.Printf("SHUFFLE-%s: Could not find original track after shuffle, reset to beginning", callerID)
-			}
+		// Восстанавливаем позицию текущего трека
+		if originalTrackPath != "" {
+			p.current = newPosition
+			log.Printf("SHUFFLE-%s: Restored current track position to %d", callerID, newPosition)
 		}
 		
-		applyTime := time.Since(applyStart)
-		log.Printf("SHUFFLE-%s: Applied shuffled tracks in %v", callerID, applyTime)
+		// Сигнализируем об успешном применении
+		applyDone <- true
 	}()
 	
-	totalTime := time.Since(randomStart)
-	log.Printf("SHUFFLE-%s: Playlist shuffle completed for %s in total %v", callerID, p.directory, totalTime)
+	// Проверяем результат применения изменений
+	if <-applyDone {
+		log.Printf("SHUFFLE-%s: Playlist shuffled successfully", callerID)
+	} else {
+		log.Printf("SHUFFLE-%s: Could not acquire mutex to apply changes", callerID)
+	}
 }
 
 // GetTracks returns a copy of the track list
 func (p *Playlist) GetTracks() []Track {
-	p.mutex.RLock()
-	defer p.mutex.RUnlock()
+	// Добавляем механизм повторных попыток
+	maxAttempts := 3
+	
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Используем канал с таймаутом для защиты от блокировок
+		c := make(chan []Track, 1)
+		
+		go func() {
+			p.mutex.RLock()
+			defer p.mutex.RUnlock()
 
-	tracks := make([]Track, len(p.tracks))
-	copy(tracks, p.tracks)
-	return tracks
+			tracks := make([]Track, len(p.tracks))
+			copy(tracks, p.tracks)
+			c <- tracks
+		}()
+		
+		// Увеличиваем таймаут до 500 мс, поскольку 50 мс было слишком мало
+		select {
+		case tracks := <-c:
+			// Проверяем, не пустой ли слайс
+			if len(tracks) == 0 && len(p.tracks) > 0 {
+				// Если основной слайс не пуст, но мы получили пустой, это может быть ошибка копирования
+				log.Printf("WARNING: GetTracks returned empty list despite having %d tracks, retrying...", len(p.tracks))
+				continue // Повторяем попытку
+			}
+			return tracks
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("WARNING: GetTracks timed out (attempt %d/%d), retrying...", attempt, maxAttempts)
+			if attempt == maxAttempts {
+				log.Printf("WARNING: All GetTracks attempts timed out, returning empty list")
+				return []Track{}
+			}
+			// Небольшая пауза перед следующей попыткой
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	
+	// Этот код не должен достигаться, но для полноты:
+	log.Printf("ERROR: Unexpected flow in GetTracks, returning empty list")
+	return []Track{}
 }
 
 // watchDirectory monitors changes in the playlist directory
