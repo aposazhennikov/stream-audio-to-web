@@ -155,16 +155,40 @@ func TestTrackControlEndpoints(t *testing.T) {
 	}
 	
 	// Get information about current track before switching
-	nowPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=%s", baseURL, testRoute))
+	nowPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=/%s", baseURL, testRoute))
 	if err != nil {
 		t.Fatalf("Failed to get current track: %v", err)
 	}
 	
-	var currentTrackInfo map[string]interface{}
-	err = json.NewDecoder(nowPlayingResp.Body).Decode(&currentTrackInfo)
+	// Подробное логирование ответа
+	t.Logf("Now-playing status code: %d", nowPlayingResp.StatusCode)
+	t.Logf("Now-playing Content-Type: %s", nowPlayingResp.Header.Get("Content-Type"))
+	
+	// Читаем тело ответа для анализа
+	bodyBytes, err := ioutil.ReadAll(nowPlayingResp.Body)
 	nowPlayingResp.Body.Close()
 	if err != nil {
-		t.Fatalf("Failed to decode current track info: %v", err)
+		t.Fatalf("Failed to read now-playing response body: %v", err)
+	}
+	
+	// Логируем первые 200 символов тела ответа для диагностики
+	responseBody := string(bodyBytes)
+	if len(responseBody) > 200 {
+		t.Logf("Now-playing response body (first 200 chars): %s...", responseBody[:200])
+	} else {
+		t.Logf("Now-playing response body: %s", responseBody)
+	}
+	
+	// Проверяем на заголовок Content-Type
+	contentType := nowPlayingResp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		t.Fatalf("Expected JSON response, got Content-Type: %s", contentType)
+	}
+	
+	// Пытаемся декодировать JSON
+	var currentTrackInfo map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &currentTrackInfo); err != nil {
+		t.Fatalf("Failed to decode current track info: %v, body: %s", err, responseBody)
 	}
 	
 	currentTrack, ok := currentTrackInfo["track"].(string)
@@ -190,16 +214,40 @@ func TestTrackControlEndpoints(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	
 	// Check that track has changed
-	newPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=%s", baseURL, testRoute))
+	newPlayingResp, err := client.Get(fmt.Sprintf("%s/now-playing?route=/%s", baseURL, testRoute))
 	if err != nil {
 		t.Fatalf("Failed to get new current track: %v", err)
 	}
 	
-	var newTrackInfo map[string]interface{}
-	err = json.NewDecoder(newPlayingResp.Body).Decode(&newTrackInfo)
+	// Подробное логирование ответа
+	t.Logf("Now-playing (after switch) status code: %d", newPlayingResp.StatusCode)
+	t.Logf("Now-playing (after switch) Content-Type: %s", newPlayingResp.Header.Get("Content-Type"))
+	
+	// Читаем тело ответа для анализа
+	newBodyBytes, err := ioutil.ReadAll(newPlayingResp.Body)
 	newPlayingResp.Body.Close()
 	if err != nil {
-		t.Fatalf("Failed to decode new track info: %v", err)
+		t.Fatalf("Failed to read now-playing response body: %v", err)
+	}
+	
+	// Логируем первые 200 символов тела ответа для диагностики
+	newResponseBody := string(newBodyBytes)
+	if len(newResponseBody) > 200 {
+		t.Logf("Now-playing (after switch) response body (first 200 chars): %s...", newResponseBody[:200])
+	} else {
+		t.Logf("Now-playing (after switch) response body: %s", newResponseBody)
+	}
+	
+	// Проверяем на заголовок Content-Type
+	newContentType := newPlayingResp.Header.Get("Content-Type")
+	if !strings.Contains(newContentType, "application/json") {
+		t.Fatalf("Expected JSON response for second request, got Content-Type: %s", newContentType)
+	}
+	
+	// Пытаемся декодировать JSON
+	var newTrackInfo map[string]interface{}
+	if err := json.Unmarshal(newBodyBytes, &newTrackInfo); err != nil {
+		t.Fatalf("Failed to decode new track info: %v, body: %s", err, newResponseBody)
 	}
 	
 	newTrack, ok := newTrackInfo["track"].(string)
