@@ -690,4 +690,3 @@ func (d *dummyPlaylistManager) PreviousTrack() interface{} {
 func (d *dummyPlaylistManager) Shuffle() {
 	// Empty implementation for dummy placeholder
 } 
-} 
