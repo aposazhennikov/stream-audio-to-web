@@ -31,8 +31,8 @@ services:
       - NORMALIZE_RUNTIME=auto
       - NORMALIZE_SAMPLE_WINDOWS=6
       - NORMALIZE_SAMPLE_MS=200
-      - STATUS_PASSWORD=your_password
-      - SENTRY_DSN=your_sentry_dsn
+      - STATUS_PASSWORD=1234554321
+      - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
