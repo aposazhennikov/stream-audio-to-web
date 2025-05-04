@@ -21,16 +21,20 @@ services:
     environment:
       - STREAM_FORMAT=mp3
       - BITRATE=128
-      - MAX_CLIENTS=10
-      - LOG_LEVEL=debug
-      - "DIRECTORY_ROUTES={\"test_audio\":\"/app/test_audio\",\"humor\":\"/app/humor\",\"science\":\"/app/science\",\"politics\":\"/app/politics\",\"nature\":\"/app/nature\", \"shaov\":\"/app/shaov\", \"troshin\":\"/app/troshin\"}"
-      - SHUFFLE=true
-      # - ROUTES_SHUFFLE={"humor":"true","science":"true","politics":"true","nature":"false","shaov":"true","troshin":"true"}
-      - NORMALIZE_VOLUME=false
-      - STATUS_PASSWORD=1234554321
-      - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
+      - MAX_CLIENTS=500
+      - LOG_LEVEL=info
+      - BUFFER_SIZE=65536
+      - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science"}
+      - SHUFFLE=false
+      - ROUTES_SHUFFLE={"humor":"true","science":"false"}
+      - NORMALIZE_VOLUME=true
+      - NORMALIZE_RUNTIME=auto
+      - NORMALIZE_SAMPLE_WINDOWS=6
+      - NORMALIZE_SAMPLE_MS=200
+      - STATUS_PASSWORD=your_password
+      - SENTRY_DSN=your_sentry_dsn
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:8000/healthz | grep -q 'OK'"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3

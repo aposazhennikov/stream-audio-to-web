@@ -3,9 +3,11 @@ module github.com/user/stream-audio-to-web
 go 1.22
 
 require (
+	github.com/faiface/beep v1.1.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/getsentry/sentry-go v0.32.0
 	github.com/gorilla/mux v1.8.1
+	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.8.2
 	go.uber.org/goleak v1.3.0

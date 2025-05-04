@@ -49,6 +49,9 @@ type Config struct {
 	Shuffle         bool              // Global shuffle tracks setting
 	PerStreamShuffle map[string]bool  // Per-stream shuffle configuration
 	NormalizeVolume bool              // Global volume normalization setting
+	NormalizeRuntime string           // Runtime normalization mode: "auto", "on", "off"
+	NormalizeSampleWindows int        // Number of analysis windows for normalization
+	NormalizeSampleMs int             // Duration of each analysis window in milliseconds
 }
 
 // Global variables for routes
@@ -83,6 +86,9 @@ func main() {
 	log.Printf("Buffer size: %d", config.BufferSize)
 	log.Printf("Global shuffle setting: %v", config.Shuffle)
 	log.Printf("Volume normalization: %v", config.NormalizeVolume)
+	log.Printf("Runtime normalization mode: %s", config.NormalizeRuntime)
+	log.Printf("Normalization sample windows: %d", config.NormalizeSampleWindows)
+	log.Printf("Normalization sample duration: %d ms", config.NormalizeSampleMs)
 	log.Printf("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
 		log.Printf("  - Route '%s': Shuffle = %v", route, shuffle)
@@ -95,6 +101,9 @@ func main() {
 
 	// Create HTTP server
 	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
+
+	// Configure normalization parameters
+	audio.SetNormalizeConfig(config.NormalizeSampleWindows, config.NormalizeSampleMs)
 
 	// Create radio station manager
 	stationManager := radio.NewRadioStationManager()
@@ -310,6 +319,19 @@ func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioSt
 	
 	// Configure volume normalization
 	streamer.SetVolumeNormalization(config.NormalizeVolume)
+
+	// Check if runtime normalization mode needs to override the default setting
+	switch config.NormalizeRuntime {
+	case "on":
+		streamer.SetVolumeNormalization(true)
+		log.Printf("DIAGNOSTICS: Runtime normalization mode 'on' overrides default setting for route %s", route)
+	case "off":
+		streamer.SetVolumeNormalization(false)
+		log.Printf("DIAGNOSTICS: Runtime normalization mode 'off' overrides default setting for route %s", route)
+	case "auto", "":
+		// Use the default setting from config.NormalizeVolume
+		log.Printf("DIAGNOSTICS: Using default normalization setting for route %s: %v", route, config.NormalizeVolume)
+	}
 	
 	log.Printf("Audio streamer for route %s successfully created", route)
 	
@@ -361,6 +383,9 @@ func loadConfig() *Config {
 	flag.IntVar(&config.BufferSize, "buffer-size", defaultBufferSize, "Buffer size for reading audio files in bytes")
 	flag.BoolVar(&config.Shuffle, "shuffle", defaultShuffle, "Shuffle tracks in playlist")
 	flag.BoolVar(&config.NormalizeVolume, "normalize-volume", defaultNormalizeVolume, "Normalize volume across all audio files")
+	flag.StringVar(&config.NormalizeRuntime, "normalize-runtime", "auto", "Runtime normalization mode: auto, on, off")
+	flag.IntVar(&config.NormalizeSampleWindows, "normalize-sample-windows", 6, "Number of sample windows for volume analysis")
+	flag.IntVar(&config.NormalizeSampleMs, "normalize-sample-ms", 200, "Duration of each analysis window in milliseconds")
 
 	// For mapping directories and routes we use JSON
 	var directoryRoutesJSON string
@@ -455,6 +480,45 @@ func loadConfig() *Config {
 			config.NormalizeVolume = normalizeVolume
 		} else {
 			sentry.CaptureException(fmt.Errorf("error parsing NORMALIZE_VOLUME: %w", err))
+		}
+	}
+	
+	// Parse runtime normalization mode
+	if envNormalizeRuntime := os.Getenv("NORMALIZE_RUNTIME"); envNormalizeRuntime != "" {
+		switch strings.ToLower(envNormalizeRuntime) {
+		case "auto", "on", "off":
+			config.NormalizeRuntime = strings.ToLower(envNormalizeRuntime)
+		default:
+			log.Printf("Invalid NORMALIZE_RUNTIME value: %s, using default 'auto'", envNormalizeRuntime)
+			config.NormalizeRuntime = "auto"
+		}
+	}
+	
+	// Parse normalization sample windows from environment
+	if envNormalizeSampleWindows := os.Getenv("NORMALIZE_SAMPLE_WINDOWS"); envNormalizeSampleWindows != "" {
+		if windows, err := strconv.Atoi(envNormalizeSampleWindows); err == nil {
+			if windows > 0 {
+				config.NormalizeSampleWindows = windows
+			} else {
+				log.Printf("Invalid NORMALIZE_SAMPLE_WINDOWS value: %s (must be > 0), using default 6", envNormalizeSampleWindows)
+			}
+		} else {
+			log.Printf("Error parsing NORMALIZE_SAMPLE_WINDOWS: %v, using default 6", err)
+			sentry.CaptureException(fmt.Errorf("error parsing NORMALIZE_SAMPLE_WINDOWS: %w", err))
+		}
+	}
+	
+	// Parse normalization sample duration from environment
+	if envNormalizeSampleMs := os.Getenv("NORMALIZE_SAMPLE_MS"); envNormalizeSampleMs != "" {
+		if duration, err := strconv.Atoi(envNormalizeSampleMs); err == nil {
+			if duration > 0 {
+				config.NormalizeSampleMs = duration
+			} else {
+				log.Printf("Invalid NORMALIZE_SAMPLE_MS value: %s (must be > 0), using default 200", envNormalizeSampleMs)
+			}
+		} else {
+			log.Printf("Error parsing NORMALIZE_SAMPLE_MS: %v, using default 200", err)
+			sentry.CaptureException(fmt.Errorf("error parsing NORMALIZE_SAMPLE_MS: %w", err))
 		}
 	}
 	
@@ -625,4 +689,5 @@ func (d *dummyPlaylistManager) PreviousTrack() interface{} {
 // Shuffle implements PlaylistManager.Shuffle method
 func (d *dummyPlaylistManager) Shuffle() {
 	// Empty implementation for dummy placeholder
+} 
 } 

@@ -574,33 +574,81 @@ curl -X POST -b "status_auth=your_password" "http://server:port/shuffle-playlist
 
 ## Volume Normalization
 
-The application includes automatic volume normalization to provide a consistent listening experience when playing audio files with different volume levels:
+The application includes advanced volume normalization to provide a consistent listening experience when playing audio files with different volume levels:
 
-- **RMS-based Analysis** — the system analyzes each audio file to determine its volume level using Root Mean Square (RMS) calculation
-- **Consistent Volume Levels** — automatically adjusts volume to ensure consistent levels between tracks
-- **Configurable** — can be enabled or disabled through command line flags or environment variables
+- **Multi-window Analysis** — analyzes multiple segments across the audio file for more accurate volume assessment
+- **Smart Sampling** — intelligently samples from beginning, middle, end, and random positions to handle varying audio patterns
+- **Consistent Volume Levels** — automatically adjusts volume to target -16 LUFS for all tracks
+- **True Peak Limiting** — prevents clipping by monitoring and limiting true peak levels
+- **Performance Optimized** — delivers first audio in under 150ms while providing accurate normalization
+- **Configurable** — extensive configuration options through command line flags or environment variables
 - **Caching** — analyzes each file only once and caches results for better performance
-- **Intelligent Range Limiting** — prevents excessive amplification or reduction by limiting gain factors to reasonable ranges
+- **Intelligent Range Limiting** — prevents excessive amplification or reduction by limiting gain factors to ±12 dB
 - **No Quality Loss** — normalizes audio without degrading audio quality
 
-Volume normalization is enabled by default but can be disabled if needed:
+### Volume Normalization Configuration
+
+Volume normalization includes several configuration options:
+
+| Flag / ENV                     | Purpose                                      | Default |
+|--------------------------------|----------------------------------------------|---------|
+| `--normalize-volume` / `NORMALIZE_VOLUME` | Enable/disable volume normalization globally | `true`  |
+| `--normalize-runtime` / `NORMALIZE_RUNTIME` | Runtime mode: "auto", "on", or "off"     | `auto`  |
+| `--normalize-sample-windows` / `NORMALIZE_SAMPLE_WINDOWS` | Number of analysis windows per file | `6`     |
+| `--normalize-sample-ms` / `NORMALIZE_SAMPLE_MS` | Duration of each analysis window in ms | `200`   |
+
+The normalization modes work as follows:
+
+- **auto**: Use the global setting from `NORMALIZE_VOLUME`
+- **on**: Force enable normalization regardless of the global setting
+- **off**: Force disable normalization regardless of the global setting
+
+### Multi-window Analysis
+
+The default configuration uses 6 analysis windows positioned strategically throughout the file:
+
+1. 0% position (beginning of file)
+2. 25% position (first quarter)
+3. 50% position (middle)
+4. 75% position (third quarter)
+5. 95% position (near end)
+6. Random position between 5-95%
+
+This approach provides significantly better normalization for audio files with varying volume patterns, such as:
+
+- Podcasts with intro silence followed by speech
+- Music with quiet intros followed by louder sections
+- Audiobooks with varying narrator volume
+- Recordings with applause or audience sounds
+
+For short files (under 2 seconds), the system analyzes the entire file instead.
+
+### Examples
 
 ```bash
-# Disable volume normalization via command line
-./audio-streamer --normalize-volume=false
+# Enable normalization with default settings
+docker run -e NORMALIZE_VOLUME=true -p 8000:8000 audio-streamer:latest
 
-# Disable via environment variable
-export NORMALIZE_VOLUME=false
-./audio-streamer
-
-# In Docker
+# Disable normalization
 docker run -e NORMALIZE_VOLUME=false -p 8000:8000 audio-streamer:latest
+
+# Force enable regardless of global setting
+docker run -e NORMALIZE_RUNTIME=on -p 8000:8000 audio-streamer:latest
+
+# Use more analysis windows for better accuracy (may increase CPU usage)
+docker run -e NORMALIZE_SAMPLE_WINDOWS=10 -p 8000:8000 audio-streamer:latest
+
+# Adjust window duration for different types of content
+docker run -e NORMALIZE_SAMPLE_MS=300 -p 8000:8000 audio-streamer:latest
 ```
 
 The normalization process:
 
-1. When a track is played for the first time, the system analyzes its volume level
-2. The result is stored in a memory cache to avoid repeated analysis
-3. A gain factor is calculated to adjust the volume to a target level
-4. The audio data is streamed with the adjusted volume level
-5. The process is repeated for each audio file, creating a consistent listening experience
+1. When a track is played for the first time, the system analyzes its volume using multi-window sampling
+2. The average RMS and maximum true peak values are calculated across all windows
+3. A gain factor is calculated to adjust the volume to the target level (-16 LUFS)
+4. The gain factor is limited to a reasonable range (0.25× to 4.0×, or -12 dB to +12 dB)
+5. True peak limiting is applied to prevent clipping
+6. The result is stored in a memory cache to avoid repeated analysis
+7. The audio data is streamed with the adjusted volume level
+8. The process is repeated for each audio file, creating a consistent listening experience

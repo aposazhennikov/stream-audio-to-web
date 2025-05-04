@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log"
@@ -176,190 +175,120 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 	defer file.Close()
 	
+	// Send information about current track to channel
+	select {
+	case s.currentTrackCh <- filepath.Base(trackPath):
+		log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
+	default:
+		log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
+	}
+	
+	startTime := time.Now()
+	
 	// Create pipe for normalized audio
 	pr, pw := io.Pipe()
+	defer pr.Close() // Always close the reader when function exits
 	
-	// Start normalization in separate goroutine if enabled
-	var streamErr error
-	var streamErrMutex sync.Mutex // Mutex to protect access to streamErr
-	var normalizationDone = make(chan struct{}) // Signal for normalization completion
-	
+	// Check if normalization should be used
+	// The actual normalization will be performed by streaming through a pipe
 	if s.normalizeVolume {
-		// Create a context with cancel for managing goroutine lifecycle
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel() // Ensure all resources are released when function returns
+		// Extract route name from track path for metrics
+		route := getRouteFromTrackPath(trackPath)
 		
+		// Start normalization in a separate goroutine to avoid blocking
 		go func() {
-			defer pw.Close()
-			defer close(normalizationDone) // Signal that normalization is complete
+			defer pw.Close() // Close the pipe writer when done
 			
 			// Use NormalizeMP3Stream to normalize the audio
-			if err := NormalizeMP3Stream(file, pw); err != nil {
-				streamErrMutex.Lock()
-				streamErr = err
-				streamErrMutex.Unlock()
+			// The third parameter is the route name for metrics
+			if err := NormalizeMP3Stream(file, pw, route); err != nil {
 				log.Printf("DIAGNOSTICS: ERROR during audio normalization: %v", err)
 				sentry.CaptureException(err)
 			}
 		}()
 		
-		// Don't use file = os.NewFile(pr.Fd(), trackPath) as PipeReader doesn't have Fd() method
-		// Instead, read directly from the pipe reader
+		// Stream from pipe
 		buffer := s.bufferPool.Get().([]byte)
 		defer s.bufferPool.Put(buffer)
 		
 		// For tracking progress
 		var bytesRead int64
 		
-		// Send information about current track to channel
-		select {
-		case s.currentTrackCh <- filepath.Base(trackPath):
-			log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
-		default:
-			log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
-		}
+		log.Printf("DIAGNOSTICS: Starting to read normalized audio data from %s", trackPath)
 		
-		startTime := time.Now()
-		log.Printf("DIAGNOSTICS: Starting to read normalized file %s", trackPath)
-		
-		// Ensure pipe reader is closed when function exits
-		defer pr.Close()
-		
-		// Channel for monitoring goroutine completion
-		processingDone := make(chan struct{})
-		
-		// Start reading from pipe in a separate goroutine
-		go func() {
-			defer close(processingDone)
-			
-			for {
-				// Check completion signal before reading
-				select {
-				case <-s.quit:
-					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted", trackPath)
-					cancel() // Signal to normalization goroutine to stop
-					return
-				case <-ctx.Done():
-					log.Printf("DIAGNOSTICS: Context canceled during playback of %s", trackPath)
-					return
-				default:
-					// Continue execution
-				}
-				
-				// Read from pipe with timeout to prevent blocking forever
-				readDone := make(chan struct{})
-				var n int
-				var readErr error
-				
-				go func() {
-					defer close(readDone)
-					n, readErr = pr.Read(buffer)
-				}()
-				
-				select {
-				case <-readDone:
-					// Read completed
-				case <-s.quit:
-					log.Printf("DIAGNOSTICS: Received quit signal during read from pipe for %s", trackPath)
-					cancel()
-					return
-				case <-time.After(3 * time.Second):
-					log.Printf("DIAGNOSTICS: Read timeout for %s, possible deadlock", trackPath)
-					cancel()
-					return
-				}
-				
-				if readErr == io.EOF {
-					log.Printf("DIAGNOSTICS: End of normalized file %s reached", trackPath)
-					return
-				}
-				
-				if readErr != nil {
-					// If pipe was closed, this might be the result of normal termination of the normalization goroutine
-					if readErr == io.ErrClosedPipe || strings.Contains(readErr.Error(), "closed pipe") {
-						log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
-						return
-					}
-					
-					log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, readErr)
-					streamErrMutex.Lock()
-					streamErr = fmt.Errorf("error reading normalized file: %w", readErr)
-					streamErrMutex.Unlock()
-					sentry.CaptureException(streamErr)
-					return
-				}
-				
-				bytesRead += int64(n)
-				
-				// Save copy of last chunk for new clients
-				dataCopy := make([]byte, n)
-				copy(dataCopy, buffer[:n])
-				
-				// Save copy of last chunk for new clients
-				s.lastChunkMutex.Lock()
-				s.lastChunk = dataCopy
-				s.lastChunkMutex.Unlock()
-				
-				// Send data to all clients
-				if err := s.broadcastToClients(buffer[:n]); err != nil {
-					log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
-					streamErrMutex.Lock()
-					streamErr = err
-					streamErrMutex.Unlock()
-					sentry.CaptureException(err)
-					return
-				}
-				
-				// Calculate delay based on bitrate and buffer size
-				delayMs := (n * 8) / s.bitrate
-				
-				// Limit minimum delay
-				if delayMs < minPlaybackDelayMs {
-					delayMs = minPlaybackDelayMs
-				}
-				
-				// Log delay information once every 10 seconds
-				if time.Since(lastDelayLogTime) > 10*time.Second {
-					log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
-						delayMs, n, s.bitrate)
-					lastDelayLogTime = time.Now()
-				}
-				
-				// Wait for delay with completion check
-				select {
-				case <-time.After(time.Duration(delayMs) * time.Millisecond):
-					// Continue processing
-				case <-s.quit:
-					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted during delay", trackPath)
-					cancel()
-					return
-				case <-ctx.Done():
-					log.Printf("DIAGNOSTICS: Context canceled during delay for %s", trackPath)
-					return
-				}
+		for {
+			// Check completion signal before reading
+			select {
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of %s interrupted", trackPath)
+				return nil
+			default:
+				// Continue execution
 			}
-		}()
-		
-		// Wait for processing completion or stop signal
-		select {
-		case <-processingDone:
-			log.Printf("DIAGNOSTICS: Finished processing normalized file %s", trackPath)
-		case <-s.quit:
-			log.Printf("DIAGNOSTICS: Processing of normalized file %s interrupted", trackPath)
-			cancel() // Cancel context to ensure all goroutines exit
-			return nil
-		}
-		
-		// Wait for the normalization goroutine to complete before checking errors
-		select {
-		case <-normalizationDone:
-			log.Printf("DIAGNOSTICS: Normalization of file %s completed", trackPath)
-		case <-time.After(3 * time.Second):
-			log.Printf("DIAGNOSTICS: Timeout waiting for normalization of %s to complete", trackPath)
+			
+			// Read from pipe
+			n, err := pr.Read(buffer)
+			if err == io.EOF {
+				log.Printf("DIAGNOSTICS: End of normalized audio data reached for %s", trackPath)
+				break
+			}
+			if err != nil {
+				// If pipe was closed, this might be the result of normal termination
+				if err == io.ErrClosedPipe || strings.Contains(err.Error(), "closed pipe") {
+					log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
+					return nil
+				}
+				
+				log.Printf("DIAGNOSTICS: ERROR reading normalized audio data: %v", err)
+				sentry.CaptureException(err)
+				return fmt.Errorf("error reading normalized audio data: %w", err)
+			}
+			
+			bytesRead += int64(n)
+			
+			// Save copy of last chunk for new clients
+			dataCopy := make([]byte, n)
+			copy(dataCopy, buffer[:n])
+			
+			// Save copy of last chunk for new clients
+			s.lastChunkMutex.Lock()
+			s.lastChunk = dataCopy
+			s.lastChunkMutex.Unlock()
+			
+			// Send data to all clients
+			if err := s.broadcastToClients(buffer[:n]); err != nil {
+				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
+				sentry.CaptureException(err)
+				return err
+			}
+			
+			// Calculate delay based on bitrate and buffer size
+			delayMs := (n * 8) / s.bitrate
+			
+			// Limit minimum delay
+			if delayMs < minPlaybackDelayMs {
+				delayMs = minPlaybackDelayMs
+			}
+			
+			// Log delay information once every 10 seconds
+			if time.Since(lastDelayLogTime) > 10*time.Second {
+				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
+					delayMs, n, s.bitrate)
+				lastDelayLogTime = time.Now()
+			}
+			
+			// Wait for delay with completion check
+			select {
+			case <-time.After(time.Duration(delayMs) * time.Millisecond):
+				// Continue processing
+			case <-s.quit:
+				log.Printf("DIAGNOSTICS: Playback of %s interrupted during delay", trackPath)
+				return nil
+			}
 		}
 		
 		duration := time.Since(startTime)
-		log.Printf("DIAGNOSTICS: Playback of normalized file %s completed (read %d bytes in %.2f sec)", 
+		log.Printf("DIAGNOSTICS: Playback of %s completed (read %d bytes in %.2f sec)", 
 			trackPath, bytesRead, duration.Seconds())
 		
 		// Increment playback time metric for Prometheus
@@ -368,15 +297,6 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
 			log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
 				duration.Seconds(), routeName)
-		}
-		
-		// Check if there was an error in the normalization goroutine
-		streamErrMutex.Lock()
-		err := streamErr
-		streamErrMutex.Unlock()
-		
-		if err != nil {
-			return err
 		}
 		
 		// Add pause between tracks
@@ -392,7 +312,8 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		
 		return nil
 	} else {
-		// Normal operation mode - skip ID3v2 if it exists
+		// Non-normalized mode (raw streaming) - mostly unchanged from original
+		// Skip ID3v2 if it exists
 		header := make([]byte, 10)
 		if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
 			// size is stored in 4 sync-safe bytes (6..9)
@@ -442,15 +363,6 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		// For tracking progress
 		var bytesRead int64
 		
-		// Send information about current track to channel
-		select {
-		case s.currentTrackCh <- filepath.Base(trackPath):
-			log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
-		default:
-			log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
-		}
-		
-		startTime := time.Now()
 		log.Printf("DIAGNOSTICS: Starting to read file %s", trackPath)
 		
 		for {
@@ -536,9 +448,16 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 				duration.Seconds(), routeName)
 		}
 
-		// Add pause between tracks to avoid cutting the beginning - reduced from 200 to 100 ms
-		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
-		time.Sleep(gracePeriodMs * time.Millisecond)
+		// Add pause between tracks
+		pauseMs := gracePeriodMs
+		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
+		select {
+		case <-time.After(time.Duration(pauseMs) * time.Millisecond):
+			// Continue processing
+		case <-s.quit:
+			log.Printf("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
+			return nil
+		}
 
 		return nil
 	}
