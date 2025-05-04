@@ -91,6 +91,18 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer) error {
 	buffer := make([]byte, 4096) // 4KB buffer
 	
 	for {
+		// Check if writer is closed before attempting to read/write
+		if pw, ok := writer.(*io.PipeWriter); ok {
+			select {
+			case <-pw.CloseNotify():
+				// Pipe was closed by the reader side
+				log.Printf("DIAGNOSTICS: PipeWriter closed during normalization of %s, stopping gracefully", filePath)
+				return nil
+			default:
+				// Continue with normal operation
+			}
+		}
+		
 		n, err := reader.Read(buffer)
 		if err == io.EOF {
 			break
@@ -104,7 +116,8 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer) error {
 		if err != nil {
 			// Check if the error is related to a closed pipe
 			if strings.Contains(err.Error(), "closed pipe") || 
-			   strings.Contains(err.Error(), "broken pipe") {
+			   strings.Contains(err.Error(), "broken pipe") || 
+			   err == io.ErrClosedPipe {
 				// The pipe was closed, which can happen when switching tracks or stopping the stream
 				// This is not considered a critical error, just log and stop normalization
 				log.Printf("DIAGNOSTICS: Pipe closed during normalization of %s, stopping: %v", filePath, err)

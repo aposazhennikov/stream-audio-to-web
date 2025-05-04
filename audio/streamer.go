@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -177,8 +178,6 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	
 	// Create pipe for normalized audio
 	pr, pw := io.Pipe()
-	// Don't close pipe reader here as it might happen before the write operation completes
-	// defer pr.Close() 
 	
 	// Start normalization in separate goroutine if enabled
 	var streamErr error
@@ -186,6 +185,10 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	var normalizationDone = make(chan struct{}) // Signal for normalization completion
 	
 	if s.normalizeVolume {
+		// Create a context with cancel for managing goroutine lifecycle
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel() // Ensure all resources are released when function returns
+		
 		go func() {
 			defer pw.Close()
 			defer close(normalizationDone) // Signal that normalization is complete
@@ -234,27 +237,53 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 				select {
 				case <-s.quit:
 					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted", trackPath)
+					cancel() // Signal to normalization goroutine to stop
+					return
+				case <-ctx.Done():
+					log.Printf("DIAGNOSTICS: Context canceled during playback of %s", trackPath)
 					return
 				default:
 					// Continue execution
 				}
 				
-				// Read from pipe
-				n, err := pr.Read(buffer)
-				if err == io.EOF {
+				// Read from pipe with timeout to prevent blocking forever
+				readDone := make(chan struct{})
+				var n int
+				var readErr error
+				
+				go func() {
+					defer close(readDone)
+					n, readErr = pr.Read(buffer)
+				}()
+				
+				select {
+				case <-readDone:
+					// Read completed
+				case <-s.quit:
+					log.Printf("DIAGNOSTICS: Received quit signal during read from pipe for %s", trackPath)
+					cancel()
+					return
+				case <-time.After(3 * time.Second):
+					log.Printf("DIAGNOSTICS: Read timeout for %s, possible deadlock", trackPath)
+					cancel()
+					return
+				}
+				
+				if readErr == io.EOF {
 					log.Printf("DIAGNOSTICS: End of normalized file %s reached", trackPath)
 					return
 				}
-				if err != nil {
+				
+				if readErr != nil {
 					// If pipe was closed, this might be the result of normal termination of the normalization goroutine
-					if err == io.ErrClosedPipe || strings.Contains(err.Error(), "closed pipe") {
+					if readErr == io.ErrClosedPipe || strings.Contains(readErr.Error(), "closed pipe") {
 						log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
 						return
 					}
 					
-					log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, err)
+					log.Printf("DIAGNOSTICS: ERROR reading normalized file %s: %v", trackPath, readErr)
 					streamErrMutex.Lock()
-					streamErr = fmt.Errorf("error reading normalized file: %w", err)
+					streamErr = fmt.Errorf("error reading normalized file: %w", readErr)
 					streamErrMutex.Unlock()
 					sentry.CaptureException(streamErr)
 					return
@@ -302,6 +331,10 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 					// Continue processing
 				case <-s.quit:
 					log.Printf("DIAGNOSTICS: Playback of normalized file %s interrupted during delay", trackPath)
+					cancel()
+					return
+				case <-ctx.Done():
+					log.Printf("DIAGNOSTICS: Context canceled during delay for %s", trackPath)
 					return
 				}
 			}
@@ -313,6 +346,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			log.Printf("DIAGNOSTICS: Finished processing normalized file %s", trackPath)
 		case <-s.quit:
 			log.Printf("DIAGNOSTICS: Processing of normalized file %s interrupted", trackPath)
+			cancel() // Cancel context to ensure all goroutines exit
 			return nil
 		}
 		
@@ -320,7 +354,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		select {
 		case <-normalizationDone:
 			log.Printf("DIAGNOSTICS: Normalization of file %s completed", trackPath)
-		case <-time.After(1 * time.Second):
+		case <-time.After(3 * time.Second):
 			log.Printf("DIAGNOSTICS: Timeout waiting for normalization of %s to complete", trackPath)
 		}
 		
@@ -346,8 +380,15 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 		
 		// Add pause between tracks
-		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", gracePeriodMs)
-		time.Sleep(gracePeriodMs * time.Millisecond)
+		pauseMs := gracePeriodMs
+		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
+		select {
+		case <-time.After(time.Duration(pauseMs) * time.Millisecond):
+			// Continue processing
+		case <-s.quit:
+			log.Printf("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
+			return nil
+		}
 		
 		return nil
 	} else {
