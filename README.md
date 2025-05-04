@@ -455,6 +455,10 @@ MIT
 
 # TODO 
 
+- FIX NORMALIZE AUDiO
+
+- ADD LINTER STEP TO CI/CD
+
 All tasks completed:
 
 - Fix shuffle mode, it doesn't work right now. - DONE ✅
