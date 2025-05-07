@@ -91,40 +91,72 @@ func (rm *RelayManager) AddLink(link string) error {
 	}
 
 	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-
+	
 	// Check for duplicates
 	for _, existingLink := range rm.RelayLinks {
 		if existingLink == link {
+			rm.mutex.Unlock()
 			return fmt.Errorf("duplicate link: %s already exists in relay list", link)
 		}
 	}
 
 	rm.RelayLinks = append(rm.RelayLinks, link)
 	log.Printf("Added relay link: %s", link)
+	
+	// Создаем копию ссылок для сохранения
+	links := make([]string, len(rm.RelayLinks))
+	copy(links, rm.RelayLinks)
+	configFile := rm.configFile
+	
+	// Разблокируем мьютекс перед сохранением
+	rm.mutex.Unlock()
 
-	// Save updated configuration
-	go rm.SaveLinksToFile()
+	// Сохраняем данные в файл
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal relay links to JSON: %w", err)
+	}
 
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write relay configuration to file: %w", err)
+	}
+
+	log.Printf("Saved %d relay links to %s", len(links), configFile)
 	return nil
 }
 
 // RemoveLink removes a link from relay list by index
 func (rm *RelayManager) RemoveLink(index int) error {
 	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-
+	
 	if index < 0 || index >= len(rm.RelayLinks) {
+		rm.mutex.Unlock()
 		return fmt.Errorf("invalid index: %d, valid range is 0-%d", index, len(rm.RelayLinks)-1)
 	}
 
 	// Remove link by index
 	rm.RelayLinks = append(rm.RelayLinks[:index], rm.RelayLinks[index+1:]...)
 	log.Printf("Removed relay link at index %d", index)
+	
+	// Создаем копию ссылок для сохранения
+	links := make([]string, len(rm.RelayLinks))
+	copy(links, rm.RelayLinks)
+	configFile := rm.configFile
+	
+	// Разблокируем мьютекс перед сохранением
+	rm.mutex.Unlock()
 
-	// Save updated configuration
-	go rm.SaveLinksToFile()
+	// Сохраняем данные в файл
+	data, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal relay links to JSON: %w", err)
+	}
 
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write relay configuration to file: %w", err)
+	}
+
+	log.Printf("Saved %d relay links to %s", len(links), configFile)
 	return nil
 }
 

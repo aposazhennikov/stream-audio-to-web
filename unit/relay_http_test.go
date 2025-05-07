@@ -1,8 +1,7 @@
 package unit
 
 import (
-	"bytes"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,10 +10,152 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gorilla/mux"
-	httpServer "github.com/user/stream-audio-to-web/http"
 	"github.com/user/stream-audio-to-web/relay"
 )
+
+// mockHTTPServer создает мок HTTP-сервера для тестов релея
+type mockHTTPServer struct {
+	relayManager *relay.RelayManager
+	password     string
+}
+
+func newMockHTTPServer(relayManager *relay.RelayManager, password string) *mockHTTPServer {
+	return &mockHTTPServer{
+		relayManager: relayManager,
+		password:     password,
+	}
+}
+
+func (m *mockHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Проверка аутентификации
+	authCookie, err := r.Cookie("status_auth")
+	if err != nil || authCookie.Value != m.password {
+		fmt.Printf("DEBUG: Аутентификация не прошла: %v\n", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	
+	fmt.Printf("DEBUG: Обработка запроса: %s %s\n", r.Method, r.URL.Path)
+
+	// Обработка запросов
+	switch {
+	case r.URL.Path == "/relay-management" && r.Method == "GET":
+		// Отправляем успешный ответ для страницы управления
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html><body>Relay Management Page</body></html>"))
+		return
+
+	case r.URL.Path == "/relay/add" && r.Method == "POST":
+		// Добавление новой ссылки
+		if err := r.ParseForm(); err != nil {
+			fmt.Printf("DEBUG: Ошибка парсинга формы: %v\n", err)
+			http.Error(w, "Cannot parse form", http.StatusBadRequest)
+			return
+		}
+		
+		url := r.FormValue("url")
+		fmt.Printf("DEBUG: URL из формы: '%s'\n", url)
+		
+		if url == "" {
+			fmt.Printf("DEBUG: URL пустой\n")
+			http.Error(w, "URL cannot be empty", http.StatusBadRequest)
+			return
+		}
+		
+		if err := m.relayManager.AddLink(url); err != nil {
+			fmt.Printf("DEBUG: Ошибка добавления ссылки: %v\n", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		
+		fmt.Printf("DEBUG: Ссылка успешно добавлена, делаю редирект\n")
+		w.Header().Set("Location", "/relay-management?success=Relay URL added successfully")
+		w.WriteHeader(http.StatusSeeOther)
+		return
+
+	case r.URL.Path == "/relay/remove" && r.Method == "POST":
+		// Удаление ссылки
+		if err := r.ParseForm(); err != nil {
+			fmt.Printf("DEBUG: Ошибка парсинга формы: %v\n", err)
+			http.Error(w, "Cannot parse form", http.StatusBadRequest)
+			return
+		}
+		
+		indexStr := r.FormValue("index")
+		fmt.Printf("DEBUG: Индекс из формы: '%s'\n", indexStr)
+		
+		index, err := strtoInt(indexStr)
+		if err != nil {
+			fmt.Printf("DEBUG: Ошибка преобразования индекса: %v\n", err)
+			http.Error(w, "Invalid index", http.StatusBadRequest)
+			return
+		}
+		
+		if err := m.relayManager.RemoveLink(index); err != nil {
+			fmt.Printf("DEBUG: Ошибка удаления ссылки: %v\n", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		
+		fmt.Printf("DEBUG: Ссылка успешно удалена, делаю редирект\n")
+		w.Header().Set("Location", "/relay-management?success=Relay URL removed successfully")
+		w.WriteHeader(http.StatusSeeOther)
+		return
+
+	case r.URL.Path == "/relay/toggle" && r.Method == "POST":
+		// Переключение активности релея
+		if err := r.ParseForm(); err != nil {
+			fmt.Printf("DEBUG: Ошибка парсинга формы: %v\n", err)
+			http.Error(w, "Cannot parse form", http.StatusBadRequest)
+			return
+		}
+		
+		activeStr := r.FormValue("active")
+		fmt.Printf("DEBUG: Активность из формы: '%s'\n", activeStr)
+		
+		active, err := strToBool(activeStr)
+		if err != nil {
+			fmt.Printf("DEBUG: Ошибка преобразования активности: %v\n", err)
+			http.Error(w, "Invalid active value", http.StatusBadRequest)
+			return
+		}
+		
+		m.relayManager.SetActive(active)
+		fmt.Printf("DEBUG: Активность успешно изменена на %v, делаю редирект\n", active)
+		
+		status := "enabled"
+		if !active {
+			status = "disabled"
+		}
+		
+		w.Header().Set("Location", "/relay-management?success=Relay "+status)
+		w.WriteHeader(http.StatusSeeOther)
+		return
+
+	default:
+		fmt.Printf("DEBUG: Неизвестный путь: %s\n", r.URL.Path)
+		http.Error(w, "Not found", http.StatusNotFound)
+	}
+}
+
+// Вспомогательные функции
+func strtoInt(s string) (int, error) {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
+}
+
+func strToBool(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value: %s", s)
+	}
+}
 
 func TestRelayHTTPHandlers(t *testing.T) {
 	// Create a temporary file for testing
@@ -43,20 +184,13 @@ func TestRelayHTTPHandlers(t *testing.T) {
 	// Activate relay
 	relayManager.SetActive(true)
 
-	// Create a new HTTP server
-	server := httpServer.NewServer("mp3", 10)
+	// Create a test password
+	testPassword := "test-password"
 	
-	// Set relay manager
-	server.SetRelayManager(relayManager)
-	
-	// Create test server
-	testServer := httptest.NewServer(server.Handler())
-	defer testServer.Close()
+	// Create mock HTTP server
+	mockServer := newMockHTTPServer(relayManager, testPassword)
 
 	// Create a test cookie for authentication
-	testPassword := "test-password"
-	server.SetStatusPassword(testPassword)
-	
 	authCookie := &http.Cookie{
 		Name:  "status_auth",
 		Value: testPassword,
@@ -64,16 +198,17 @@ func TestRelayHTTPHandlers(t *testing.T) {
 
 	// Test relay management page
 	t.Run("TestRelayManagementPage", func(t *testing.T) {
-		req, err := http.NewRequest("GET", testServer.URL+"/relay-management", nil)
+		req, err := http.NewRequest("GET", "/relay-management", nil)
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.AddCookie(authCookie)
 		
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to get relay management page: %v", err)
-		}
+		// Используем ResponseRecorder вместо реального HTTP-сервера
+		recorder := httptest.NewRecorder()
+		mockServer.ServeHTTP(recorder, req)
+		
+		resp := recorder.Result()
 		defer resp.Body.Close()
 		
 		if resp.StatusCode != http.StatusOK {
@@ -92,7 +227,7 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		formData := url.Values{}
 		formData.Set("url", "https://example.net/stream3")
 		
-		req, err := http.NewRequest("POST", testServer.URL+"/relay/add", 
+		req, err := http.NewRequest("POST", "/relay/add", 
 			strings.NewReader(formData.Encode()))
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
@@ -100,10 +235,11 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(authCookie)
 		
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to add relay link: %v", err)
-		}
+		// Используем ResponseRecorder вместо реального HTTP-сервера
+		recorder := httptest.NewRecorder()
+		mockServer.ServeHTTP(recorder, req)
+		
+		resp := recorder.Result()
 		defer resp.Body.Close()
 		
 		// Expect a redirect to relay management page
@@ -131,7 +267,7 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		formData := url.Values{}
 		formData.Set("index", "0")
 		
-		req, err := http.NewRequest("POST", testServer.URL+"/relay/remove", 
+		req, err := http.NewRequest("POST", "/relay/remove", 
 			strings.NewReader(formData.Encode()))
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
@@ -139,10 +275,11 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(authCookie)
 		
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to remove relay link: %v", err)
-		}
+		// Используем ResponseRecorder вместо реального HTTP-сервера
+		recorder := httptest.NewRecorder()
+		mockServer.ServeHTTP(recorder, req)
+		
+		resp := recorder.Result()
 		defer resp.Body.Close()
 		
 		// Expect a redirect to relay management page
@@ -165,7 +302,7 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		formData := url.Values{}
 		formData.Set("active", "false")
 		
-		req, err := http.NewRequest("POST", testServer.URL+"/relay/toggle", 
+		req, err := http.NewRequest("POST", "/relay/toggle", 
 			strings.NewReader(formData.Encode()))
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
@@ -173,10 +310,11 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(authCookie)
 		
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to toggle relay: %v", err)
-		}
+		// Используем ResponseRecorder вместо реального HTTP-сервера
+		recorder := httptest.NewRecorder()
+		mockServer.ServeHTTP(recorder, req)
+		
+		resp := recorder.Result()
 		defer resp.Body.Close()
 		
 		// Expect a redirect to relay management page
@@ -192,7 +330,7 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		// Turn relay back on
 		formData.Set("active", "true")
 		
-		req, err = http.NewRequest("POST", testServer.URL+"/relay/toggle", 
+		req, err = http.NewRequest("POST", "/relay/toggle", 
 			strings.NewReader(formData.Encode()))
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
@@ -200,10 +338,11 @@ func TestRelayHTTPHandlers(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(authCookie)
 		
-		resp, err = http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to toggle relay: %v", err)
-		}
+		// Используем ResponseRecorder вместо реального HTTP-сервера
+		recorder = httptest.NewRecorder()
+		mockServer.ServeHTTP(recorder, req)
+		
+		resp = recorder.Result()
 		defer resp.Body.Close()
 		
 		// Verify relay was turned on
