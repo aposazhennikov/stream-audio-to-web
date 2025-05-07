@@ -21,6 +21,7 @@ High-performance server for streaming audio files to a browser, written in Go. T
 - **Manual player control** — ability to switch tracks forward and backward through the web interface
 - **Track history tracking** — track history is available for each station
 - **Volume normalization** — automatic volume normalization across all audio tracks prevents sudden volume changes
+- **Relay functionality** — relay audio streams from HTTP/HTTPS sources with web-based management
 
 ## Requirements
 
@@ -47,10 +48,13 @@ The project has a modular architecture with a clear separation of responsibiliti
 5. **`radio/`** - Package for managing "radio stations"
    - `radio.go` - Links playlists and audio streamers, manages playback streams.
 
-6. **`web/`** - Web interface
+6. **`relay/`** - Package for relaying external audio streams
+   - `relay.go` - Handles relay functionality for HTTP/HTTPS audio sources.
+
+7. **`web/`** - Web interface
    - `index.html` - HTML page with an audio player and JavaScript for interacting with the server.
 
-7. **`entrypoint.sh`** - Script for handling access rights to audio files before launching the application.
+8. **`entrypoint.sh`** - Script for handling access rights to audio files before launching the application.
 
 ### Additional Files
 
@@ -93,6 +97,8 @@ The server can be configured through command line flags or environment variables
 | `--shuffle` / `SHUFFLE` | Enable/disable track shuffling globally  | `false`   |
 | `--per-stream-shuffle` / `PER_STREAM_SHUFFLE` | JSON string with per-stream shuffle settings | `{}` |
 | `--normalize-volume` / `NORMALIZE_VOLUME` | Enable/disable volume normalization | `true` |
+| `--relay` / `RELAY` | Enable/disable relay functionality | `false` |
+| `--relay-config` / `RELAY_CONFIG_FILE` | Path to relay configuration file | `./relay_list.json` |
 | (no flag) / `ROUTES_SHUFFLE` | Alternative for PER_STREAM_SHUFFLE with string values | `{}` |
 | (no flag) / `STATUS_PASSWORD` | Password for accessing the status page | `1234554321` |
 | (no flag) / `SENTRY_DSN` | Sentry DSN for error tracking | Empty (disabled) |
@@ -158,11 +164,14 @@ docker run -d --name audio-streamer \
   -v /path/to/audio:/app/audio \
   -v /path/to/humor:/app/humor \
   -v /path/to/science:/app/science \
+  -v /path/to/relay_data:/app/relay_data \
   -e DIRECTORY_ROUTES='{"humor":"/app/humor","science":"/app/science"}' \
   -e SHUFFLE=false \
   -e ROUTES_SHUFFLE='{"humor":"true","science":"false"}' \
   -e STATUS_PASSWORD=your_password \
   -e SENTRY_DSN=your_sentry_dsn \
+  -e RELAY=true \
+  -e RELAY_CONFIG_FILE=/app/relay_data/relay_list.json \
   audio-streamer:latest
 ```
 
@@ -200,6 +209,7 @@ services:
       - ./audio:/app/audio
       - ./humor:/app/humor
       - ./science:/app/science
+      - ./relay_data:/app/relay_data
     environment:
       - STREAM_FORMAT=mp3
       - BITRATE=128
@@ -211,6 +221,9 @@ services:
       - ROUTES_SHUFFLE={"humor":"true","science":"false"}
       - STATUS_PASSWORD=your_password
       - SENTRY_DSN=your_sentry_dsn
+      # Relay configuration
+      - RELAY=true
+      - RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
@@ -253,6 +266,11 @@ docker-compose down
 - **`/shuffle-playlist/<route>`** — manually shuffle the playlist for the specified route
 - **`/set-shuffle/<route>/on`** — enable shuffle mode for the specified route
 - **`/set-shuffle/<route>/off`** — disable shuffle mode for the specified route
+- **`/relay-management`** — web interface for managing relay streams
+- **`/relay/stream/<index>`** — endpoint for listening to a relayed stream
+- **`/relay/add`** — add a new URL to relay list
+- **`/relay/remove`** — remove a URL from relay list
+- **`/relay/toggle`** — enable or disable relay functionality
 - **`/playlist-info`** — detailed information about the playlist (for diagnostics and testing)
 - **`/healthz`** — health check endpoint that returns "OK" if the server is running
 - **`/readyz`** — readiness check endpoint for Kubernetes integration
@@ -288,6 +306,7 @@ The server has a built-in web interface for monitoring and controlling audio str
 - **Player control** — buttons for switching tracks forward and backward
 - **Track history** — list of recently played tracks for each station (up to 100 tracks)
 - **Stable station order** — stations are always displayed in the same order (alphabetical)
+- **Relay management** — access to relay management interface when relay functionality is enabled
 
 ### Using the Status Page:
 
@@ -334,6 +353,8 @@ docker run -d -p 8000:8000 \
   -e ROUTES_SHUFFLE='{"humor":"true","science":"false"}' \
   -e STATUS_PASSWORD=your_password \
   -e SENTRY_DSN=your_sentry_dsn \
+  -e RELAY=true \
+  -e RELAY_CONFIG_FILE=/app/relay_data/relay_list.json \
   audio-streamer:latest
 ```
 
@@ -345,6 +366,7 @@ The project has a modular architecture with a clear separation of responsibiliti
 - **playlist** — scanning directories, managing playlists and track history
 - **http** — HTTP server, request handlers, and status page
 - **radio** — managing "radio stations" and track playback
+- **relay** — managing relay streams from external HTTP/HTTPS sources
 
 ## Performance and Features
 
@@ -356,6 +378,7 @@ The project has a modular architecture with a clear separation of responsibiliti
 - **Shuffle mode** — randomize track playback order
 - **Track history** — keep track of 100 recently played tracks per station
 - **Volume normalization** — automatically adjusts volume levels across all audio files to provide consistent listening experience
+- **Relay functionality** — relay audio streams from HTTP/HTTPS sources with a configurable list of endpoints
 - **Comprehensive healthchecks** — for reliable container orchestration
 
 ## CI/CD with GitHub Actions
@@ -455,9 +478,13 @@ MIT
 
 # TODO 
 
+- FIX LOGGING modes error|warn|info|debug
+
 - FIX NORMALIZE AUDiO
 
 - ADD LINTER STEP TO CI/CD
+
+- FIX E2E
 
 All tasks completed:
 
@@ -492,6 +519,12 @@ All tasks completed:
   - Implemented volume level analysis and adjustments
   - Added configuration options to enable/disable normalization
   - Created unit and e2e tests for the new functionality
+
+- Add relay mode - DONE ✅
+  - Added relay functionality to stream from external HTTP/HTTPS sources
+  - Implemented web-based management interface
+  - Added configuration options to enable/disable relay feature
+  - Created persistent storage for relay configuration
 
 ## Shuffle Mode
 
@@ -656,3 +689,42 @@ The normalization process:
 6. The result is stored in a memory cache to avoid repeated analysis
 7. The audio data is streamed with the adjusted volume level
 8. The process is repeated for each audio file, creating a consistent listening experience
+
+## Relay Functionality
+
+The application includes a relay feature that allows you to stream audio content from external HTTP/HTTPS sources. This is useful when you want to include streams from other services without downloading the audio files.
+
+### Relay Features:
+
+- **Stream external sources** — relay audio streams from any HTTP/HTTPS URL
+- **Web management interface** — add, remove, and manage relay streams through a user-friendly web interface
+- **Persistent configuration** — relay list is saved to a JSON file and persists across restarts
+- **Authentication protected** — relay management is protected by the same authentication as the status page
+- **Dark/Light theme support** — web interface respects user theme preferences
+- **Integrated UI** — seamlessly integrated with the main status page
+
+### Configuring Relay:
+
+1. Enable relay functionality by setting the `RELAY` environment variable to `true`
+2. Set the path for the configuration file using `RELAY_CONFIG_FILE` (defaults to `./relay_list.json`)
+3. Mount a volume for persistent storage of the relay configuration file
+4. Access the relay management interface via link on the status page or directly at `/relay-management`
+
+### Using Relay Management:
+
+1. Navigate to `/status` and log in with your password
+2. Click on the "Relay Management" link at the top of the page
+3. Use the interface to enable/disable relay functionality
+4. Add new relay sources by entering their URLs in the provided form
+5. Listen to relay streams directly from the management interface
+6. Remove relay sources that are no longer needed
+
+### Technical Details:
+
+The relay functionality works by proxying requests to the external audio sources. When a client requests a relayed stream:
+
+1. The server establishes a connection to the source URL
+2. Audio data is read from the source in chunks
+3. These chunks are immediately forwarded to the client
+4. Headers are copied from the source to maintain format information
+5. The relay supports any HTTP/HTTPS audio stream regardless of format

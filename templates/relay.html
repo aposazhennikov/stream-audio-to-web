@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+    <header class="header">
+        <div class="theme-toggle-wrapper">
+            <div class="theme-toggle" id="theme-toggle">
+                <div class="toggle-ball">
+                    <span class="icon sun-icon">☀️</span>
+                    <span class="icon moon-icon">🌙</span>
+                </div>
+            </div>
+        </div>
+        <h1>Relay Stream Management</h1>
+    </header>
+    <div class="container">
+        <div class="relay-status-container">
+            <div class="relay-status">
+                <h2>Relay Status</h2>
+                <div class="status-indicator">
+                    <span class="status-text">Status: </span>
+                    <span class="status-value {{if .RelayActive}}active{{else}}inactive{{end}}">
+                        {{if .RelayActive}}Enabled{{else}}Disabled{{end}}
+                    </span>
+                </div>
+                <div class="button-group">
+                    <form method="post" action="/relay/toggle">
+                        <input type="hidden" name="active" value="{{if .RelayActive}}false{{else}}true{{end}}">
+                        <button type="submit" class="toggle-relay">
+                            {{if .RelayActive}}Disable Relay{{else}}Enable Relay{{end}}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="relay-streams-container">
+            <h2>Relay Streams</h2>
+            {{if .ErrorMessage}}
+            <div class="error-message">{{.ErrorMessage}}</div>
+            {{end}}
+            {{if .SuccessMessage}}
+            <div class="success-message">{{.SuccessMessage}}</div>
+            {{end}}
+            
+            <div class="add-relay-form">
+                <form method="post" action="/relay/add">
+                    <div class="form-group">
+                        <label for="relay-url">Add New Relay Stream URL:</label>
+                        <input type="text" id="relay-url" name="url" 
+                               placeholder="https://example.com/stream" required 
+                               pattern="https?://.+">
+                        <div class="form-hint">URL must start with http:// or https://</div>
+                    </div>
+                    <button type="submit" class="add-relay">Add Stream</button>
+                </form>
+            </div>
+            
+            <div class="relay-list">
+                {{if .RelayLinks}}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Index</th>
+                            <th>URL</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $index, $link := .RelayLinks}}
+                        <tr>
+                            <td>{{$index}}</td>
+                            <td class="relay-url">
+                                <a href="{{$link}}" target="_blank" rel="noopener noreferrer">{{$link}}</a>
+                            </td>
+                            <td>
+                                <div class="action-buttons">
+                                    <a href="/relay/stream/{{$index}}" 
+                                       target="_blank" 
+                                       class="listen-button">Listen</a>
+                                    <form method="post" action="/relay/remove">
+                                        <input type="hidden" name="index" value="{{$index}}">
+                                        <button type="submit" class="remove-button">Remove</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                {{else}}
+                <div class="no-data">No relay streams configured yet.</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    {{block "additional_styles" .}}
+    <style>
+        .header {
+            text-align: center;
+            padding: 2rem 0;
+            background-color: var(--color-surface);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: var(--color-secondary);
+            font-size: 2.2rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 0 0 2rem;
+            position: relative;
+            padding-bottom: 1rem;
+            display: inline-block;
+        }
+
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 4px;
+            background: var(--color-primary);
+            border-radius: 2px;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--color-text);
+            border-bottom: 2px solid var(--color-primary);
+            padding-bottom: 0.5rem;
+            display: inline-block;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem 3rem;
+        }
+
+        .relay-status-container,
+        .relay-streams-container {
+            background-color: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            margin-bottom: 1.5rem;
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .status-text {
+            font-weight: 500;
+            margin-right: 0.5rem;
+        }
+
+        .status-value {
+            padding: 0.3rem 0.8rem;
+            border-radius: 1rem;
+            font-weight: 500;
+        }
+
+        .status-value.active {
+            background-color: rgba(39, 174, 96, 0.2);
+            color: #27ae60;
+        }
+
+        .status-value.inactive {
+            background-color: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+
+        .button-group {
+            margin-top: 1rem;
+        }
+
+        button {
+            background-color: var(--color-primary);
+            color: white;
+            border: none;
+            padding: 0.7rem 1.4rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        button:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .toggle-relay {
+            background-color: var(--color-toggle);
+        }
+
+        .add-relay-form {
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background-color: rgba(52, 152, 219, 0.05);
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-primary);
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--color-text);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            background-color: var(--color-input-bg);
+            color: var(--color-text);
+            font-family: inherit;
+            font-size: 1rem;
+            transition: var(--transition);
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--color-primary);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+
+        .form-hint {
+            font-size: 0.8rem;
+            color: var(--color-text-secondary);
+            margin-top: 0.3rem;
+        }
+
+        .relay-list {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        th, td {
+            padding: 0.8rem;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--color-text);
+            background-color: rgba(52, 152, 219, 0.05);
+        }
+
+        .relay-url {
+            word-break: break-all;
+            max-width: 500px;
+        }
+
+        .relay-url a {
+            color: var(--color-primary);
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .relay-url a:hover {
+            text-decoration: underline;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .listen-button {
+            display: inline-block;
+            padding: 0.5rem 0.8rem;
+            background-color: var(--color-success);
+            color: white;
+            text-decoration: none;
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .listen-button:hover {
+            background-color: var(--color-success-dark);
+            transform: translateY(-2px);
+        }
+
+        .remove-button {
+            background-color: var(--color-error);
+            font-size: 0.85rem;
+            padding: 0.5rem 0.8rem;
+        }
+
+        .remove-button:hover {
+            background-color: var(--color-error-dark);
+        }
+
+        .error-message {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-error);
+        }
+
+        .success-message {
+            background-color: rgba(39, 174, 96, 0.1);
+            color: var(--color-success);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-success);
+        }
+
+        .no-data {
+            padding: 2rem;
+            text-align: center;
+            color: var(--color-text-secondary);
+            font-style: italic;
+            background-color: rgba(52, 152, 219, 0.02);
+            border-radius: var(--border-radius);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 1rem 2rem;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .relay-url {
+                max-width: 200px;
+            }
+            
+            th, td {
+                padding: 0.6rem;
+            }
+        }
+    </style>
+    {{end}}
+    
+    <script>
+        // Theme toggle functionality
+        document.addEventListener('DOMContentLoaded', () => {
+            const themeToggle = document.getElementById('theme-toggle');
+            
+            // Check if user preference is stored in localStorage
+            const currentTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            
+            // Toggle theme on click
+            themeToggle.addEventListener('click', () => {
+                const currentTheme = document.documentElement.getAttribute('data-theme');
+                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+            });
+        });
+    </script>
+</body>
+</html> 

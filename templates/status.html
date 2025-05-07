@@ -12,6 +12,15 @@
             </div>
         </div>
         <h1>Audio Streams Status</h1>
+        {{if .RelayEnabled}}
+        <div class="relay-management-link">
+            <a href="/relay-management" class="relay-link">
+                <span class="relay-icon">🔄</span>
+                Relay Management
+                {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
+            </a>
+        </div>
+        {{end}}
     </header>
     <div class="container">
         {{range .Streams}}
@@ -76,6 +85,46 @@
             height: 4px;
             background: var(--color-primary);
             border-radius: 2px;
+        }
+
+        .relay-management-link {
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+
+        .relay-link {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .relay-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background-color: var(--color-primary);
+            color: white;
+        }
+
+        .relay-icon {
+            margin-right: 0.5rem;
+            font-size: 1.1rem;
+        }
+
+        .relay-active-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(39, 174, 96, 0.2);
+            color: #27ae60;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
         }
 
         .container {

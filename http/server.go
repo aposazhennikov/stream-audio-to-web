@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/user/stream-audio-to-web/audio"
+	"github.com/user/stream-audio-to-web/relay"
 )
 
 var (
@@ -86,6 +88,7 @@ type Server struct {
 	trackMutex      sync.RWMutex
 	statusPassword  string // Password for accessing /status page
 	stationManager  interface { RestartPlayback(string) bool } // Interface for restarting playback
+	relayManager    *relay.RelayManager  // Manager for relay functionality
 }
 
 // NewServer creates a new HTTP server
@@ -877,8 +880,10 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title":   "Audio Stream Status",
-		"Streams": streamInfos,
+		"Title":         "Audio Stream Status",
+		"Streams":       streamInfos,
+		"RelayEnabled":  s.relayManager != nil,
+		"RelayActive":   s.relayManager != nil && s.relayManager.IsActive(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1406,4 +1411,201 @@ func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
 // SetStatusPassword sets the password for status page (used for testing)
 func (s *Server) SetStatusPassword(password string) {
 	s.statusPassword = password
+}
+
+// SetRelayManager sets the relay manager for the server
+func (s *Server) SetRelayManager(manager *relay.RelayManager) {
+	s.relayManager = manager
+	log.Printf("Relay manager set for HTTP server")
+	
+	// Configure relay routes only when relay manager is set
+	s.setupRelayRoutes()
+}
+
+// setupRelayRoutes adds relay-related routes to the router
+func (s *Server) setupRelayRoutes() {
+	// Add relay management page
+	s.router.HandleFunc("/relay-management", s.relayManagementHandler).Methods("GET")
+	
+	// API endpoints for relay management
+	s.router.HandleFunc("/relay/toggle", s.relayToggleHandler).Methods("POST")
+	s.router.HandleFunc("/relay/add", s.relayAddHandler).Methods("POST")
+	s.router.HandleFunc("/relay/remove", s.relayRemoveHandler).Methods("POST")
+	s.router.HandleFunc("/relay/stream/{index:[0-9]+}", s.relayStreamHandler).Methods("GET")
+	
+	log.Printf("Relay routes configured")
+}
+
+// Relay handler functions
+// relayManagementHandler serves the relay management UI
+func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		s.redirectToLogin(w, r)
+		return
+	}
+	
+	// Check if relay manager is set
+	if s.relayManager == nil {
+		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Load and render template
+	tmpl, err := template.ParseFiles(
+		"templates/relay.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		log.Printf("ERROR: Unable to load relay.html template: %v", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+	
+	// Get relay links from manager
+	links := s.relayManager.GetLinks()
+	
+	// Get status messages from URL query parameters
+	errorMessage := r.URL.Query().Get("error")
+	successMessage := r.URL.Query().Get("success")
+	
+	data := map[string]interface{}{
+		"Title":          "Relay Stream Management",
+		"RelayLinks":     links,
+		"RelayActive":    s.relayManager.IsActive(),
+		"ErrorMessage":   errorMessage,
+		"SuccessMessage": successMessage,
+	}
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("ERROR: Unable to execute template: %v", err)
+	}
+}
+
+// relayToggleHandler toggles relay functionality on/off
+func (s *Server) relayToggleHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	
+	// Check if relay manager is set
+	if s.relayManager == nil {
+		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Parse active state from form
+	activeStr := r.FormValue("active")
+	active, err := strconv.ParseBool(activeStr)
+	if err != nil {
+		log.Printf("ERROR: Invalid active value: %s", activeStr)
+		http.Redirect(w, r, "/relay-management?error=Invalid active value", http.StatusSeeOther)
+		return
+	}
+	
+	// Set active state
+	s.relayManager.SetActive(active)
+	
+	// Redirect back to relay management page
+	status := "enabled"
+	if !active {
+		status = "disabled"
+	}
+	
+	http.Redirect(w, r, "/relay-management?success=Relay "+status, http.StatusSeeOther)
+}
+
+// relayAddHandler adds a new relay URL
+func (s *Server) relayAddHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	
+	// Check if relay manager is set
+	if s.relayManager == nil {
+		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Parse URL from form
+	url := r.FormValue("url")
+	if url == "" {
+		http.Redirect(w, r, "/relay-management?error=URL cannot be empty", http.StatusSeeOther)
+		return
+	}
+	
+	// Add URL to relay manager
+	if err := s.relayManager.AddLink(url); err != nil {
+		log.Printf("ERROR: Failed to add relay URL: %v", err)
+		http.Redirect(w, r, "/relay-management?error="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	
+	// Redirect back to relay management page
+	http.Redirect(w, r, "/relay-management?success=Relay URL added successfully", http.StatusSeeOther)
+}
+
+// relayRemoveHandler removes a relay URL by index
+func (s *Server) relayRemoveHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	
+	// Check if relay manager is set
+	if s.relayManager == nil {
+		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Parse index from form
+	indexStr := r.FormValue("index")
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		log.Printf("ERROR: Invalid index: %s", indexStr)
+		http.Redirect(w, r, "/relay-management?error=Invalid index", http.StatusSeeOther)
+		return
+	}
+	
+	// Remove URL from relay manager
+	if err := s.relayManager.RemoveLink(index); err != nil {
+		log.Printf("ERROR: Failed to remove relay URL: %v", err)
+		http.Redirect(w, r, "/relay-management?error="+err.Error(), http.StatusSeeOther)
+		return
+	}
+	
+	// Redirect back to relay management page
+	http.Redirect(w, r, "/relay-management?success=Relay URL removed successfully", http.StatusSeeOther)
+}
+
+// relayStreamHandler streams the audio from a relay source
+func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
+	// Check if relay manager is set
+	if s.relayManager == nil {
+		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Parse index from URL
+	vars := mux.Vars(r)
+	indexStr := vars["index"]
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		log.Printf("ERROR: Invalid index: %s", indexStr)
+		http.Error(w, "Invalid index", http.StatusBadRequest)
+		return
+	}
+	
+	// Stream the relay audio
+	if err := s.relayManager.RelayAudioStream(w, r, index); err != nil {
+		log.Printf("ERROR: Failed to relay audio stream: %v", err)
+		http.Error(w, "Failed to relay audio stream: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 } 

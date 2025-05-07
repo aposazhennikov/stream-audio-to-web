@@ -18,6 +18,7 @@ services:
       - /home/shaov:/app/shaov
       - /home/troshin:/app/troshin
       - /home/test_audio:/app/test_audio
+      - ./relay_data:/app/relay_data
     environment:
       - STREAM_FORMAT=mp3
       - BITRATE=128
@@ -28,10 +29,13 @@ services:
       # - ROUTES_SHUFFLE={"humor":"true","science":"false"}
       - NORMALIZE_VOLUME=false
       - NORMALIZE_RUNTIME=off
-      - NORMALIZE_SAMPLE_WINDOWS=6
+      - NORMALIZE_SAMPLE_WINDOWS=0
       - NORMALIZE_SAMPLE_MS=200
       - STATUS_PASSWORD=1234554321
       - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
+      # Relay configuration
+      - RELAY=true
+      - RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s

@@ -21,6 +21,7 @@ import (
 	httpServer "github.com/user/stream-audio-to-web/http"
 	"github.com/user/stream-audio-to-web/playlist"
 	"github.com/user/stream-audio-to-web/radio"
+	"github.com/user/stream-audio-to-web/relay"
 )
 
 // Default configuration
@@ -34,6 +35,8 @@ const (
 	defaultBufferSize   = 65536 // 64KB
 	defaultShuffle      = false  // Shuffle tracks is disabled by default
 	defaultNormalizeVolume = true // Volume normalization is enabled by default
+	defaultRelayEnabled = false // Relay functionality disabled by default
+	defaultRelayConfigFile = "./relay_list.json" // Default path for relay configuration
 )
 
 // Application configuration
@@ -52,6 +55,8 @@ type Config struct {
 	NormalizeRuntime string           // Runtime normalization mode: "auto", "on", "off"
 	NormalizeSampleWindows int        // Number of analysis windows for normalization
 	NormalizeSampleMs int             // Duration of each analysis window in milliseconds
+	RelayEnabled     bool             // Enable relay functionality
+	RelayConfigFile  string           // Path to relay configuration file
 }
 
 // Global variables for routes
@@ -89,6 +94,10 @@ func main() {
 	log.Printf("Runtime normalization mode: %s", config.NormalizeRuntime)
 	log.Printf("Normalization sample windows: %d", config.NormalizeSampleWindows)
 	log.Printf("Normalization sample duration: %d ms", config.NormalizeSampleMs)
+	log.Printf("Relay functionality enabled: %v", config.RelayEnabled)
+	if config.RelayEnabled {
+		log.Printf("Relay configuration file: %s", config.RelayConfigFile)
+	}
 	log.Printf("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
 		log.Printf("  - Route '%s': Shuffle = %v", route, shuffle)
@@ -110,6 +119,22 @@ func main() {
 	
 	// Set radio station manager for HTTP server
 	server.SetStationManager(stationManager)
+
+	// Initialize relay manager if enabled
+	var relayManager *relay.RelayManager
+	if config.RelayEnabled {
+		log.Printf("Initializing relay manager with config file: %s", config.RelayConfigFile)
+		relayManager = relay.NewRelayManager(config.RelayConfigFile)
+		
+		// Configure default state (enabled by default when feature is enabled)
+		relayManager.SetActive(true)
+		
+		// Set relay manager for HTTP server
+		server.SetRelayManager(relayManager)
+		log.Printf("Relay manager initialized and set for HTTP server")
+	} else {
+		log.Printf("Relay functionality is disabled")
+	}
 
 	// Create minimal dummy streams for /healthz to immediately find at least one route
 	dummyStream, dummyPlaylist := createDummyStreamAndPlaylist()
@@ -386,6 +411,8 @@ func loadConfig() *Config {
 	flag.StringVar(&config.NormalizeRuntime, "normalize-runtime", "auto", "Runtime normalization mode: auto, on, off")
 	flag.IntVar(&config.NormalizeSampleWindows, "normalize-sample-windows", 6, "Number of sample windows for volume analysis")
 	flag.IntVar(&config.NormalizeSampleMs, "normalize-sample-ms", 200, "Duration of each analysis window in milliseconds")
+	flag.BoolVar(&config.RelayEnabled, "relay", defaultRelayEnabled, "Enable relay functionality")
+	flag.StringVar(&config.RelayConfigFile, "relay-config", defaultRelayConfigFile, "Path to relay configuration file")
 
 	// For mapping directories and routes we use JSON
 	var directoryRoutesJSON string
@@ -560,6 +587,21 @@ func loadConfig() *Config {
 			sentry.CaptureException(fmt.Errorf("error parsing JSON from environment variable ROUTES_SHUFFLE: %w", err))
 		}
 	}
+	
+	// Parse relay functionality settings from environment
+	if envRelay := os.Getenv("RELAY"); envRelay != "" {
+		if relay, err := strconv.ParseBool(envRelay); err == nil {
+			config.RelayEnabled = relay
+		} else {
+			log.Printf("Error parsing RELAY: %v, using default %v", err, defaultRelayEnabled)
+			sentry.CaptureException(fmt.Errorf("error parsing RELAY: %w", err))
+		}
+	}
+	
+	// Parse relay configuration file path from environment
+	if envRelayConfig := os.Getenv("RELAY_CONFIG_FILE"); envRelayConfig != "" {
+		config.RelayConfigFile = envRelayConfig
+	}
 
 	// Check for main routes (humor, science)
 	// If they don't exist - add them explicitly with leading slash /humor and /science
@@ -607,6 +649,27 @@ func loadConfig() *Config {
 			continue
 		}
 		config.DirectoryRoutes[route] = absDir
+	}
+	
+	// Get absolute path for relay configuration file
+	if config.RelayEnabled {
+		absRelayConfigFile, err := filepath.Abs(config.RelayConfigFile)
+		if err != nil {
+			log.Printf("Unable to get absolute path for relay config file %s: %s", config.RelayConfigFile, err)
+			sentry.CaptureException(fmt.Errorf("unable to get absolute path for relay config file %s: %w", config.RelayConfigFile, err))
+		} else {
+			config.RelayConfigFile = absRelayConfigFile
+		}
+		
+		// Ensure relay config directory exists
+		relayConfigDir := filepath.Dir(config.RelayConfigFile)
+		if _, err := os.Stat(relayConfigDir); os.IsNotExist(err) {
+			log.Printf("Creating relay config directory: %s", relayConfigDir)
+			if err := os.MkdirAll(relayConfigDir, 0755); err != nil {
+				log.Printf("ERROR: Unable to create relay config directory: %s", err)
+				sentry.CaptureException(fmt.Errorf("unable to create relay config directory: %w", err))
+			}
+		}
 	}
 
 	return config
