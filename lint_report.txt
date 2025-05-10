@@ -1,0 +1,830 @@
+main.go:173:2: Error return value is not checked (errcheck)
+	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	^
+main.go:552:13: Error return value is not checked (errcheck)
+	walkErr := server.Handler().(*mux.Router).Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+	           ^
+audio/normalizer.go:104:2: normalizeGainMetric is a global variable (gochecknoglobals)
+	normalizeGainMetric = promauto.NewGaugeVec(
+	^
+audio/normalizer.go:112:2: normalizeSlowTotal is a global variable (gochecknoglobals)
+	normalizeSlowTotal = promauto.NewCounter(
+	^
+audio/normalizer.go:119:2: normalizeDisabledTotal is a global variable (gochecknoglobals)
+	normalizeDisabledTotal = promauto.NewCounter(
+	^
+audio/normalizer.go:126:2: normalizeWindowsUsed is a global variable (gochecknoglobals)
+	normalizeWindowsUsed = promauto.NewGauge(
+	^
+audio/normalizer.go:137:2: analysisDurationMs is a global variable (gochecknoglobals)
+	analysisDurationMs = defaultAnalysisDurationMs
+	^
+audio/normalizer.go:139:2: analysisWindows is a global variable (gochecknoglobals)
+	analysisWindows = defaultAnalysisWindows
+	^
+audio/normalizer.go:194:5: volumeCache is a global variable (gochecknoglobals)
+var volumeCache = NewVolumeCache()
+    ^
+audio/streamer.go:511:2: lastClientCount is a global variable (gochecknoglobals)
+	lastClientCount  int
+	^
+audio/streamer.go:512:2: lastLogTime is a global variable (gochecknoglobals)
+	lastLogTime      time.Time
+	^
+audio/streamer.go:513:2: lastDelayLogTime is a global variable (gochecknoglobals)
+	lastDelayLogTime time.Time
+	^
+audio/streamer.go:675:2: trackSecondsMetric is a global variable (gochecknoglobals)
+	trackSecondsMetric *prometheus.CounterVec
+	^
+audio/streamer.go:676:2: metricMutex is a global variable (gochecknoglobals)
+	metricMutex        sync.RWMutex
+	^
+http/server.go:33:2: listenerCount is a global variable (gochecknoglobals)
+	listenerCount = prometheus.NewGaugeVec(
+	^
+http/server.go:41:2: bytesSent is a global variable (gochecknoglobals)
+	bytesSent = prometheus.NewCounterVec(
+	^
+http/server.go:50:2: trackSecondsTotal is a global variable (gochecknoglobals)
+	trackSecondsTotal = prometheus.NewCounterVec(
+	^
+playlist/playlist.go:21:5: supportedExtensions is a global variable (gochecknoglobals)
+var supportedExtensions = map[string]bool{
+    ^
+unit/audio_test.go:18:5: audioMinimumMP3Data is a global variable (gochecknoglobals)
+var audioMinimumMP3Data = []byte{
+    ^
+unit/playlist_test.go:16:2: minimumMP3Data is a global variable (gochecknoglobals)
+	minimumMP3Data = []byte{
+	^
+unit/playlist_test.go:25:2: minimumWAVData is a global variable (gochecknoglobals)
+	minimumWAVData = []byte{
+	^
+unit/playlist_test.go:47:2: minimumOGGData is a global variable (gochecknoglobals)
+	minimumOGGData = []byte{
+	^
+audio/normalizer.go:260:1: cognitive complexity 21 of func `analyzeFile` is high (> 20) (gocognit)
+func analyzeFile(filePath string) (float64, error) {
+^
+audio/streamer.go:155:1: cognitive complexity 91 of func `(*Streamer).StreamTrack` is high (> 20) (gocognit)
+func (s *Streamer) StreamTrack(trackPath string) error {
+^
+audio/streamer.go:588:1: cognitive complexity 21 of func `(*Streamer).broadcastToClients` is high (> 20) (gocognit)
+func (s *Streamer) broadcastToClients(data []byte) error {
+^
+e2e/api_test.go:105:1: cognitive complexity 22 of func `TestTrackControlEndpoints` is high (> 20) (gocognit)
+func TestTrackControlEndpoints(t *testing.T) {
+^
+e2e/relay_test.go:52:1: cognitive complexity 31 of func `TestRelayEndToEnd` is high (> 20) (gocognit)
+func TestRelayEndToEnd(t *testing.T) {
+^
+e2e/volume_normalization_test.go:515:1: cognitive complexity 21 of func `copyTestAudioFiles` is high (> 20) (gocognit)
+func copyTestAudioFiles(t *testing.T, sourceDir, quietDir, loudDir string) {
+^
+http/server.go:520:1: cognitive complexity 33 of func `(*Server).StreamAudioHandler` is high (> 20) (gocognit)
+func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
+^
+http/server.go:832:1: cognitive complexity 41 of func `(*Server).handleTrackSwitchHandler` is high (> 20) (gocognit)
+func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
+^
+http/server.go:1087:1: cognitive complexity 26 of func `(*Server).SetShuffleMode` is high (> 20) (gocognit)
+func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
+^
+main.go:66:1: cognitive complexity 29 of func `main` is high (> 20) (gocognit)
+func main() {
+^
+playlist/playlist.go:293:1: cognitive complexity 31 of func `(*Playlist).NextTrack` is high (> 20) (gocognit)
+func (p *Playlist) NextTrack() interface{} {
+^
+playlist/playlist.go:491:1: cognitive complexity 28 of func `(*Playlist).Shuffle` is high (> 20) (gocognit)
+func (p *Playlist) Shuffle() {
+^
+playlist/playlist.go:651:1: cognitive complexity 23 of func `(*Playlist).watchDirectory` is high (> 20) (gocognit)
+func (p *Playlist) watchDirectory() {
+^
+radio/radio.go:136:1: cognitive complexity 27 of func `(*RadioStation).streamLoop` is high (> 20) (gocognit)
+func (rs *RadioStation) streamLoop() {
+^
+relay/relay.go:189:1: cognitive complexity 28 of func `(*RelayManager).RelayAudioStream` is high (> 20) (gocognit)
+func (rm *RelayManager) RelayAudioStream(w http.ResponseWriter, r *http.Request, index int) error {
+^
+unit/playlist_test.go:266:1: cognitive complexity 28 of func `TestPlaylist_ShuffleMode` is high (> 20) (gocognit)
+func TestPlaylist_ShuffleMode(t *testing.T) {
+^
+unit/relay_http_test.go:31:1: cognitive complexity 25 of func `(*mockHTTPServer).ServeHTTP` is high (> 20) (gocognit)
+func (m *mockHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+^
+unit/relay_http_test.go:161:1: cognitive complexity 38 of func `TestRelayHTTPHandlers` is high (> 20) (gocognit)
+func TestRelayHTTPHandlers(t *testing.T) {
+^
+unit/stress_test.go:17:1: cognitive complexity 21 of func `TestParallelPlaylistInitialization` is high (> 20) (gocognit)
+func TestParallelPlaylistInitialization(t *testing.T) {
+^
+audio/normalizer.go:86:2: Comment should end in a period (godot)
+	// Constants for audio processing
+	^
+audio/normalizer.go:91:2: Comment should end in a period (godot)
+	// RMS level thresholds
+	^
+audio/normalizer.go:97:2: Comment should end in a period (godot)
+	// Sample conversion constants
+	^
+http/server.go:683:1: Comment should end in a period (godot)
+// statusLoginHandler displays login form page
+^
+http/server.go:713:1: Comment should end in a period (godot)
+// statusLoginSubmitHandler handles login form submission
+^
+http/server.go:764:1: Comment should end in a period (godot)
+// checkAuth checks authentication for accessing status page
+^
+http/server.go:770:1: Comment should end in a period (godot)
+// statusPageHandler handles requests for the status page
+^
+http/server.go:831:1: Comment should end in a period (godot)
+// handleTrackSwitchHandler handles track switching
+^
+http/server.go:962:1: Comment should end in a period (godot)
+// notFoundHandler handles requests to non-existent routes
+^
+http/server.go:995:1: Comment should end in a period (godot)
+// redirectToLogin redirects user to login page
+^
+http/server.go:1000:1: Comment should end in a period (godot)
+// handleShufflePlaylist handles the request to manually shuffle a playlist
+^
+http/server.go:1086:1: Comment should end in a period (godot)
+// SetShuffleMode toggles the shuffle mode for a specific stream
+^
+http/server.go:1218:1: Comment should end in a period (godot)
+// setupRelayRoutes adds relay-related routes to the router
+^
+http/server.go:1233:1: Comment should end in a period (godot)
+// relayManagementHandler serves the relay management UI
+^
+http/server.go:1280:1: Comment should end in a period (godot)
+// relayToggleHandler toggles relay functionality on/off
+^
+http/server.go:1315:1: Comment should end in a period (godot)
+// relayAddHandler adds a new relay URL
+^
+http/server.go:1347:1: Comment should end in a period (godot)
+// relayRemoveHandler removes a relay URL by index
+^
+http/server.go:1381:1: Comment should end in a period (godot)
+// relayStreamHandler streams the audio from a relay source
+^
+main.go:26:1: Comment should end in a period (godot)
+// Default configuration
+^
+playlist/playlist.go:20:1: Comment should end in a period (godot)
+// Supported audio file formats
+^
+playlist/playlist.go:27:1: Comment should end in a period (godot)
+// Track represents information about a track
+^
+playlist/playlist.go:34:1: Comment should end in a period (godot)
+// GetPath returns the path to the track
+^
+playlist/playlist.go:39:1: Comment should end in a period (godot)
+// Playlist manages the list of tracks for audio streaming
+^
+playlist/playlist.go:64:1: Comment should end in a period (godot)
+// NewPlaylist creates a new playlist from the specified directory
+^
+playlist/playlist.go:100:1: Comment should end in a period (godot)
+// Close closes the watcher
+^
+playlist/playlist.go:109:1: Comment should end in a period (godot)
+// Reload reloads the list of tracks from the directory
+^
+playlist/playlist.go:236:1: Comment should end in a period (godot)
+// minInt возвращает минимум из двух int
+^
+playlist/playlist.go:244:1: Comment should end in a period (godot)
+// maxInt возвращает максимум из двух int
+^
+playlist/playlist.go:252:1: Comment should end in a period (godot)
+// GetCurrentTrack returns the current track
+^
+playlist/playlist.go:292:1: Comment should end in a period (godot)
+// NextTrack moves to the next track and returns it
+^
+playlist/playlist.go:376:1: Comment should end in a period (godot)
+// PreviousTrack moves to the previous track and returns it
+^
+playlist/playlist.go:439:1: Comment should end in a period (godot)
+// addTrackToHistory adds a track to history
+^
+playlist/playlist.go:453:1: Comment should end in a period (godot)
+// GetHistory returns the history of played tracks
+^
+playlist/playlist.go:485:1: Comment should end in a period (godot)
+// GetStartTime returns the playlist start time
+^
+playlist/playlist.go:490:1: Comment should end in a period (godot)
+// Shuffle randomizes the track list
+^
+playlist/playlist.go:606:1: Comment should end in a period (godot)
+// GetTracks returns a copy of the track list
+^
+playlist/playlist.go:650:1: Comment should end in a period (godot)
+// watchDirectory monitors changes in the playlist directory
+^
+radio/radio.go:135:1: Comment should end in a period (godot)
+// streamLoop main track playback loop
+^
+radio/radio.go:359:1: Comment should end in a period (godot)
+// getTrackPath extracts track path from interface
+^
+relay/relay.go:19:1: Comment should end in a period (godot)
+// RelayManager handles the relay streaming functionality
+^
+relay/relay.go:28:1: Comment should end in a period (godot)
+// NewRelayManager creates a new RelayManager
+^
+relay/relay.go:50:1: Comment should end in a period (godot)
+// LoadLinksFromFile loads relay links from JSON file
+^
+relay/relay.go:68:1: Comment should end in a period (godot)
+// SaveLinksToFile saves relay links to JSON file
+^
+relay/relay.go:86:1: Comment should end in a period (godot)
+// GetLinks returns the current list of relay links
+^
+relay/relay.go:96:1: Comment should end in a period (godot)
+// AddLink adds a new link to relay list
+^
+relay/relay.go:138:1: Comment should end in a period (godot)
+// RemoveLink removes a link from relay list by index
+^
+relay/relay.go:173:1: Comment should end in a period (godot)
+// SetActive sets the active state of relay functionality
+^
+relay/relay.go:181:1: Comment should end in a period (godot)
+// IsActive returns the current active state of relay functionality
+^
+relay/relay.go:188:1: Comment should end in a period (godot)
+// RelayAudioStream relays audio stream from source to client
+^
+relay/relay.go:268:1: Comment should end in a period (godot)
+// isConnectionClosedError checks if error is result of client closing connection
+^
+audio/normalizer.go:54:1: File is not properly formatted (goimports)
+	maxSampleSeconds     = 10      // Maximum seconds to analyze in analyzeWholeFile.
+^
+http/server.go:105:1: File is not properly formatted (goimports)
+	asciiMax         = 127
+^
+radio/radio.go:15:1: File is not properly formatted (goimports)
+	shortDelayMs           = 50
+^
+slog/slog.go:8:1: File is not properly formatted (goimports)
+    return slog.Default()
+^
+audio/normalizer.go:330:1: File is not properly formatted (golines)
+	truePeakGain := math.Pow(decibelBase, (truePeakSafetyMargin-decibelMultiplier*math.Log10(totalTruePeak))/decibelMultiplier)
+^
+audio/streamer.go:108:1: File is not properly formatted (golines)
+		slog.Info("DIAGNOSTICS: Client channel", slog.Int("clientID", clientID), "status", "closed when closing streamer")
+^
+e2e/relay_test.go:182:1: File is not properly formatted (golines)
+		requestRemoveRelay, createRemoveRelayRequestErr := http.NewRequest(http.MethodPost, testServer.URL+"/relay/remove",
+^
+http/server.go:284:1: File is not properly formatted (golines)
+	slog.Info("Received healthz request", slog.String("method", r.Method), slog.String("remoteAddr", r.RemoteAddr), slog.String("uri", r.RequestURI))
+^
+main.go:269:1: File is not properly formatted (golines)
+func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) bool {
+^
+playlist/playlist.go:228:1: File is not properly formatted (golines)
+			p.logger.Info("DIAGNOSTICS: Running shuffle after reload in separate goroutine for", slog.String("directory", p.directory))
+^
+radio/radio.go:50:1: File is not properly formatted (golines)
+func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistManager, logger *slog.Logger) *RadioStation {
+^
+relay/relay.go:43:1: File is not properly formatted (golines)
+			manager.logger.Error("Failed to load relay links from file", slog.String("file", configFile), slog.String("error", loadLinksErr.Error()))
+^
+unit/audio_normalizer_test.go:715:1: File is not properly formatted (golines)
+		t.Errorf("Expected single-window gain (%.4f) to be higher than multi-window gain (%.4f) for silence-then-speech pattern",
+^
+unit/config_test.go:124:1: File is not properly formatted (golines)
+					t.Errorf("Expected key 'science' to not exist in PerStreamShuffle due to invalid value, but it does")
+^
+unit/playlist_test.go:180:1: File is not properly formatted (golines)
+					t.Fatalf("Expected next track to be different from current track. Both have path: %s", currentTrackPath.GetPath())
+^
+go.mod:31:1: local replacement are not allowed: github.com/user/stream-audio-to-web/slog (gomoddirectives)
+replace github.com/user/stream-audio-to-web/slog => ./slog
+^
+audio/normalizer.go:426:15: G115: integer overflow conversion uint16 -> int16 (gosec)
+	left := int16(leftUint16)
+	             ^
+audio/normalizer.go:427:16: G115: integer overflow conversion uint16 -> int16 (gosec)
+	right := int16(rightUint16)
+	              ^
+audio/normalizer.go:488:27: G115: integer overflow conversion int16 -> uint32 (gosec)
+		uint16L := uint16(uint32(pcmL) & 0xFFFF)
+		                        ^
+audio/normalizer.go:504:27: G115: integer overflow conversion int16 -> uint32 (gosec)
+		uint16R := uint16(uint32(pcmR) & 0xFFFF)
+		                        ^
+audio/normalizer.go:701:22: G115: integer overflow conversion uint16 -> int16 (gosec)
+		leftSample := int16(binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes:]))
+		                   ^
+audio/normalizer.go:702:23: G115: integer overflow conversion uint16 -> int16 (gosec)
+		rightSample := int16(binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes+2:]))
+		                    ^
+audio/normalizer.go:759:21: G115: integer overflow conversion uint16 -> int16 (gosec)
+		leftSample = int16(binary.LittleEndian.Uint16(buffer[offset : offset+2]))
+		                  ^
+audio/normalizer.go:760:22: G115: integer overflow conversion uint16 -> int16 (gosec)
+		rightSample = int16(binary.LittleEndian.Uint16(buffer[offset+2 : offset+4]))
+		                   ^
+audio/normalizer.go:528:3: slog: call to slog.Info missing a final value (govet)
+		slog.Info("DIAGNOSTICS: Error calculating gain for", "filePath", filePath, "error", gainErr, "using raw stream")
+		^
+audio/normalizer.go:680:2: slog: call to slog.Info missing a final value (govet)
+	slog.Info("DIAGNOSTICS: Failed to decode as MP3", "error", decodeErr, "treating as raw audio")
+	^
+audio/streamer.go:163:2: slog: call to slog.Info missing a final value (govet)
+	slog.Info("DIAGNOSTICS: Attempting to play file: %s", trackPath)
+	^
+audio/streamer.go:175:31: slog: slog.Info arg "fileInfo.Mode()" should be a string or a slog.Attr (possible missing key or value) (govet)
+		trackPath, fileInfo.Size(), fileInfo.Mode())
+		                            ^
+audio/streamer.go:185:2: slog: call to slog.Info missing a final value (govet)
+	slog.Info("DIAGNOSTICS: Attempting to open file: %s", trackPath)
+	^
+audio/streamer.go:198:3: slog: call to slog.Info missing a final value (govet)
+		slog.Info("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
+		^
+audio/streamer.go:221:78: slog: slog.Info arg "tagSize" should be a string or a slog.Attr (possible missing key or value) (govet)
+			slog.Info("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
+			                                                                          ^
+audio/streamer.go:223:54: slog: slog.Info arg "seekErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+				slog.Info("WARNING: Error skipping ID3 tag: %v", seekErr)
+				                                                 ^
+audio/streamer.go:227:54: slog: slog.Info arg "seekErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+				slog.Info("WARNING: Error seeking to start: %v", seekErr)
+				                                                 ^
+audio/streamer.go:238:67: slog: slog.Info arg "posErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+				slog.Info("WARNING: Error getting current file position: %v", posErr)
+				                                                              ^
+audio/streamer.go:242:63: slog: slog.Info arg "seekErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+					slog.Info("WARNING: Error seeking to end for ID3v1: %v", seekErr)
+					                                                         ^
+audio/streamer.go:246:57: slog: slog.Info arg "readErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+						slog.Info("WARNING: Error reading ID3v1 tag: %v", readErr)
+						                                                  ^
+audio/streamer.go:249:94: slog: slog.Info arg "id3v1TagSize" should be a string or a slog.Attr (possible missing key or value) (govet)
+						slog.Info("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last %d bytes", id3v1TagSize)
+						                                                                                       ^
+audio/streamer.go:255:64: slog: slog.Info arg "seekErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+						slog.Info("WARNING: Error seeking back to position: %v", seekErr)
+						                                                         ^
+audio/streamer.go:277:3: slog: call to slog.Info missing a final value (govet)
+		slog.Info("DIAGNOSTICS: Starting to read file %s", trackPath)
+		^
+audio/streamer.go:284:28: slog: slog.Info arg "effectiveFileSize" should be a string or a slog.Attr (possible missing key or value) (govet)
+					trackPath, bytesRead, effectiveFileSize)
+					                      ^
+audio/streamer.go:292:5: slog: call to slog.Info missing a final value (govet)
+				slog.Info("DIAGNOSTICS: End of file %s reached", trackPath)
+				^
+audio/streamer.go:315:65: slog: slog.Info arg "broadcastErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+				slog.Info("DIAGNOSTICS: ERROR sending data to clients: %v", broadcastErr)
+				                                                            ^
+audio/streamer.go:331:6: slog: slog.Info arg "delayMs" should be a string or a slog.Attr (possible missing key or value) (govet)
+					delayMs, n, s.bitrate)
+					^
+audio/streamer.go:341:28: slog: slog.Info arg "effectiveFileSize" should be a string or a slog.Attr (possible missing key or value) (govet)
+					trackPath, bytesRead, effectiveFileSize)
+					                      ^
+audio/streamer.go:348:26: slog: slog.Info arg "duration.Seconds()" should be a string or a slog.Attr (possible missing key or value) (govet)
+			trackPath, bytesRead, duration.Seconds())
+			                      ^
+audio/streamer.go:355:5: slog: slog.Info arg "duration.Seconds()" should be a string or a slog.Attr (possible missing key or value) (govet)
+				duration.Seconds(), routeName)
+				^
+audio/streamer.go:360:66: slog: slog.Info arg "pauseMs" should be a string or a slog.Attr (possible missing key or value) (govet)
+		slog.Info("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
+		                                                               ^
+audio/streamer.go:365:4: slog: call to slog.Info missing a final value (govet)
+			slog.Info("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
+			^
+audio/streamer.go:379:67: slog: slog.Info arg "normErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+			slog.Info("DIAGNOSTICS: ERROR during audio normalization: %v", normErr)
+			                                                               ^
+audio/streamer.go:394:2: slog: call to slog.Info missing a final value (govet)
+	slog.Info("DIAGNOSTICS: Starting to read normalized audio data from %s", trackPath)
+	^
+audio/streamer.go:400:4: slog: call to slog.Info missing a final value (govet)
+			slog.Info("DIAGNOSTICS: Playback of %s interrupted", trackPath)
+			^
+audio/streamer.go:409:4: slog: call to slog.Info missing a final value (govet)
+			slog.Info("DIAGNOSTICS: End of normalized audio data reached for %s", trackPath)
+			^
+audio/streamer.go:415:5: slog: call to slog.Info missing a final value (govet)
+				slog.Info("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
+				^
+audio/streamer.go:419:70: slog: slog.Info arg "readErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+			slog.Info("DIAGNOSTICS: ERROR reading normalized audio data: %v", readErr)
+			                                                                  ^
+audio/streamer.go:437:64: slog: slog.Info arg "broadcastErr" should be a string or a slog.Attr (possible missing key or value) (govet)
+			slog.Info("DIAGNOSTICS: ERROR sending data to clients: %v", broadcastErr)
+			                                                            ^
+audio/streamer.go:453:5: slog: slog.Info arg "delayMs" should be a string or a slog.Attr (possible missing key or value) (govet)
+				delayMs, n, s.bitrate)
+				^
+audio/streamer.go:462:4: slog: call to slog.Info missing a final value (govet)
+			slog.Info("DIAGNOSTICS: Playback of %s interrupted during delay", trackPath)
+			^
+audio/streamer.go:469:25: slog: slog.Info arg "duration.Seconds()" should be a string or a slog.Attr (possible missing key or value) (govet)
+		trackPath, bytesRead, duration.Seconds())
+		                      ^
+audio/streamer.go:476:4: slog: slog.Info arg "duration.Seconds()" should be a string or a slog.Attr (possible missing key or value) (govet)
+			duration.Seconds(), routeName)
+			^
+e2e/volume_normalization_test.go:551:7: shadow: declaration of "err" shadows declaration at line 517 (govet)
+			if err := os.WriteFile(dest, data, 0644); err != nil {
+			   ^
+e2e/volume_normalization_test.go:558:7: shadow: declaration of "err" shadows declaration at line 517 (govet)
+			if err := os.WriteFile(dest, data, 0644); err != nil {
+			   ^
+http/server.go:1371:5: shadow: declaration of "err" shadows declaration at line 1363 (govet)
+	if err := s.relayManager.RemoveLink(index); err != nil {
+	   ^
+http/server.go:1400:5: shadow: declaration of "err" shadows declaration at line 1392 (govet)
+	if err := s.relayManager.RelayAudioStream(w, r, index); err != nil {
+	   ^
+unit/config_test.go:39:19: shadow: declaration of "err" shadows declaration at line 34 (govet)
+				shuffleValue, err := strconv.ParseBool(v)
+				              ^
+unit/relay_http_test.go:52:6: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		if err := r.ParseForm(); err != nil {
+		   ^
+unit/relay_http_test.go:67:6: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		if err := m.relayManager.AddLink(url); err != nil {
+		   ^
+unit/relay_http_test.go:80:6: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		if err := r.ParseForm(); err != nil {
+		   ^
+unit/relay_http_test.go:89:10: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		index, err := strtoInt(indexStr)
+		       ^
+unit/relay_http_test.go:96:6: shadow: declaration of "err" shadows declaration at line 89 (govet)
+		if err := m.relayManager.RemoveLink(index); err != nil {
+		   ^
+unit/relay_http_test.go:109:6: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		if err := r.ParseForm(); err != nil {
+		   ^
+unit/relay_http_test.go:118:11: shadow: declaration of "err" shadows declaration at line 33 (govet)
+		active, err := strToBool(activeStr)
+		        ^
+unit/relay_test.go:52:5: shadow: declaration of "err" shadows declaration at line 47 (govet)
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
+	   ^
+unit/relay_test.go:73:5: shadow: declaration of "err" shadows declaration at line 47 (govet)
+	if err := manager.AddLink(newLink); err != nil {
+	   ^
+unit/relay_test.go:84:5: shadow: declaration of "err" shadows declaration at line 47 (govet)
+	if err := json.Unmarshal(fileData, &savedLinks); err != nil {
+	   ^
+e2e/volume_normalization_test.go:243:3: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+		for i := 0; i < len(sample)/2; i++ {
+		^
+e2e/volume_normalization_test.go:810:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < sampleRate; i++ {
+	^
+e2e/volume_normalization_test.go:859:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < sampleRate; i++ {
+	^
+http/server.go:229:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < len(s); i++ {
+	^
+http/server.go:492:3: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+		for attempt := 0; attempt < 3; attempt++ {
+		^
+unit/audio_normalizer_test.go:356:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < numSamples; i++ {
+	^
+unit/audio_normalizer_test.go:559:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < n; i++ {
+	^
+unit/audio_normalizer_test.go:614:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < numSamples; i++ {
+	^
+unit/audio_normalizer_test.go:772:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for second := 0; second < 5; second++ {
+	^
+unit/audio_normalizer_test.go:830:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < sampleRate; i++ {
+	^
+unit/audio_normalizer_test.go:967:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < numSamples; i++ {
+	^
+unit/audio_test.go:56:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < 5; i++ {
+	^
+unit/audio_test.go:79:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < 3; i++ {
+	^
+unit/audio_test.go:102:2: for loop can be changed to use an integer range (Go 1.22+) (intrange)
+	for i := 0; i < clientCount; i++ {
+	^
+http/server.go:1050:57: odd number of arguments passed as key-value pairs for logging (loggercheck)
+				slog.Error("ERROR: Shuffle operation panicked: %v", r)
+				                                                    ^
+http/server.go:1161:58: odd number of arguments passed as key-value pairs for logging (loggercheck)
+					slog.Error("ERROR: Shuffle operation panicked: %v", r)
+					                                                    ^
+audio/normalizer.go:666:32: Magic number: 8000, in <argument> detected (mnd)
+		buffer := make([][2]float64, 8000)
+		                             ^
+audio/normalizer.go:698:23: Magic number: 3, in <operation> detected (mnd)
+		if (i*pcmFrameBytes+3) >= n || (i*pcmFrameBytes+2) >= n {
+		                    ^
+audio/normalizer.go:708:10: Magic number: 0.1, in <return> detected (mnd)
+		return 0.1, nil
+		       ^
+main.go:424:40: Magic number: 2, in <argument> detected (mnd)
+			parts := strings.SplitN(route, ":", 2)
+			                                    ^
+main.go:425:21: Magic number: 2, in <condition> detected (mnd)
+			if len(parts) == 2 {
+			                 ^
+main.go:452:41: Magic number: 2, in <argument> detected (mnd)
+		parts := strings.SplitN(setting, ":", 2)
+		                                      ^
+main.go:453:20: Magic number: 2, in <condition> detected (mnd)
+		if len(parts) == 2 {
+		                 ^
+audio/streamer.go:210:1: `if !s.normalizeVolume` has complex nested blocks (complexity: 34) (nestif)
+	if !s.normalizeVolume {
+^
+http/server.go:1142:1: `if !shuffleEnabled` has complex nested blocks (complexity: 6) (nestif)
+	if !shuffleEnabled {
+^
+unit/config_test.go:32:1: `if envRouteShuffle != ""` has complex nested blocks (complexity: 5) (nestif)
+	if envRouteShuffle := os.Getenv("ROUTES_SHUFFLE"); envRouteShuffle != "" {
+^
+unit/playlist_test.go:176:1: `if nextTrack == currentTrack` has complex nested blocks (complexity: 6) (nestif)
+	if nextTrack == currentTrack {
+^
+audio/streamer.go:270:11: error-format: fmt.Errorf can be replaced with errors.New (perfsprint)
+			return fmt.Errorf("failed to get buffer from pool")
+			       ^
+audio/streamer.go:387:10: error-format: fmt.Errorf can be replaced with errors.New (perfsprint)
+		return fmt.Errorf("failed to get buffer from pool")
+		       ^
+audio/normalizer.go:221:11: var-declaration: should omit type float64 from declaration of var gain; it will be inferred from the right-hand side (revive)
+	var gain float64 = 1.0
+	         ^
+e2e/api_test.go:141:23: unused-parameter: parameter 'req' seems to be unused, consider removing or renaming it as _ (revive)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		                    ^
+e2e/relay_test.go:27:58: unused-parameter: parameter 'r' seems to be unused, consider removing or renaming it as _ (revive)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	                                                        ^
+e2e/shuffle_test.go:16:28: unused-parameter: parameter 't' seems to be unused, consider removing or renaming it as _ (revive)
+func getBaseURLAndPassword(t *testing.T) (string, string) {
+                           ^
+e2e/status_page_test.go:27:23: unused-parameter: parameter 'req' seems to be unused, consider removing or renaming it as _ (revive)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		                    ^
+e2e/status_page_test.go:102:23: unused-parameter: parameter 'req' seems to be unused, consider removing or renaming it as _ (revive)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		                    ^
+e2e/status_page_test.go:135:23: unused-parameter: parameter 'req' seems to be unused, consider removing or renaming it as _ (revive)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		                    ^
+http/server.go:372:56: unused-parameter: parameter 'r' seems to be unused, consider removing or renaming it as _ (revive)
+func (s *Server) streamsHandler(w http.ResponseWriter, r *http.Request) {
+                                                       ^
+playlist/playlist.go:329:6: redefines-builtin-id: redefinition of the built-in function max (revive)
+					max := big.NewInt(int64(i + 1))
+					^
+playlist/playlist.go:546:3: redefines-builtin-id: redefinition of the built-in function max (revive)
+		max := big.NewInt(int64(i + 1))
+		^
+radio/radio.go:37:6: exported: type name will be used as radio.RadioStation by other packages, and that stutters; consider calling this Station (revive)
+type RadioStation struct {
+     ^
+radio/radio.go:172:11: superfluous-else: if block ends with a continue statement, so drop this else and outdent its block (revive)
+			} else {
+				// If after several attempts playlist is still empty, switch to long wait mode
+				rs.logger.Info("Playlist is empty. Switching to wait mode...", slog.String("route", rs.route))
+				// Don't send to Sentry - this is an informational message
+
+				// Wait longer between checks to save resources
+				time.Sleep(longWaitSec * time.Second)
+
+				// Reset counter for new series of checks
+				consecutiveEmptyTracks = 0
+				continue
+			}
+radio/radio.go:265:6: exported: type name will be used as radio.RadioStationManager by other packages, and that stutters; consider calling this StationManager (revive)
+type RadioStationManager struct {
+     ^
+relay/relay.go:20:6: exported: type name will be used as relay.RelayManager by other packages, and that stutters; consider calling this Manager (revive)
+type RelayManager struct {
+     ^
+unit/audio_normalizer_test.go:523:11: var-declaration: should omit type float64 from declaration of var gain; it will be inferred from the right-hand side (revive)
+	var gain float64 = 1.0
+	         ^
+unit/audio_normalizer_test.go:632:25: unused-parameter: parameter 't' seems to be unused, consider removing or renaming it as _ (revive)
+func calculateOutputRMS(t *testing.T, data []byte) float64 {
+                        ^
+unit/http_test.go:24:42: unused-parameter: parameter 'clientID' seems to be unused, consider removing or renaming it as _ (revive)
+func (m *mockStreamHandler) RemoveClient(clientID int) {
+                                         ^
+audio/normalizer.go:150:2: global logger should not be used (sloglint)
+	slog.Info(
+	^
+audio/normalizer.go:178:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Using cached gain factor", "gain", gain, "filePath", filePath)
+		^
+audio/normalizer.go:190:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
+	^
+audio/normalizer.go:239:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: Analysis error for", "filePath", filePath, "error", analysisErr, "using gain", 1.0)
+			^
+audio/normalizer.go:244:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
+		^
+audio/normalizer.go:255:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
+	^
+audio/normalizer.go:292:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: Analysis timeout after", "windowCount", windowCount)
+			^
+audio/normalizer.go:383:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Gain too low", "gainFactor", gainFactor, "audioGainThreshold", audioGainThreshold)
+		^
+audio/normalizer.go:577:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Streaming raw MP3 data from", "filePath", filePath)
+	^
+audio/normalizer.go:594:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: Pipe closed during raw streaming of", "filePath", filePath, "stopping", writeErr)
+			^
+audio/streamer.go:89:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Volume normalization", slog.Bool("enabled", enabled))
+	^
+audio/streamer.go:114:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Streamer completely closed")
+	^
+audio/streamer.go:125:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Quit channel already closed, skipping closure")
+		^
+audio/streamer.go:140:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Stopping current track without closing client connections")
+	^
+audio/streamer.go:146:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Current track stopped, buffer cleared")
+	^
+audio/streamer.go:168:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: ERROR checking file %s: %v", trackPath, statErr)
+		^
+audio/streamer.go:174:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: File %s exists, size: %d bytes, access rights: %v",
+	^
+audio/streamer.go:188:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: ERROR opening file %s: %v", trackPath, openErr)
+		^
+audio/streamer.go:200:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Failed to update current track information: channel full")
+		^
+audio/streamer.go:229:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
+			^
+audio/streamer.go:283:5: global logger should not be used (sloglint)
+				slog.Info("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)",
+				^
+audio/streamer.go:296:5: global logger should not be used (sloglint)
+				slog.Info("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, readErr)
+				^
+audio/streamer.go:330:5: global logger should not be used (sloglint)
+				slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
+				^
+audio/streamer.go:340:5: global logger should not be used (sloglint)
+				slog.Info("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)",
+				^
+audio/streamer.go:347:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)",
+		^
+audio/streamer.go:354:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
+			^
+audio/streamer.go:452:4: global logger should not be used (sloglint)
+			slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
+			^
+audio/streamer.go:468:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Playback of %s completed (read %d bytes in %.2f sec)",
+	^
+audio/streamer.go:475:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
+		^
+audio/streamer.go:685:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric")
+	^
+http/server.go:136:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: trackSecondsTotal metric passed to audio package")
+	^
+http/server.go:138:2: global logger should not be used (sloglint)
+	slog.Info("HTTP server created, stream format: %s, max clients: %d", streamFormat, maxClients)
+	^
+http/server.go:157:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Starting audio stream registration", slog.String("route", route))
+	^
+http/server.go:165:3: global logger should not be used (sloglint)
+		slog.Info("Fixed route during registration", slog.String("route", route))
+		^
+http/server.go:168:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Adding stream to streams map", slog.String("route", route))
+	^
+http/server.go:170:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
+	^
+http/server.go:175:3: global logger should not be used (sloglint)
+		slog.Info("DIAGNOSTICS: Stream for route successfully added to streams map", slog.String("route", route))
+		^
+http/server.go:177:3: global logger should not be used (sloglint)
+		slog.Error("ERROR: Stream for route was not added to streams map!", slog.String("route", route))
+		^
+http/server.go:182:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: HTTP handler registered for route", slog.String("route", route))
+	^
+http/server.go:185:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Starting goroutine to track current track", slog.String("route", route))
+	^
+http/server.go:188:2: global logger should not be used (sloglint)
+	slog.Info("DIAGNOSTICS: Audio stream for route successfully registered", slog.String("route", route))
+	^
+http/server.go:278:2: global logger should not be used (sloglint)
+	slog.Info("HTTP routes configured", slog.String("status", "done"))
+	^
+http/server.go:297:3: global logger should not be used (sloglint)
+		slog.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
+		^
+http/server.go:299:3: global logger should not be used (sloglint)
+		slog.Info("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
+		^
+http/server.go:314:4: global logger should not be used (sloglint)
+			slog.Error("Failed to write healthz response", slog.String("error", writeErr.Error()))
+			^
+http/server.go:325:2: global logger should not be used (sloglint)
+	slog.Info("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	^
+http/server.go:349:2: global logger should not be used (sloglint)
+	slog.Info("Readyz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
+	^
+http/server.go:357:4: global logger should not be used (sloglint)
+			slog.Error("Failed to write readyz response", slog.String("error", writeErr.Error()))
+			^
+http/server.go:368:2: global logger should not be used (sloglint)
+	slog.Info("Sent successful readyz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	^
+http/server.go:404:3: global logger should not be used (sloglint)
+		slog.Error("Failed to encode streams response", slog.String("error", encodeErr.Error()))
+		^
+playlist/playlist.go:190:17: SA4010: this result of append is never used, except maybe in other appends (staticcheck)
+			trackNames = append(trackNames, track.Name)
+			             ^
+unit/audio_test.go:62:14: SA4010: this result of append is never used, except maybe in other appends (staticcheck)
+		channels = append(channels, ch)
+		           ^
+unit/playlist_test.go:312:6: S1005: unnecessary assignment to the blank identifier (staticcheck)
+	for _ = range regularTracks {
+	    ^
+unit/playlist_test.go:357:6: S1005: unnecessary assignment to the blank identifier (staticcheck)
+	for _ = range shuffleTracks {
+	    ^
+audio/streamer.go:665:6: func minInt is unused (unused)
+func minInt(a, b int) int {
+     ^
+playlist/playlist.go:245:6: func maxInt is unused (unused)
+func maxInt(a, b int) int {
+     ^
+267 issues:
+* errcheck: 2
+* gochecknoglobals: 20
+* gocognit: 19
+* godot: 50
+* goimports: 4
+* golines: 11
+* gomoddirectives: 1
+* gosec: 8
+* govet: 50
+* intrange: 14
+* loggercheck: 2
+* mnd: 7
+* nestif: 4
+* perfsprint: 2
+* revive: 17
+* sloglint: 50
+* staticcheck: 4
+* unused: 2

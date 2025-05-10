@@ -1,4 +1,4 @@
-package unit
+package unit_test
 
 import (
 	"net/http"
@@ -79,7 +79,7 @@ func TestHealthzEndpoint(t *testing.T) {
 	server := httpServer.NewServer("mp3", 10)
 
 	// Create test HTTP request
-	req, err := http.NewRequest("GET", "/healthz", nil)
+	req, err := http.NewRequest(http.MethodGet, "/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestReadyzEndpoint(t *testing.T) {
 	server := httpServer.NewServer("mp3", 10)
 
 	// Create test HTTP request
-	req, err := http.NewRequest("GET", "/readyz", nil)
+	req, err := http.NewRequest(http.MethodGet, "/readyz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,4 +260,4 @@ func TestSetShuffleMode(t *testing.T) {
 			}
 		})
 	}
-} 
+}

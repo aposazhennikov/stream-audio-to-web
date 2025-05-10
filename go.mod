@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/client_golang v1.19.0
 	github.com/stretchr/testify v1.8.2
 	go.uber.org/goleak v1.3.0
-	golang.org/x/sync v0.6.0
+	golang.org/x/text v0.14.0
 )
 
 require (
@@ -24,7 +24,8 @@ require (
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/user/stream-audio-to-web/slog => ./slog

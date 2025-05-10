@@ -1,4 +1,4 @@
-package unit
+package unit_test
 
 import (
 	"errors"
@@ -10,19 +10,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/user/stream-audio-to-web/radio"
+	"github.com/user/stream-audio-to-web/slog"
 )
 
 // MockAudioStreamer implements radio.AudioStreamer for testing
 type MockAudioStreamer struct {
-	streamTrackCalls      int32  // Number of times StreamTrack was called
-	stopCurrentTrackCalls int32  // Number of times StopCurrentTrack was called
-	closeCalls            int32  // Number of times Close was called
-	shouldStreamFail      bool   // If true, StreamTrack returns an error
-	currentTrack          string // Current track being streamed
-	streaming             atomic.Bool // Currently streaming
-	streamingMutex        sync.Mutex  // Mutex to coordinate streaming operations
+	streamTrackCalls      int32         // Number of times StreamTrack was called
+	stopCurrentTrackCalls int32         // Number of times StopCurrentTrack was called
+	closeCalls            int32         // Number of times Close was called
+	shouldStreamFail      bool          // If true, StreamTrack returns an error
+	currentTrack          string        // Current track being streamed
+	streaming             atomic.Bool   // Currently streaming
+	streamingMutex        sync.Mutex    // Mutex to coordinate streaming operations
 	streamComplete        chan struct{} // Channel to signal when streaming is complete
-	closed                bool // Whether the streamer is closed
+	closed                bool          // Whether the streamer is closed
 }
 
 func NewMockAudioStreamer() *MockAudioStreamer {
@@ -35,32 +36,32 @@ func NewMockAudioStreamer() *MockAudioStreamer {
 
 func (m *MockAudioStreamer) StreamTrack(trackPath string) error {
 	atomic.AddInt32(&m.streamTrackCalls, 1)
-	
+
 	m.streamingMutex.Lock()
 	m.currentTrack = trackPath
 	m.streaming.Store(true)
-	
+
 	// Create a new streamComplete channel if it was closed
 	if m.streamComplete == nil {
 		m.streamComplete = make(chan struct{})
 	}
-	
+
 	// Keep a local reference to the channel in case it gets replaced during execution
 	streamCompleteCh := m.streamComplete
 	m.streamingMutex.Unlock()
-	
+
 	// Block until cancelled or we manually complete, with a timeout to prevent test hangs
 	select {
 	case <-streamCompleteCh:
 		// Streaming completed normally
-	case <-time.After(5 * time.Second): 
+	case <-time.After(5 * time.Second):
 		// Timeout to prevent test hangs
 	}
-	
+
 	m.streamingMutex.Lock()
 	m.streaming.Store(false)
 	m.streamingMutex.Unlock()
-	
+
 	if m.shouldStreamFail {
 		return errors.New("mock stream failure")
 	}
@@ -69,12 +70,12 @@ func (m *MockAudioStreamer) StreamTrack(trackPath string) error {
 
 func (m *MockAudioStreamer) StopCurrentTrack() {
 	atomic.AddInt32(&m.stopCurrentTrackCalls, 1)
-	
+
 	m.streamingMutex.Lock()
 	if !m.closed && m.streamComplete != nil {
 		// Signal StreamTrack to stop blocking
 		close(m.streamComplete)
-		
+
 		// Make a new channel for next streaming operation
 		m.streamComplete = make(chan struct{})
 	}
@@ -84,29 +85,28 @@ func (m *MockAudioStreamer) StopCurrentTrack() {
 
 func (m *MockAudioStreamer) Close() {
 	atomic.AddInt32(&m.closeCalls, 1)
-	
+
 	m.streamingMutex.Lock()
 	defer m.streamingMutex.Unlock()
-	
+
 	// Signal StreamTrack to stop if it's running
 	if !m.closed && m.streamComplete != nil {
 		close(m.streamComplete)
 		m.streamComplete = nil
 	}
-	
+
 	m.closed = true
 	m.streaming.Store(false)
 }
 
 // MockPlaylistManager implements radio.PlaylistManager for testing
 type MockPlaylistManager struct {
-	tracks                []string
-	currentIndex          int
-	getCurrentTrackCalls  int32
-	nextTrackCalls        int32
-	previousTrackCalls    int32
-	mutex                 sync.Mutex
-	nextTrackHandler      func()
+	tracks               []string
+	currentIndex         int
+	getCurrentTrackCalls int32
+	nextTrackCalls       int32
+	previousTrackCalls   int32
+	nextTrackHandler     func()
 }
 
 func NewMockPlaylistManager(tracks []string) *MockPlaylistManager {
@@ -119,23 +119,23 @@ func NewMockPlaylistManager(tracks []string) *MockPlaylistManager {
 // GetCurrentTrack returns the current track from the mock playlist
 func (m *MockPlaylistManager) GetCurrentTrack() interface{} {
 	atomic.AddInt32(&m.getCurrentTrackCalls, 1)
-	
+
 	if len(m.tracks) == 0 {
 		return nil
 	}
-	
+
 	return m.tracks[m.currentIndex]
 }
 
 // NextTrack moves to the next track in the mock playlist
 func (m *MockPlaylistManager) NextTrack() interface{} {
 	atomic.AddInt32(&m.nextTrackCalls, 1)
-	
+
 	// Call the handler if set
 	if m.nextTrackHandler != nil {
 		m.nextTrackHandler()
 	}
-	
+
 	m.currentIndex = (m.currentIndex + 1) % len(m.tracks)
 	return m.tracks[m.currentIndex]
 }
@@ -143,17 +143,17 @@ func (m *MockPlaylistManager) NextTrack() interface{} {
 // PreviousTrack moves to the previous track in the mock playlist
 func (m *MockPlaylistManager) PreviousTrack() interface{} {
 	atomic.AddInt32(&m.previousTrackCalls, 1)
-	
+
 	if len(m.tracks) == 0 {
 		return nil
 	}
-	
+
 	if m.currentIndex > 0 {
 		m.currentIndex--
 	} else {
 		m.currentIndex = len(m.tracks) - 1
 	}
-	
+
 	return m.tracks[m.currentIndex]
 }
 
@@ -161,36 +161,36 @@ func (m *MockPlaylistManager) PreviousTrack() interface{} {
 func TestRadioStationPlayback(t *testing.T) {
 	streamer := NewMockAudioStreamer()
 	playlist := NewMockPlaylistManager([]string{"/path/to/track1.mp3", "/path/to/track2.mp3"})
-	
+
 	// Create a radio station with the mock streamer and playlist
-	rs := radio.NewRadioStation("/test", streamer, playlist)
-	
+	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+
 	// Start the radio station in a goroutine
 	go rs.Start()
-	
+
 	// Allow time for the station to start and play the first track
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Verify that the station is streaming
 	assert.True(t, streamer.IsStreaming(), "Streaming should be active")
-	
+
 	// Check that streamTrackCalls was incremented
 	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer.streamTrackCalls), "StreamTrack should be called once")
-	
+
 	// Stop the radio station
 	t.Log("Stopping radio station /test during playback")
 	rs.Stop()
-	
+
 	// Allow time for the station to stop
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Manually set streaming to false since we're mocking
 	streamer.SetStreaming(false)
-	
+
 	// Explicitly stop the streamer to ensure any blocking goroutines are released
 	streamer.StopCurrentTrack()
 	streamer.Close()
-	
+
 	// Verify that streaming has stopped
 	assert.False(t, streamer.IsStreaming(), "Streaming should be stopped")
 }
@@ -199,34 +199,34 @@ func TestRadioStationPlayback(t *testing.T) {
 func TestRadioStationRestartPlayback(t *testing.T) {
 	streamer := NewMockAudioStreamer()
 	playlist := NewMockPlaylistManager([]string{"/path/to/track1.mp3", "/path/to/track2.mp3"})
-	
+
 	// Create a new NextTrackCalled channel to track when NextTrack is called
 	nextTrackCalled := make(chan struct{}, 1)
 	playlist.nextTrackHandler = func() {
 		nextTrackCalled <- struct{}{}
 	}
-	
+
 	// Create a radio station with the mock streamer and playlist
-	rs := radio.NewRadioStation("/test", streamer, playlist)
-	
+	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+
 	// Start the radio station in a goroutine
 	go rs.Start()
-	
+
 	// Allow time for the station to start and play the first track
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Verify that the station is streaming
 	assert.True(t, streamer.IsStreaming(), "Streaming should be active")
-	
+
 	// Simulate track completion and restart
 	streamer.CompleteCurrentTrack()
-	
+
 	// Send the restart signal immediately
 	rs.RestartPlayback()
-	
+
 	// Allow time for restart signal to be processed
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Clear any existing nextTrackCalled signals
 	select {
 	case <-nextTrackCalled:
@@ -234,7 +234,7 @@ func TestRadioStationRestartPlayback(t *testing.T) {
 	default:
 		// channel already empty
 	}
-	
+
 	// Verify that NextTrack was not called
 	select {
 	case <-nextTrackCalled:
@@ -242,11 +242,11 @@ func TestRadioStationRestartPlayback(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		// This is the expected path - timeout means NextTrack wasn't called
 	}
-	
+
 	// Stop the radio station
 	t.Log("Stopping radio station /test during playback")
 	rs.Stop()
-	
+
 	// Explicitly stop the streamer to ensure any blocking goroutines are released
 	streamer.StopCurrentTrack()
 	streamer.Close()
@@ -257,31 +257,31 @@ func TestRadioStationErrorHandling(t *testing.T) {
 	// Create mock streamer and playlist with streaming error
 	streamer := NewMockAudioStreamer()
 	streamer.shouldStreamFail = true
-	
+
 	tracks := []string{"/path/to/track1.mp3", "/path/to/track2.mp3"}
 	playlist := NewMockPlaylistManager(tracks)
-	
+
 	// Create a radio station
-	station := radio.NewRadioStation("/test", streamer, playlist)
-	
+	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+
 	// Start the station
 	station.Start()
-	
+
 	// Give it some time to start processing
 	time.Sleep(200 * time.Millisecond)
-	
+
 	// Trigger completion with error
 	streamer.StopCurrentTrack()
-	
+
 	// Give it time to process the error and try the next track
 	time.Sleep(200 * time.Millisecond)
-	
+
 	// Verify that next track was attempted after error
-	assert.Equal(t, int32(1), atomic.LoadInt32(&playlist.nextTrackCalls), 
+	assert.Equal(t, int32(1), atomic.LoadInt32(&playlist.nextTrackCalls),
 		"NextTrack should be called after streaming error")
-	assert.Equal(t, int32(2), atomic.LoadInt32(&streamer.streamTrackCalls), 
+	assert.Equal(t, int32(2), atomic.LoadInt32(&streamer.streamTrackCalls),
 		"StreamTrack should be called again after error")
-	
+
 	// Clean up
 	station.Stop()
 }
@@ -291,24 +291,24 @@ func TestRadioStationEmptyPlaylist(t *testing.T) {
 	// Create mock streamer and empty playlist
 	streamer := NewMockAudioStreamer()
 	playlist := NewMockPlaylistManager([]string{})
-	
+
 	// Create a radio station
-	station := radio.NewRadioStation("/test", streamer, playlist)
-	
+	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+
 	// Start the station
 	station.Start()
-	
+
 	// Give it some time to try processing
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Verify that no streaming occurred
-	assert.Equal(t, int32(0), atomic.LoadInt32(&streamer.streamTrackCalls), 
+	assert.Equal(t, int32(0), atomic.LoadInt32(&streamer.streamTrackCalls),
 		"StreamTrack should not be called with empty playlist")
-	
+
 	// Verify GetCurrentTrack was called multiple times (retry logic)
-	assert.True(t, atomic.LoadInt32(&playlist.getCurrentTrackCalls) > 0, 
+	assert.Positive(t, atomic.LoadInt32(&playlist.getCurrentTrackCalls),
 		"GetCurrentTrack should be called multiple times")
-	
+
 	// Clean up
 	station.Stop()
 }
@@ -316,65 +316,65 @@ func TestRadioStationEmptyPlaylist(t *testing.T) {
 // TestRadioStationManager tests the RadioStationManager functionality
 func TestRadioStationManager(t *testing.T) {
 	// Create a manager
-	manager := radio.NewRadioStationManager()
-	
+	manager := radio.NewRadioStationManager(slog.Default())
+
 	// Create streamers and playlists for multiple stations
 	streamer1 := NewMockAudioStreamer()
 	playlist1 := NewMockPlaylistManager([]string{"/path/to/track1.mp3"})
-	
+
 	streamer2 := NewMockAudioStreamer()
 	playlist2 := NewMockPlaylistManager([]string{"/path/to/track2.mp3"})
-	
+
 	// Add stations
 	manager.AddStation("/route1", streamer1, playlist1)
 	manager.AddStation("/route2", streamer2, playlist2)
-	
+
 	// Allow time for stations to initialize
 	time.Sleep(300 * time.Millisecond)
-	
+
 	// Verify stations are streaming
-	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer1.streamTrackCalls), 
+	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer1.streamTrackCalls),
 		"First streamer should be called")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer2.streamTrackCalls), 
+	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer2.streamTrackCalls),
 		"Second streamer should be called")
-	
+
 	// Test GetStation
 	station := manager.GetStation("/route1")
 	require.NotNil(t, station, "Should return an existing station")
-	
+
 	nonExistingStation := manager.GetStation("/non-existing")
 	assert.Nil(t, nonExistingStation, "Should return nil for non-existing station")
-	
+
 	// Test RestartPlayback
 	restart := manager.RestartPlayback("/route1")
 	assert.True(t, restart, "Restart should return true for existing station")
-	
+
 	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer1.stopCurrentTrackCalls), 
+	assert.Equal(t, int32(1), atomic.LoadInt32(&streamer1.stopCurrentTrackCalls),
 		"StopCurrentTrack should be called on restart")
-	
+
 	noRestart := manager.RestartPlayback("/non-existing")
 	assert.False(t, noRestart, "Restart should return false for non-existing station")
-	
+
 	// Test RemoveStation
 	manager.RemoveStation("/route1")
 	station = manager.GetStation("/route1")
 	assert.Nil(t, station, "Station should be removed")
-	
+
 	// Test StopAll
 	manager.StopAll()
-	
+
 	// Allow time for stations to stop - increase timeout to ensure complete shutdown
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Force stop any active streaming operations before testing streaming flags
 	streamer1.StopCurrentTrack()
 	streamer2.StopCurrentTrack()
-	
+
 	// Verify streamers have been stopped
 	assert.False(t, streamer1.streaming.Load(), "First streamer should be stopped")
 	assert.False(t, streamer2.streaming.Load(), "Second streamer should be stopped")
-	
+
 	// NOTE: Current RadioStationManager implementation may not call Close() on streamers,
 	// so we only check that streaming has stopped, not that Close() was called
 }
@@ -417,7 +417,7 @@ func TestTrackPathExtraction(t *testing.T) {
 			expected: "",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := getTrackPathExported(tt.input)
@@ -448,12 +448,12 @@ func getTrackPathExported(track interface{}) string {
 	if t, ok := track.(struct{ Path string }); ok {
 		return t.Path
 	}
-	
+
 	// If unpacking failed, try to convert to string
 	if s, ok := track.(string); ok {
 		return s
 	}
-	
+
 	return ""
 }
 
@@ -481,4 +481,4 @@ func (m *MockAudioStreamer) SetStreaming(streaming bool) {
 // IsStreaming returns whether the streamer is currently streaming
 func (m *MockAudioStreamer) IsStreaming() bool {
 	return m.streaming.Load()
-} 
+}

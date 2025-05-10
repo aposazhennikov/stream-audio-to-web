@@ -1,27 +1,23 @@
-package unit
+package unit_test
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/user/stream-audio-to-web/relay"
+	"github.com/user/stream-audio-to-web/slog"
 )
 
 func TestNewRelayManager(t *testing.T) {
 	// Create a temporary file for testing
-	tempDir, err := ioutil.TempDir("", "relay-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	configFile := filepath.Join(tempDir, "relay_list.json")
 
 	// Test creating a new relay manager
-	manager := relay.NewRelayManager(configFile)
+	manager := relay.NewRelayManager(configFile, slog.Default())
 	if manager == nil {
 		t.Fatal("Failed to create RelayManager")
 	}
@@ -39,11 +35,7 @@ func TestNewRelayManager(t *testing.T) {
 
 func TestRelayManagerLoadAndSave(t *testing.T) {
 	// Create a temporary file for testing
-	tempDir, err := ioutil.TempDir("", "relay-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	configFile := filepath.Join(tempDir, "relay_list.json")
 
@@ -57,19 +49,19 @@ func TestRelayManagerLoadAndSave(t *testing.T) {
 		t.Fatalf("Failed to marshal test data: %v", err)
 	}
 
-	if err := ioutil.WriteFile(configFile, data, 0644); err != nil {
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
 		t.Fatalf("Failed to write test config file: %v", err)
 	}
 
 	// Create a new relay manager that should load the test data
-	manager := relay.NewRelayManager(configFile)
-	
+	manager := relay.NewRelayManager(configFile, slog.Default())
+
 	// Verify links were loaded
 	links := manager.GetLinks()
 	if len(links) != len(testLinks) {
 		t.Errorf("Expected %d links, got %d", len(testLinks), len(links))
 	}
-	
+
 	for i, link := range links {
 		if link != testLinks[i] {
 			t.Errorf("Expected link %q, got %q", testLinks[i], link)
@@ -83,7 +75,7 @@ func TestRelayManagerLoadAndSave(t *testing.T) {
 	}
 
 	// Check if file contains updated data
-	fileData, err := ioutil.ReadFile(configFile)
+	fileData, err := os.ReadFile(configFile)
 	if err != nil {
 		t.Fatalf("Failed to read config file: %v", err)
 	}
@@ -108,14 +100,8 @@ func TestRelayManagerLoadAndSave(t *testing.T) {
 
 func TestRelayManagerAddLink(t *testing.T) {
 	// Create a temporary file for testing
-	tempDir, err := ioutil.TempDir("", "relay-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	configFile := filepath.Join(tempDir, "relay_list.json")
-	manager := relay.NewRelayManager(configFile)
+	tempDir := t.TempDir()
+	manager := relay.NewRelayManager(filepath.Join(tempDir, "relay_list.json"), slog.Default())
 
 	// Test adding a valid link
 	validLink := "https://example.com/stream"
@@ -142,14 +128,8 @@ func TestRelayManagerAddLink(t *testing.T) {
 
 func TestRelayManagerRemoveLink(t *testing.T) {
 	// Create a temporary file for testing
-	tempDir, err := ioutil.TempDir("", "relay-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	configFile := filepath.Join(tempDir, "relay_list.json")
-	manager := relay.NewRelayManager(configFile)
+	tempDir := t.TempDir()
+	manager := relay.NewRelayManager(filepath.Join(tempDir, "relay_list.json"), slog.Default())
 
 	// Add some test links
 	links := []string{
@@ -157,7 +137,7 @@ func TestRelayManagerRemoveLink(t *testing.T) {
 		"https://example.org/stream2",
 		"https://example.net/stream3",
 	}
-	
+
 	for _, link := range links {
 		if err := manager.AddLink(link); err != nil {
 			t.Fatalf("Failed to add link: %v", err)
@@ -174,7 +154,7 @@ func TestRelayManagerRemoveLink(t *testing.T) {
 	if len(currentLinks) != 2 {
 		t.Errorf("Expected 2 links after removal, got %d", len(currentLinks))
 	}
-	
+
 	// Verify the correct link was removed
 	for _, link := range currentLinks {
 		if link == links[1] {
@@ -187,7 +167,7 @@ func TestRelayManagerRemoveLink(t *testing.T) {
 	if err := manager.RemoveLink(invalidIndex); err == nil {
 		t.Errorf("Expected error when removing link with invalid index %d, but got nil", invalidIndex)
 	}
-	
+
 	negativeIndex := -1
 	if err := manager.RemoveLink(negativeIndex); err == nil {
 		t.Errorf("Expected error when removing link with negative index %d, but got nil", negativeIndex)
@@ -196,14 +176,8 @@ func TestRelayManagerRemoveLink(t *testing.T) {
 
 func TestRelayManagerActivation(t *testing.T) {
 	// Create a temporary file for testing
-	tempDir, err := ioutil.TempDir("", "relay-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	configFile := filepath.Join(tempDir, "relay_list.json")
-	manager := relay.NewRelayManager(configFile)
+	tempDir := t.TempDir()
+	manager := relay.NewRelayManager(filepath.Join(tempDir, "relay_list.json"), slog.Default())
 
 	// Verify initial state
 	if manager.IsActive() {
@@ -221,4 +195,4 @@ func TestRelayManagerActivation(t *testing.T) {
 	if manager.IsActive() {
 		t.Error("RelayManager should be inactive after SetActive(false)")
 	}
-} 
+}

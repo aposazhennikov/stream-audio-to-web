@@ -1,13 +1,13 @@
-package unit
+package unit_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/user/stream-audio-to-web/playlist"
+	"github.com/user/stream-audio-to-web/slog"
 )
 
 // Minimal valid audio files for testing
@@ -30,12 +30,12 @@ var (
 		// fmt subchunk
 		0x66, 0x6D, 0x74, 0x20, // "fmt "
 		0x10, 0x00, 0x00, 0x00, // Subchunk size (16 bytes)
-		0x01, 0x00,             // Audio format (1 = PCM)
-		0x01, 0x00,             // Number of channels (1 = mono)
+		0x01, 0x00, // Audio format (1 = PCM)
+		0x01, 0x00, // Number of channels (1 = mono)
 		0x44, 0xAC, 0x00, 0x00, // Sample rate (44100 Hz)
 		0x88, 0x58, 0x01, 0x00, // Byte rate (44100 * 1 * 16/8)
-		0x02, 0x00,             // Block align (channels * bits/sample / 8)
-		0x10, 0x00,             // Bits per sample (16 bits)
+		0x02, 0x00, // Block align (channels * bits/sample / 8)
+		0x10, 0x00, // Bits per sample (16 bits)
 		// data subchunk
 		0x64, 0x61, 0x74, 0x61, // "data"
 		0x00, 0x00, 0x00, 0x00, // Data size (0 bytes)
@@ -47,14 +47,14 @@ var (
 	minimumOGGData = []byte{
 		// OGG header
 		0x4F, 0x67, 0x67, 0x53, // "OggS"
-		0x00,                   // Version
-		0x02,                   // Header type
+		0x00,                                           // Version
+		0x02,                                           // Header type
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Granule position (0)
 		0x01, 0x02, 0x03, 0x04, // Serial number (arbitrary)
 		0x00, 0x00, 0x00, 0x00, // Page number
 		0x01, 0x00, 0x00, 0x00, // CRC checksum
-		0x01,                   // Number of segments
-		0x1E,                   // Segment size (30 bytes)
+		0x01, // Number of segments
+		0x1E, // Segment size (30 bytes)
 		// Vorbis header (simplified)
 		0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73, // "\x01vorbis"
 		0x00, 0x00, 0x00, 0x00, // Vorbis version
@@ -63,7 +63,7 @@ var (
 		0x00, 0x00, 0x00, 0x00, // Bitrate maximum
 		0x00, 0x00, 0x00, 0x00, // Bitrate nominal
 		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
-		0x00,                   // Blocksize
+		0x00, // Blocksize
 	}
 )
 
@@ -82,7 +82,7 @@ func createTestAudioFiles(dir string) error {
 
 	for _, file := range files {
 		filePath := filepath.Join(dir, file.name)
-		if err := ioutil.WriteFile(filePath, file.data, 0644); err != nil {
+		if err := os.WriteFile(filePath, file.data, 0644); err != nil {
 			return err
 		}
 	}
@@ -91,11 +91,7 @@ func createTestAudioFiles(dir string) error {
 
 func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	// Create a temporary directory for tests
-	tmpDir, err := ioutil.TempDir("", "playlist-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
@@ -103,7 +99,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	}
 
 	// Initialize playlist
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -134,11 +130,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 
 func TestPlaylist_NextTrack(t *testing.T) {
 	// Create a temporary directory for tests
-	tmpDir, err := ioutil.TempDir("", "playlist-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
@@ -146,7 +138,7 @@ func TestPlaylist_NextTrack(t *testing.T) {
 	}
 
 	// Initialize playlist
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -176,14 +168,14 @@ func TestPlaylist_NextTrack(t *testing.T) {
 	}
 
 	// Check that the track has a path
-	if track, ok := nextTrack.(interface{ GetPath() string }); !ok || track.GetPath() == "" {
+	if track, okNext := nextTrack.(interface{ GetPath() string }); !okNext || track.GetPath() == "" {
 		t.Fatalf("Expected next track to have a valid path")
 	}
 
 	// Check that the next track is different from the current track
 	if nextTrack == currentTrack {
-		if currentTrackPath, ok := currentTrack.(interface{ GetPath() string }); ok {
-			if nextTrackPath, ok := nextTrack.(interface{ GetPath() string }); ok {
+		if currentTrackPath, okCurrent := currentTrack.(interface{ GetPath() string }); okCurrent {
+			if nextTrackPath, okNext := nextTrack.(interface{ GetPath() string }); okNext {
 				if currentTrackPath.GetPath() == nextTrackPath.GetPath() {
 					t.Fatalf("Expected next track to be different from current track. Both have path: %s", currentTrackPath.GetPath())
 				}
@@ -205,11 +197,7 @@ func TestPlaylist_NextTrack(t *testing.T) {
 
 func TestPlaylist_PreviousTrack(t *testing.T) {
 	// Create a temporary directory for tests
-	tmpDir, err := ioutil.TempDir("", "playlist-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create various audio files for testing
 	if err := createTestAudioFiles(tmpDir); err != nil {
@@ -217,7 +205,7 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 	}
 
 	// Initialize playlist
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false)
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -241,7 +229,7 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 
 	// Check that the track has changed
 	midTrack := pl.GetCurrentTrack()
-	midTrackPath := ""
+	var midTrackPath string
 	if track, ok := midTrack.(interface{ GetPath() string }); ok {
 		midTrackPath = track.GetPath()
 		t.Logf("Middle track path (after next): %s", midTrackPath)
@@ -277,11 +265,7 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 
 func TestPlaylist_ShuffleMode(t *testing.T) {
 	// Create a temporary directory for tests
-	tmpDir, err := ioutil.TempDir("", "playlist-test-shuffle")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create more audio files for better shuffle testing
 	files := []struct {
@@ -303,13 +287,13 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	// Create files
 	for _, file := range files {
 		filePath := filepath.Join(tmpDir, file.name)
-		if err := ioutil.WriteFile(filePath, file.data, 0644); err != nil {
+		if err := os.WriteFile(filePath, file.data, 0644); err != nil {
 			t.Fatalf("Failed to create test file %s: %v", file.name, err)
 		}
 	}
 
 	// Initialize playlist without shuffling to preserve original order
-	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false)
+	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create regular playlist: %v", err)
 	}
@@ -325,7 +309,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	}
 
 	// Iterate through tracks in sequence
-	for i := 0; i < 9; i++ {
+	for _ = range regularTracks {
 		nextTrack := regularPl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
 		if track, ok := nextTrack.(interface{ GetPath() string }); ok {
@@ -334,26 +318,26 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	}
 
 	// Manually create playlist with shuffle instead of using the constructor with shuffle=true
-	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, false)
+	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create shuffle playlist: %v", err)
 	}
-	
+
 	// Allow time for initialization
 	time.Sleep(200 * time.Millisecond)
 
 	// Manually shuffle with timeout to identify potential deadlocks
 	t.Log("Starting manual shuffle operation...")
-	
+
 	// Create a channel to signal completion
 	done := make(chan bool)
-	
+
 	// Start goroutine to execute shuffle
 	go func() {
 		shufflePl.Shuffle()
 		done <- true
 	}()
-	
+
 	// Wait for shuffle to complete with timeout
 	select {
 	case <-done:
@@ -370,7 +354,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	}
 
 	// Iterate through tracks in sequence
-	for i := 0; i < 9; i++ {
+	for _ = range shuffleTracks {
 		nextTrack := shufflePl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
 		if track, ok := nextTrack.(interface{ GetPath() string }); ok {
@@ -426,4 +410,4 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 			t.Errorf("Track %s is missing in regular playlist", track)
 		}
 	}
-} 
+}

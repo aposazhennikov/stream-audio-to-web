@@ -1,7 +1,8 @@
-package e2e
+package e2e_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	httpServer "github.com/user/stream-audio-to-web/http"
 	"github.com/user/stream-audio-to-web/relay"
+	"github.com/user/stream-audio-to-web/slog"
 )
 
 // Mock HTTP server that serves fake audio content
@@ -25,7 +27,7 @@ func newMockAudioServer() *mockAudioServer {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		// Simulate audio stream - send "mock audio data" in chunks
-		for i := 0; i < 3; i++ {
+		for range [3]struct{}{} {
 			w.Write([]byte("mock audio data"))
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
@@ -53,33 +55,29 @@ func TestRelayEndToEnd(t *testing.T) {
 	defer mockServer.Close()
 
 	// Create a temporary file for testing
-	tempDir, err := os.MkdirTemp("", "relay-e2e-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	configFile := filepath.Join(tempDir, "relay_list.json")
 
 	// Create a new relay manager
-	relayManager := relay.NewRelayManager(configFile)
-	
+	relayManager := relay.NewRelayManager(configFile, slog.Default())
+
 	// Add test URL
 	testStreamURL := mockServer.URL()
-	
-	if err := relayManager.AddLink(testStreamURL); err != nil {
-		t.Fatalf("Failed to add test URL: %v", err)
+
+	if addTestURLErr := relayManager.AddLink(testStreamURL); addTestURLErr != nil {
+		t.Fatalf("Failed to add test URL: %v", addTestURLErr)
 	}
-	
+
 	// Activate relay
 	relayManager.SetActive(true)
 
 	// Create a new HTTP server
 	server := httpServer.NewServer("mp3", 10)
-	
+
 	// Set relay manager
 	server.SetRelayManager(relayManager)
-	
+
 	// Create test server
 	testServer := httptest.NewServer(server.Handler())
 	defer testServer.Close()
@@ -90,7 +88,7 @@ func TestRelayEndToEnd(t *testing.T) {
 		testPassword = "test-password"
 	}
 	server.SetStatusPassword(testPassword)
-	
+
 	authCookie := &http.Cookie{
 		Name:  "status_auth",
 		Value: testPassword,
@@ -100,44 +98,44 @@ func TestRelayEndToEnd(t *testing.T) {
 	t.Run("TestRelayStream", func(t *testing.T) {
 		// Stream index 0 corresponds to our mock stream
 		streamURL := testServer.URL + "/relay/stream/0"
-		
-		req, err := http.NewRequest("GET", streamURL, nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
+
+		requestRelayStream, createRelayStreamRequestErr := http.NewRequest(http.MethodGet, streamURL, nil)
+		if createRelayStreamRequestErr != nil {
+			t.Fatalf("Failed to create request: %v", createRelayStreamRequestErr)
 		}
-		
+
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 		}
-		
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to get relay stream: %v", err)
+
+		resp, getRelayStreamErr := client.Do(requestRelayStream)
+		if getRelayStreamErr != nil {
+			t.Fatalf("Failed to get relay stream: %v", getRelayStreamErr)
 		}
 		defer resp.Body.Close()
-		
+
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status OK, got %v", resp.StatusCode)
 		}
-		
+
 		// Check content type
 		contentType := resp.Header.Get("Content-Type")
 		if !strings.Contains(contentType, "audio") {
 			t.Errorf("Expected audio content type, got %s", contentType)
 		}
-		
+
 		// Read stream data (with timeout)
 		dataReceived := make(chan bool, 1)
 		var buf bytes.Buffer
-		
+
 		go func() {
-			_, err := io.Copy(&buf, resp.Body)
-			if err != nil && err != io.EOF {
-				t.Errorf("Error reading stream data: %v", err)
+			_, readStreamDataErr := io.Copy(&buf, resp.Body)
+			if readStreamDataErr != nil && !errors.Is(readStreamDataErr, io.EOF) {
+				t.Errorf("Error reading stream data: %v", readStreamDataErr)
 			}
 			dataReceived <- true
 		}()
-		
+
 		// Wait for data or timeout
 		select {
 		case <-dataReceived:
@@ -150,55 +148,55 @@ func TestRelayEndToEnd(t *testing.T) {
 			t.Error("Timeout waiting for stream data")
 		}
 	})
-	
+
 	// Test management operations
 	t.Run("TestRelayManagement", func(t *testing.T) {
 		// Test adding a new relay URL
 		formData := url.Values{}
 		formData.Set("url", "https://example.com/stream2")
-		
-		req, err := http.NewRequest("POST", testServer.URL+"/relay/add", 
+
+		requestAddRelay, createAddRelayRequestErr := http.NewRequest(http.MethodPost, testServer.URL+"/relay/add",
 			strings.NewReader(formData.Encode()))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
+		if createAddRelayRequestErr != nil {
+			t.Fatalf("Failed to create request: %v", createAddRelayRequestErr)
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.AddCookie(authCookie)
-		
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to add relay URL: %v", err)
+		requestAddRelay.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		requestAddRelay.AddCookie(authCookie)
+
+		resp, addRelayURLErr := http.DefaultClient.Do(requestAddRelay)
+		if addRelayURLErr != nil {
+			t.Fatalf("Failed to add relay URL: %v", addRelayURLErr)
 		}
-		resp.Body.Close()
-		
+		defer resp.Body.Close()
+
 		// Verify two URLs are now in the list
 		links := relayManager.GetLinks()
 		if len(links) != 2 {
 			t.Errorf("Expected 2 links after adding, got %d", len(links))
 		}
-		
+
 		// Test removing a relay URL
 		formData = url.Values{}
 		formData.Set("index", "1") // Remove the second URL
-		
-		req, err = http.NewRequest("POST", testServer.URL+"/relay/remove", 
+
+		requestRemoveRelay, createRemoveRelayRequestErr := http.NewRequest(http.MethodPost, testServer.URL+"/relay/remove",
 			strings.NewReader(formData.Encode()))
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
+		if createRemoveRelayRequestErr != nil {
+			t.Fatalf("Failed to create request: %v", createRemoveRelayRequestErr)
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.AddCookie(authCookie)
-		
-		resp, err = http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Failed to remove relay URL: %v", err)
+		requestRemoveRelay.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		requestRemoveRelay.AddCookie(authCookie)
+
+		resp, removeRelayURLErr := http.DefaultClient.Do(requestRemoveRelay)
+		if removeRelayURLErr != nil {
+			t.Fatalf("Failed to remove relay URL: %v", removeRelayURLErr)
 		}
-		resp.Body.Close()
-		
+		defer resp.Body.Close()
+
 		// Verify back to one URL
 		links = relayManager.GetLinks()
 		if len(links) != 1 {
 			t.Errorf("Expected 1 link after removing, got %d", len(links))
 		}
 	})
-} 
+}

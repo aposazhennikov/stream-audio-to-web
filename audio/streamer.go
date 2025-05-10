@@ -3,7 +3,8 @@ package audio
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,19 +12,36 @@ import (
 	"sync/atomic"
 	"time"
 
+	"errors"
+
 	"github.com/getsentry/sentry-go"
-	"golang.org/x/sync/errgroup"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
-	defaultBufferSize = 16384 // 16KB (reduced from 32KB to minimize gap when switching tracks)
-	gracePeriodMs     = 50    // 50ms buffer between tracks (reduced from 100ms)
-	// Minimum delay between buffer sends
-	minPlaybackDelayMs = 10   // 10ms (reduced from 20ms)
+	defaultBufferSize = 16384 // 16KB (reduced from 32KB to minimize gap when switching tracks).
+	gracePeriodMs     = 50    // 50ms buffer between tracks (reduced from 100ms).
+	// Minimum delay between buffer sends.
+	minPlaybackDelayMs         = 10  // 10ms (reduced from 20ms).
+	id3v2HeaderSize            = 10  // Size of ID3v2 header in bytes.
+	id3v1TagSize               = 128 // Size of ID3v1 tag in bytes.
+	tagCheckSize               = 3   // Size for checking 'TAG' string.
+	bitsPerByte                = 8   // Количество бит в байте
+	id3v2SyncSafeShift21       = 21  // Bit shift for sync-safe integer (ID3v2).
+	id3v2SyncSafeShift14       = 14
+	id3v2SyncSafeShift7        = 7
+	id3v2SyncSafeMask          = 0x7F // Mask for sync-safe integer (ID3v2).
+	logIntervalSec             = 10   // Interval for logging delay info (seconds).
+	defaultClientChannelBuffer = 32
+	firstTimeoutMs             = 200
+	secondTimeoutMs            = 200
+	batchSize                  = 50
+	streamerDefaultSampleRate  = 44100
+	defaultChannels            = 2
+	defaultBitDepth            = 16
 )
 
-// Streamer manages audio streaming for a single "radio" stream
+// Streamer manages audio streaming for a single "radio" stream.
 type Streamer struct {
 	bufferPool      *sync.Pool
 	bufferSize      int
@@ -35,12 +53,12 @@ type Streamer struct {
 	clientMutex     sync.RWMutex
 	transcodeFormat string
 	bitrate         int
-	lastChunk       []byte       // Last sent chunk of audio data
-	lastChunkMutex  sync.RWMutex // Mutex for protecting lastChunk
-	normalizeVolume bool         // Flag to enable/disable volume normalization
+	lastChunk       []byte       // Last sent chunk of audio data.
+	lastChunkMutex  sync.RWMutex // Mutex for protecting lastChunk.
+	normalizeVolume bool         // Flag to enable/disable volume normalization.
 }
 
-// NewStreamer creates a new audio streamer
+// NewStreamer creates a new audio streamer.
 func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int) *Streamer {
 	if bufferSize <= 0 {
 		bufferSize = defaultBufferSize
@@ -62,465 +80,452 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		bitrate:         bitrate,
 		lastChunk:       nil,
 		lastChunkMutex:  sync.RWMutex{},
-		normalizeVolume: true, // Enable volume normalization by default
+		normalizeVolume: true, // Enable volume normalization by default.
 	}
 }
 
-// SetVolumeNormalization enables or disables volume normalization
+// SetVolumeNormalization enables or disables volume normalization.
 func (s *Streamer) SetVolumeNormalization(enabled bool) {
-	s.normalizeVolume = enabled
-	log.Printf("DIAGNOSTICS: Volume normalization %s", map[bool]string{true: "enabled", false: "disabled"}[enabled])
+	slog.Info("DIAGNOSTICS: Volume normalization", slog.Bool("enabled", enabled))
 }
 
-// Close closes the streamer and all client connections
+// Close closes the streamer and all client connections.
 func (s *Streamer) Close() {
-	// Signal closing
+	// Signal closing.
 	close(s.quit)
-	
-	// Clear the last buffer
+
+	// Clear the last buffer.
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
-	
-	// Close all client channels
+
+	// Close all client channels.
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
 
 	for clientID, ch := range s.clientChannels {
 		close(ch)
-		log.Printf("DIAGNOSTICS: Client channel %d closed when closing streamer", clientID)
+		slog.Info("DIAGNOSTICS: Client channel", slog.Int("clientID", clientID), "status", "closed when closing streamer")
 	}
-	
-	// Clear the channel map
+
+	// Clear the channel map.
 	s.clientChannels = make(map[int]chan []byte)
-	
-	log.Printf("DIAGNOSTICS: Streamer completely closed")
+
+	slog.Info("DIAGNOSTICS: Streamer completely closed")
 }
 
-// StopCurrentTrack immediately stops the playback of the current track
-// Used when manually switching tracks
+// StopCurrentTrack immediately stops the playback of the current track.
+// Used when manually switching tracks.
 func (s *Streamer) StopCurrentTrack() {
-	// First signal the need to stop
-	// Safe check for already closed channel
+	// First signal the need to stop.
+	// Safe check for already closed channel.
 	select {
 	case <-s.quit:
-		// Channel already closed, create a new one
-		log.Printf("DIAGNOSTICS: Quit channel already closed, skipping closure")
+		// Channel already closed, create a new one.
+		slog.Info("DIAGNOSTICS: Quit channel already closed, skipping closure")
 	default:
-		// Channel not yet closed, close it
+		// Channel not yet closed, close it.
 		close(s.quit)
 	}
-	
+
 	// Clear the last buffer - this is critically important to prevent
-	// sending data from the old track to new clients
+	// sending data from the old track to new clients.
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
-	
-	// DO NOT close client channels to maintain connections
+
+	// DO NOT close client channels to maintain connections.
 	// s.clientMutex.Lock()
-	// instead of closing channels just log
-	log.Printf("DIAGNOSTICS: Stopping current track without closing client connections")
+	// instead of closing channels just log.
+	slog.Info("DIAGNOSTICS: Stopping current track without closing client connections")
 	// s.clientMutex.Unlock()
-	
-	// Create new channel for next track
+
+	// Create new channel for next track.
 	s.quit = make(chan struct{})
-	
-	log.Printf("DIAGNOSTICS: Current track stopped, buffer cleared")
+
+	slog.Info("DIAGNOSTICS: Current track stopped, buffer cleared")
 }
 
-// GetCurrentTrackChannel returns a channel with information about the current track
+// GetCurrentTrackChannel returns a channel with information about the current track.
 func (s *Streamer) GetCurrentTrackChannel() <-chan string {
 	return s.currentTrackCh
 }
 
-// StreamTrack streams a track to all connected clients
+// StreamTrack streams a track to all connected clients.
 func (s *Streamer) StreamTrack(trackPath string) error {
-	// Check for empty path
+	// Check for empty path.
 	if trackPath == "" {
-		sentryErr := fmt.Errorf("empty audio file path")
-		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+		sentryErr := errors.New("empty audio file path")
+		sentry.CaptureException(sentryErr)
 		return sentryErr
 	}
 
-	log.Printf("DIAGNOSTICS: Attempting to play file: %s", trackPath)
-	
-	// Check if file exists
-	fileInfo, err := os.Stat(trackPath)
-	if err != nil {
-		log.Printf("DIAGNOSTICS: ERROR checking file %s: %v", trackPath, err)
-		sentryErr := fmt.Errorf("error checking file: %w", err)
-		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+	slog.Info("DIAGNOSTICS: Attempting to play file: %s", trackPath)
+
+	// Check if file exists.
+	fileInfo, statErr := os.Stat(trackPath)
+	if statErr != nil {
+		slog.Info("DIAGNOSTICS: ERROR checking file %s: %v", trackPath, statErr)
+		sentryErr := errors.New("error checking file")
+		sentry.CaptureException(sentryErr)
 		return sentryErr
 	}
-	
-	log.Printf("DIAGNOSTICS: File %s exists, size: %d bytes, access rights: %v", 
+
+	slog.Info("DIAGNOSTICS: File %s exists, size: %d bytes, access rights: %v",
 		trackPath, fileInfo.Size(), fileInfo.Mode())
-	
-	// Check that it's not a directory
+
+	// Check that it's not a directory.
 	if fileInfo.IsDir() {
 		sentryErr := fmt.Errorf("specified path %s is a directory, not a file", trackPath)
-		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+		sentry.CaptureException(sentryErr)
 		return sentryErr
 	}
-	
-	// Open the file
-	log.Printf("DIAGNOSTICS: Attempting to open file: %s", trackPath)
-	file, err := os.Open(trackPath)
-	if err != nil {
-		log.Printf("DIAGNOSTICS: ERROR opening file %s: %v", trackPath, err)
-		sentryErr := fmt.Errorf("error opening file: %w", err)
-		sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+
+	// Open the file.
+	slog.Info("DIAGNOSTICS: Attempting to open file: %s", trackPath)
+	file, openErr := os.Open(trackPath)
+	if openErr != nil {
+		slog.Info("DIAGNOSTICS: ERROR opening file %s: %v", trackPath, openErr)
+		sentryErr := errors.New("error opening file")
+		sentry.CaptureException(sentryErr)
 		return sentryErr
 	}
 	defer file.Close()
-	
-	// Send information about current track to channel
+
+	// Send information about current track to channel.
 	select {
 	case s.currentTrackCh <- filepath.Base(trackPath):
-		log.Printf("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
+		slog.Info("DIAGNOSTICS: Current track information updated: %s", filepath.Base(trackPath))
 	default:
-		log.Printf("DIAGNOSTICS: Failed to update current track information: channel full")
+		slog.Info("DIAGNOSTICS: Failed to update current track information: channel full")
 	}
-	
+
 	startTime := time.Now()
-	
-	// Create pipe for normalized audio
+
+	// Create pipe for normalized audio.
 	pr, pw := io.Pipe()
-	defer pr.Close() // Always close the reader when function exits
-	
-	// Check if normalization should be used
-	// The actual normalization will be performed by streaming through a pipe
-	if s.normalizeVolume {
-		// Extract route name from track path for metrics
-		route := getRouteFromTrackPath(trackPath)
-		
-		// Start normalization in a separate goroutine to avoid blocking
-		go func() {
-			defer pw.Close() // Close the pipe writer when done
-			
-			// Use NormalizeMP3Stream to normalize the audio
-			// The third parameter is the route name for metrics
-			if err := NormalizeMP3Stream(file, pw, route); err != nil {
-				log.Printf("DIAGNOSTICS: ERROR during audio normalization: %v", err)
-				sentry.CaptureException(err)
-			}
-		}()
-		
-		// Stream from pipe
-		buffer := s.bufferPool.Get().([]byte)
-		defer s.bufferPool.Put(buffer)
-		
-		// For tracking progress
-		var bytesRead int64
-		
-		log.Printf("DIAGNOSTICS: Starting to read normalized audio data from %s", trackPath)
-		
-		for {
-			// Check completion signal before reading
-			select {
-			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of %s interrupted", trackPath)
-				return nil
-			default:
-				// Continue execution
-			}
-			
-			// Read from pipe
-			n, err := pr.Read(buffer)
-			if err == io.EOF {
-				log.Printf("DIAGNOSTICS: End of normalized audio data reached for %s", trackPath)
-				break
-			}
-			if err != nil {
-				// If pipe was closed, this might be the result of normal termination
-				if err == io.ErrClosedPipe || strings.Contains(err.Error(), "closed pipe") {
-					log.Printf("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
-					return nil
-				}
-				
-				log.Printf("DIAGNOSTICS: ERROR reading normalized audio data: %v", err)
-				sentry.CaptureException(err)
-				return fmt.Errorf("error reading normalized audio data: %w", err)
-			}
-			
-			bytesRead += int64(n)
-			
-			// Save copy of last chunk for new clients
-			dataCopy := make([]byte, n)
-			copy(dataCopy, buffer[:n])
-			
-			// Save copy of last chunk for new clients
-			s.lastChunkMutex.Lock()
-			s.lastChunk = dataCopy
-			s.lastChunkMutex.Unlock()
-			
-			// Send data to all clients
-			if err := s.broadcastToClients(buffer[:n]); err != nil {
-				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
-				sentry.CaptureException(err)
-				return err
-			}
-			
-			// Calculate delay based on bitrate and buffer size
-			delayMs := (n * 8) / s.bitrate
-			
-			// Limit minimum delay
-			if delayMs < minPlaybackDelayMs {
-				delayMs = minPlaybackDelayMs
-			}
-			
-			// Log delay information once every 10 seconds
-			if time.Since(lastDelayLogTime) > 10*time.Second {
-				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
-					delayMs, n, s.bitrate)
-				lastDelayLogTime = time.Now()
-			}
-			
-			// Wait for delay with completion check
-			select {
-			case <-time.After(time.Duration(delayMs) * time.Millisecond):
-				// Continue processing
-			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of %s interrupted during delay", trackPath)
-				return nil
-			}
-		}
-		
-		duration := time.Since(startTime)
-		log.Printf("DIAGNOSTICS: Playback of %s completed (read %d bytes in %.2f sec)", 
-			trackPath, bytesRead, duration.Seconds())
-		
-		// Increment playback time metric for Prometheus
-		if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
-			routeName := getRouteFromTrackPath(trackPath)
-			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
-			log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
-				duration.Seconds(), routeName)
-		}
-		
-		// Add pause between tracks
-		pauseMs := gracePeriodMs
-		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
-		select {
-		case <-time.After(time.Duration(pauseMs) * time.Millisecond):
-			// Continue processing
-		case <-s.quit:
-			log.Printf("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
-			return nil
-		}
-		
-		return nil
-	} else {
-		// Non-normalized mode (raw streaming) - mostly unchanged from original
-		// Skip ID3v2 if it exists
-		header := make([]byte, 10)
-		if _, err := io.ReadFull(file, header); err == nil && string(header[0:3]) == "ID3" {
-			// size is stored in 4 sync-safe bytes (6..9)
-			tagSize := int(header[6]&0x7F)<<21 | int(header[7]&0x7F)<<14 | int(header[8]&0x7F)<<7 | int(header[9]&0x7F)
-			log.Printf("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
-			if _, err := file.Seek(int64(tagSize), io.SeekCurrent); err != nil {
-				log.Printf("WARNING: Error skipping ID3 tag: %v", err)
+	defer pr.Close() // Always close the reader when function exits.
+
+	// Check if normalization should be used.
+	if !s.normalizeVolume {
+		// Non-normalized mode (raw streaming).
+		// Skip ID3v2 if it exists.
+		header := make([]byte, id3v2HeaderSize)
+		_, headerErr := io.ReadFull(file, header)
+		hasID3v2 := headerErr == nil && string(header[0:3]) == "ID3"
+		if hasID3v2 {
+			tagSize := int(header[6]&id3v2SyncSafeMask)<<id3v2SyncSafeShift21 |
+				int(header[7]&id3v2SyncSafeMask)<<id3v2SyncSafeShift14 |
+				int(header[8]&id3v2SyncSafeMask)<<id3v2SyncSafeShift7 |
+				int(header[9]&id3v2SyncSafeMask)
+			slog.Info("DIAGNOSTICS: ID3v2 tag detected with size %d bytes, skipping", tagSize)
+			if _, seekErr := file.Seek(int64(tagSize), io.SeekCurrent); seekErr != nil {
+				slog.Info("WARNING: Error skipping ID3 tag: %v", seekErr)
 			}
 		} else {
-			// no tag - rewind to beginning
-			file.Seek(0, io.SeekStart)
-			log.Printf("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
+			if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+				slog.Info("WARNING: Error seeking to start: %v", seekErr)
+			}
+			slog.Info("DIAGNOSTICS: ID3v2 tag not detected, starting reading from file beginning")
 		}
-		
-		// Check for ID3v1 tag (128 bytes at end of file)
+
+		// Check for ID3v1 tag (128 bytes at end of file).
 		fileSize := fileInfo.Size()
 		hasID3v1 := false
-		if fileSize > 128 {
-			// Save current position
-			currentPos, err := file.Seek(0, io.SeekCurrent)
-			if err == nil {
-				// Move to end of file minus 128 bytes
-				_, err = file.Seek(fileSize-128, io.SeekStart)
-				if err == nil {
-					// Read 3 bytes to check tag
-					tagCheck := make([]byte, 3)
-					if _, err := io.ReadFull(file, tagCheck); err == nil && string(tagCheck) == "TAG" {
+		if fileSize > id3v1TagSize {
+			currentPos, posErr := file.Seek(0, io.SeekCurrent)
+			if posErr != nil {
+				slog.Info("WARNING: Error getting current file position: %v", posErr)
+			} else {
+				seekEndOk := false
+				if _, seekErr := file.Seek(fileSize-id3v1TagSize, io.SeekStart); seekErr != nil {
+					slog.Info("WARNING: Error seeking to end for ID3v1: %v", seekErr)
+				} else {
+					tagCheck := make([]byte, tagCheckSize)
+					if _, readErr := io.ReadFull(file, tagCheck); readErr != nil {
+						slog.Info("WARNING: Error reading ID3v1 tag: %v", readErr)
+					} else if string(tagCheck) == "TAG" {
 						hasID3v1 = true
-						log.Printf("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last 128 bytes")
+						slog.Info("DIAGNOSTICS: ID3v1 tag detected at end of file, will ignore last %d bytes", id3v1TagSize)
+					}
+					seekEndOk = true
+				}
+				if seekEndOk {
+					if _, seekErr := file.Seek(currentPos, io.SeekStart); seekErr != nil {
+						slog.Info("WARNING: Error seeking back to position: %v", seekErr)
 					}
 				}
-				// Return pointer to previous position
-				file.Seek(currentPos, io.SeekStart)
 			}
 		}
-		
-		// Set effective file size (without ID3v1 tag)
+
+		// Set effective file size (without ID3v1 tag).
 		effectiveFileSize := fileSize
 		if hasID3v1 {
-			effectiveFileSize -= 128
+			effectiveFileSize -= id3v1TagSize
 		}
-		
-		// Initialize buffer and counter
-		buffer := s.bufferPool.Get().([]byte)
-		defer s.bufferPool.Put(buffer)
-		
-		// For tracking progress
+
+		// Initialize buffer and counter.
+		buffer, okBuf := s.bufferPool.Get().([]byte)
+		if !okBuf {
+			return fmt.Errorf("failed to get buffer from pool")
+		}
+		defer s.bufferPool.Put(&buffer)
+
+		// For tracking progress.
 		var bytesRead int64
-		
-		log.Printf("DIAGNOSTICS: Starting to read file %s", trackPath)
-		
+
+		slog.Info("DIAGNOSTICS: Starting to read file %s", trackPath)
+
 		for {
-			// IMPORTANT: Check completion signal before reading and sending data
+			// Check completion signal before reading.
 			select {
 			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)", 
+				slog.Info("DIAGNOSTICS: Playback of file %s interrupted (read %d bytes out of %d)",
 					trackPath, bytesRead, effectiveFileSize)
 				return nil
 			default:
-				// Continue execution
+				// Continue execution.
 			}
-			
-			n, err := file.Read(buffer)
-			if err == io.EOF {
-				log.Printf("DIAGNOSTICS: End of file %s reached", trackPath)
+
+			n, readErr := file.Read(buffer)
+			if errors.Is(readErr, io.EOF) {
+				slog.Info("DIAGNOSTICS: End of file %s reached", trackPath)
 				break
 			}
-			if err != nil {
-				log.Printf("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, err)
-				sentryErr := fmt.Errorf("error reading file: %w", err)
-				sentry.CaptureException(sentryErr) // This is an error, send to Sentry
+			if readErr != nil {
+				slog.Info("DIAGNOSTICS: ERROR reading file %s: %v", trackPath, readErr)
+				sentryErr := fmt.Errorf("error reading file: %w", readErr)
+				sentry.CaptureException(sentryErr)
 				return sentryErr
 			}
 
 			bytesRead += int64(n)
-			
-			// Save copy of last chunk for new clients
+
+			// Save copy of last chunk for new clients.
 			dataCopy := make([]byte, n)
 			copy(dataCopy, buffer[:n])
-			
-			// Save copy of last chunk for new clients
+
+			// Save copy of last chunk for new clients.
 			s.lastChunkMutex.Lock()
 			s.lastChunk = dataCopy
 			s.lastChunkMutex.Unlock()
-			
-			// Send data to all clients
-			if err := s.broadcastToClients(buffer[:n]); err != nil {
-				log.Printf("DIAGNOSTICS: ERROR sending data to clients: %v", err)
-				sentry.CaptureException(err) // This is an error, send to Sentry
-				return err
+
+			// Send data to all clients.
+			if broadcastErr := s.broadcastToClients(buffer[:n]); broadcastErr != nil {
+				slog.Info("DIAGNOSTICS: ERROR sending data to clients: %v", broadcastErr)
+				sentry.CaptureException(broadcastErr)
+				return broadcastErr
 			}
 
-			// Calculate delay based on bitrate and buffer size
-			// Formula: (buffer size in bytes * 8) / (bitrate in kbit/s * 1000) * 1000 ms
-			// Simplify: (buffer size in bytes * 8 * 1000) / (bitrate in kbit/s * 1000)
-			// Final formula: (buffer size in bytes * 8) / bitrate in kbit/s
-			delayMs := (n * 8) / s.bitrate
-			
-			// Limit minimum delay
+			// Calculate delay based on bitrate and buffer size.
+			delayMs := (n * bitsPerByte) / s.bitrate
+
+			// Limit minimum delay.
 			if delayMs < minPlaybackDelayMs {
 				delayMs = minPlaybackDelayMs
 			}
-			
-			// Log delay information once every 10 seconds
+
+			// Log delay information once every 10 seconds.
 			if time.Since(lastDelayLogTime) > 10*time.Second {
-				log.Printf("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s", 
+				slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
 					delayMs, n, s.bitrate)
 				lastDelayLogTime = time.Now()
 			}
-			
-			// Use time.After to check completion signal during wait
+
+			// Wait for delay with completion check.
 			select {
 			case <-time.After(time.Duration(delayMs) * time.Millisecond):
-				// Continue processing
+				// Continue processing.
 			case <-s.quit:
-				log.Printf("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)", 
+				slog.Info("DIAGNOSTICS: Playback of file %s interrupted during delay (read %d bytes out of %d)",
 					trackPath, bytesRead, effectiveFileSize)
 				return nil
 			}
 		}
-		
+
 		duration := time.Since(startTime)
-		log.Printf("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)", 
+		slog.Info("DIAGNOSTICS: Playback of file %s completed (read %d bytes in %.2f sec)",
 			trackPath, bytesRead, duration.Seconds())
 
-		// Increment playback time metric for Prometheus
-		// Metric should be defined in http/server.go
+		// Increment playback time metric for Prometheus.
 		if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
 			routeName := getRouteFromTrackPath(trackPath)
 			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
-			log.Printf("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s", 
+			slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
 				duration.Seconds(), routeName)
 		}
 
-		// Add pause between tracks
+		// Add pause between tracks.
 		pauseMs := gracePeriodMs
-		log.Printf("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
+		slog.Info("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
 		select {
 		case <-time.After(time.Duration(pauseMs) * time.Millisecond):
-			// Continue processing
+			// Continue processing.
 		case <-s.quit:
-			log.Printf("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
+			slog.Info("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
 			return nil
 		}
 
 		return nil
 	}
+
+	// --- Нормализация ---
+	// Extract route name from track path for metrics.
+	route := getRouteFromTrackPath(trackPath)
+	// Start normalization в отдельной горутине.
+	go func() {
+		defer pw.Close()
+		if normErr := NormalizeMP3Stream(file, pw, route); normErr != nil {
+			slog.Info("DIAGNOSTICS: ERROR during audio normalization: %v", normErr)
+			sentry.CaptureException(normErr)
+		}
+	}()
+
+	// Stream from pipe.
+	buffer, okPipe := s.bufferPool.Get().([]byte)
+	if !okPipe {
+		return fmt.Errorf("failed to get buffer from pool")
+	}
+	defer s.bufferPool.Put(&buffer)
+
+	// For tracking progress.
+	var bytesRead int64
+
+	slog.Info("DIAGNOSTICS: Starting to read normalized audio data from %s", trackPath)
+
+	for {
+		// Check completion signal before reading.
+		select {
+		case <-s.quit:
+			slog.Info("DIAGNOSTICS: Playback of %s interrupted", trackPath)
+			return nil
+		default:
+			// Continue execution.
+		}
+
+		// Read from pipe.
+		n, readErr := pr.Read(buffer)
+		if errors.Is(readErr, io.EOF) {
+			slog.Info("DIAGNOSTICS: End of normalized audio data reached for %s", trackPath)
+			break
+		}
+		if readErr != nil {
+			// If pipe was closed, this might be the result of normal termination.
+			if errors.Is(readErr, io.ErrClosedPipe) || strings.Contains(readErr.Error(), "closed pipe") {
+				slog.Info("DIAGNOSTICS: Pipe was closed during playback of %s, stopping", trackPath)
+				return nil
+			}
+
+			slog.Info("DIAGNOSTICS: ERROR reading normalized audio data: %v", readErr)
+			sentry.CaptureException(readErr)
+			return fmt.Errorf("error reading normalized audio data: %w", readErr)
+		}
+
+		bytesRead += int64(n)
+
+		// Save copy of last chunk for new clients.
+		dataCopy := make([]byte, n)
+		copy(dataCopy, buffer[:n])
+
+		// Save copy of last chunk for new clients.
+		s.lastChunkMutex.Lock()
+		s.lastChunk = dataCopy
+		s.lastChunkMutex.Unlock()
+
+		// Send data to all clients.
+		if broadcastErr := s.broadcastToClients(buffer[:n]); broadcastErr != nil {
+			slog.Info("DIAGNOSTICS: ERROR sending data to clients: %v", broadcastErr)
+			sentry.CaptureException(broadcastErr)
+			return broadcastErr
+		}
+
+		// Calculate delay based on bitrate and buffer size.
+		delayMs := (n * bitsPerByte) / s.bitrate
+
+		// Limit minimum delay.
+		if delayMs < minPlaybackDelayMs {
+			delayMs = minPlaybackDelayMs
+		}
+
+		// Log delay information once every 10 seconds.
+		if time.Since(lastDelayLogTime) > 10*time.Second {
+			slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
+				delayMs, n, s.bitrate)
+			lastDelayLogTime = time.Now()
+		}
+
+		// Wait for delay with completion check.
+		select {
+		case <-time.After(time.Duration(delayMs) * time.Millisecond):
+			// Continue processing.
+		case <-s.quit:
+			slog.Info("DIAGNOSTICS: Playback of %s interrupted during delay", trackPath)
+			return nil
+		}
+	}
+
+	duration := time.Since(startTime)
+	slog.Info("DIAGNOSTICS: Playback of %s completed (read %d bytes in %.2f sec)",
+		trackPath, bytesRead, duration.Seconds())
+
+	// Increment playback time metric for Prometheus
+	if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+		routeName := getRouteFromTrackPath(trackPath)
+		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
+		slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
+			duration.Seconds(), routeName)
+	}
+
+	// Add pause between tracks
+	pauseMs := gracePeriodMs
+	slog.Info("DIAGNOSTICS: Adding pause of %d ms between tracks", pauseMs)
+	select {
+	case <-time.After(time.Duration(pauseMs) * time.Millisecond):
+		// Continue processing
+	case <-s.quit:
+		slog.Info("DIAGNOSTICS: Pause between tracks interrupted for %s", trackPath)
+		return nil
+	}
+
+	return nil
 }
 
-// getRouteFromTrackPath tries to extract route name from file path
+// getRouteFromTrackPath tries to extract route name from file path.
 func getRouteFromTrackPath(trackPath string) string {
 	// Extract directory path
 	dir := filepath.Dir(trackPath)
-	
+
 	// Get last component of path, which usually corresponds to route name
 	route := filepath.Base(dir)
-	
+
 	// Add leading slash if it doesn't exist
 	if !strings.HasPrefix(route, "/") {
 		route = "/" + route
 	}
-	
+
 	return route
 }
 
-// For exchanging metrics between packages
-
+// For tracking logs when sending data.
 var (
-	trackSecondsMetric *prometheus.CounterVec
-	metricMutex        sync.RWMutex
-)
-
-// SetTrackSecondsMetric sets the metric from outside
-func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
-	metricMutex.Lock()
-	defer metricMutex.Unlock()
-	
-	trackSecondsMetric = metric
-	log.Printf("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric")
-}
-
-// GetTrackSecondsMetric returns the metric if it's set
-func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
-	metricMutex.RLock()
-	defer metricMutex.RUnlock()
-	
-	if trackSecondsMetric == nil {
-		return nil, false
-	}
-	
-	return trackSecondsMetric, true
-}
-
-// For tracking logs when sending data
-var (
-	lastClientCount int
-	lastLogTime     time.Time
+	lastClientCount  int
+	lastLogTime      time.Time
 	lastDelayLogTime time.Time
 )
 
-// AddClient adds a new client and returns a channel for receiving data
+// AddClient adds a new client and returns a channel for receiving data.
 func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	// Check if maximum number of clients has been exceeded
-	if s.maxClients > 0 && atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
-		err := fmt.Errorf("maximum number of clients exceeded (%d)", s.maxClients)
-		sentry.CaptureException(err) // This is an error, send to Sentry
-		return nil, 0, err
+	if s.maxClients > 0 {
+		if s.maxClients > math.MaxInt32 {
+			slog.Info("ERROR: maxClients (%d) exceeds int32 max value, limiting to %d", s.maxClients, math.MaxInt32)
+			s.maxClients = math.MaxInt32
+		}
+		if atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
+			err := fmt.Errorf("maximum number of clients exceeded (%d)", s.maxClients)
+			sentry.CaptureException(err) // This is an error, send to Sentry
+			return nil, 0, err
+		}
 	}
 
 	s.clientMutex.Lock()
@@ -528,14 +533,14 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 
 	// Increase client counter
 	clientID := int(atomic.AddInt32(&s.clientCounter, 1))
-	
+
 	// Create channel for client with buffer
 	// Buffered channel is needed to prevent blocking
 	// with slow clients
-	clientChannel := make(chan []byte, 32) // Buffer size increased from 10 to 32
+	clientChannel := make(chan []byte, defaultClientChannelBuffer)
 	s.clientChannels[clientID] = clientChannel
 
-	log.Printf("Client %d connected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+	slog.Info("Client %d connected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
 
 	// IMPORTANT: If we have the last data buffer, send it immediately to the new client
 	// so they don't have to wait for the next file read
@@ -543,25 +548,25 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	if s.lastChunk != nil {
 		// Use append to create a new copy for the client - one allocation instead of two
 		dataCopy := append([]byte(nil), s.lastChunk...)
-		
-		log.Printf("DIAGNOSTICS: Sending last buffer (%d bytes) to new client %d", len(dataCopy), clientID)
-		
+
+		slog.Info("DIAGNOSTICS: Sending last buffer (%d bytes) to new client %d", len(dataCopy), clientID)
+
 		// Send data to new client's channel
 		select {
 		case clientChannel <- dataCopy:
-			log.Printf("DIAGNOSTICS: Last buffer successfully sent to client %d", clientID)
+			slog.Info("DIAGNOSTICS: Last buffer successfully sent to client %d", clientID)
 		default:
-			log.Printf("DIAGNOSTICS: Unable to send last buffer to client %d, channel full", clientID)
+			slog.Info("DIAGNOSTICS: Unable to send last buffer to client %d, channel full", clientID)
 		}
 	} else {
-		log.Printf("DIAGNOSTICS: No last buffer to send to client %d", clientID)
+		slog.Info("DIAGNOSTICS: No last buffer to send to client %d", clientID)
 	}
 	s.lastChunkMutex.RUnlock()
 
 	return clientChannel, clientID, nil
 }
 
-// RemoveClient removes a client
+// RemoveClient removes a client.
 func (s *Streamer) RemoveClient(clientID int) {
 	s.clientMutex.Lock()
 	defer s.clientMutex.Unlock()
@@ -570,16 +575,16 @@ func (s *Streamer) RemoveClient(clientID int) {
 		close(channel)
 		delete(s.clientChannels, clientID)
 		atomic.AddInt32(&s.clientCounter, -1)
-		log.Printf("Client %d disconnected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
+		slog.Info("Client %d disconnected. Total clients: %d", clientID, atomic.LoadInt32(&s.clientCounter))
 	}
 }
 
-// GetClientCount returns the current number of clients
+// GetClientCount returns the current number of clients.
 func (s *Streamer) GetClientCount() int {
 	return int(atomic.LoadInt32(&s.clientCounter))
 }
 
-// broadcastToClients sends data to all connected clients
+// broadcastToClients sends data to all connected clients.
 func (s *Streamer) broadcastToClients(data []byte) error {
 	s.clientMutex.RLock()
 	defer s.clientMutex.RUnlock()
@@ -596,64 +601,26 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		// Output message only when client count changes
 		// or not more than once every 10 seconds
 		if clientCount != lastClientCount || time.Since(lastLogTime) > 10*time.Second {
-			log.Printf("DIAGNOSTICS: Sending %d bytes of data to %d clients", len(data), clientCount)
+			slog.Info("DIAGNOSTICS: Sending %d bytes of data to %d clients", len(data), clientCount)
 			lastClientCount = clientCount
 			lastLogTime = time.Now()
 		}
 	}
 
 	// If there are many clients, use batch approach
-	const batchSize = 50
-	
-	// For small number of clients, use direct sending
-	if clientCount <= batchSize {
-		var g errgroup.Group
-		
-		// Send data to each client in a separate goroutine
-		for clientID, clientChan := range s.clientChannels {
-			clientID := clientID
-			clientChan := clientChan
-			
-			g.Go(func() error {
-				select {
-				case clientChan <- data: // Use original buffer, not a copy
-					// Data successfully sent
-					return nil
-				case <-time.After(200 * time.Millisecond):
-					// Timeout sending data - try one more time
-					log.Printf("First timeout sending data to client %d, retrying...", clientID)
-					
-					select {
-					case clientChan <- data:
-						log.Printf("Resending data to client %d successful", clientID)
-						return nil
-					case <-time.After(200 * time.Millisecond):
-						// Second timeout, now disconnect client
-						log.Printf("Second timeout sending data to client %d, disconnecting...", clientID)
-						s.RemoveClient(clientID)
-						return nil
-					}
-				}
-			})
-		}
-
-		return g.Wait()
-	}
-	
-	// For large number of clients use batch processing
 	// Create list of all clients
 	clients := make([]struct {
-		id  int
-		ch  chan []byte
+		id int
+		ch chan []byte
 	}, 0, clientCount)
-	
+
 	for id, ch := range s.clientChannels {
 		clients = append(clients, struct {
-			id  int
-			ch  chan []byte
+			id int
+			ch chan []byte
 		}{id, ch})
 	}
-	
+
 	// Process clients in batches
 	var wg sync.WaitGroup
 	for i := 0; i < clientCount; i += batchSize {
@@ -661,35 +628,71 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 		if end > clientCount {
 			end = clientCount
 		}
-		
+
 		wg.Add(1)
 		go func(batch []struct {
-			id  int
-			ch  chan []byte
+			id int
+			ch chan []byte
 		}) {
 			defer wg.Done()
-			
+
 			for _, client := range batch {
 				select {
 				case client.ch <- data: // Use original buffer, not a copy
 					// Data successfully sent
-				case <-time.After(200 * time.Millisecond):
+				case <-time.After(time.Duration(firstTimeoutMs) * time.Millisecond):
 					// Timeout sending data - try one more time
-					log.Printf("First timeout sending data to client %d, retrying...", client.id)
-					
+					slog.Info("First timeout sending data to client %d, retrying...", client.id)
+
 					select {
 					case client.ch <- data:
-						log.Printf("Resending data to client %d successful", client.id)
-					case <-time.After(200 * time.Millisecond):
+						slog.Info("Resending data to client %d successful", client.id)
+					case <-time.After(time.Duration(secondTimeoutMs) * time.Millisecond):
 						// Second timeout, now disconnect client
-						log.Printf("Second timeout sending data to client %d, disconnecting...", client.id)
+						slog.Info("Second timeout sending data to client %d, disconnecting...", client.id)
 						s.RemoveClient(client.id)
 					}
 				}
 			}
 		}(clients[i:end])
 	}
-	
+
 	wg.Wait()
 	return nil
-} 
+}
+
+// In-place min function.
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// For exchanging metrics between packages
+
+var (
+	trackSecondsMetric *prometheus.CounterVec
+	metricMutex        sync.RWMutex
+)
+
+// SetTrackSecondsMetric sets the metric from outside.
+func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
+	metricMutex.Lock()
+	defer metricMutex.Unlock()
+
+	trackSecondsMetric = metric
+	slog.Info("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric")
+}
+
+// GetTrackSecondsMetric returns the metric if it's set.
+func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
+	metricMutex.RLock()
+	defer metricMutex.RUnlock()
+
+	if trackSecondsMetric == nil {
+		return nil, false
+	}
+
+	return trackSecondsMetric, true
+}

@@ -1,7 +1,6 @@
-package unit
+package unit_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -58,10 +57,10 @@ func TestStreamerClientManagement(t *testing.T) {
 		ch, clientID, err := streamer.AddClient()
 		require.NoError(t, err, "Adding client should not error")
 		require.NotNil(t, ch, "Client channel should not be nil")
-		
+
 		clients = append(clients, clientID)
 		channels = append(channels, ch)
-		
+
 		// Check incremented client count
 		assert.Equal(t, i+1, streamer.GetClientCount(), "Client count should increase by one")
 	}
@@ -108,7 +107,7 @@ func TestBroadcastToClients(t *testing.T) {
 		// Start goroutine to read from channel
 		go func(clientIndex int, channel <-chan []byte) {
 			defer wg.Done()
-			
+
 			// Wait for data on the channel
 			select {
 			case data, ok := <-channel:
@@ -123,13 +122,10 @@ func TestBroadcastToClients(t *testing.T) {
 
 	// Use StreamTrack with a minimal MP3 file to trigger broadcasting
 	// Create temporary file with minimal MP3 data
-	tmpDir, err := ioutil.TempDir("", "audio-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
-	require.NoError(t, err)
+	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	require.NoError(t, errWrite)
 
 	// Start streaming in a separate goroutine
 	go func() {
@@ -153,17 +149,14 @@ func TestStreamTrackHappyPath(t *testing.T) {
 	defer streamer.Close()
 
 	// Create temporary file with minimal MP3 data
-	tmpDir, err := ioutil.TempDir("", "audio-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
-	require.NoError(t, err)
+	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	require.NoError(t, errWrite)
 
 	// Add a test client
-	ch, _, err := streamer.AddClient()
-	require.NoError(t, err)
+	ch, _, errAddClient := streamer.AddClient()
+	require.NoError(t, errAddClient)
 
 	// Variable to track if data was received
 	dataReceived := atomic.Bool{}
@@ -185,8 +178,8 @@ func TestStreamTrackHappyPath(t *testing.T) {
 	}()
 
 	// Stream the test file
-	err = streamer.StreamTrack(testFile)
-	require.NoError(t, err, "StreamTrack should not error with valid file")
+	errStream := streamer.StreamTrack(testFile)
+	require.NoError(t, errStream, "StreamTrack should not error with valid file")
 
 	// Wait for client to process data
 	wg.Wait()
@@ -201,23 +194,21 @@ func TestStreamTrackErrors(t *testing.T) {
 	defer streamer.Close()
 
 	// Test empty path
-	err := streamer.StreamTrack("")
-	require.Error(t, err, "Empty path should return error")
-	assert.Contains(t, err.Error(), "empty audio file path", "Error should mention empty path")
+	errEmpty := streamer.StreamTrack("")
+	require.Error(t, errEmpty, "Empty path should return error")
+	assert.Contains(t, errEmpty.Error(), "empty audio file path", "Error should mention empty path")
 
 	// Test non-existent file
-	err = streamer.StreamTrack("/path/to/nonexistent/file.mp3")
-	require.Error(t, err, "Non-existent file should return error")
-	assert.Contains(t, err.Error(), "error checking file", "Error should mention file check issue")
+	errNotFound := streamer.StreamTrack("/path/to/nonexistent/file.mp3")
+	require.Error(t, errNotFound, "Non-existent file should return error")
+	assert.Contains(t, errNotFound.Error(), "error checking file", "Error should mention file check issue")
 
 	// Test directory instead of file
-	tmpDir, err := ioutil.TempDir("", "audio-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-	
-	err = streamer.StreamTrack(tmpDir)
-	require.Error(t, err, "Directory path should return error")
-	assert.Contains(t, err.Error(), "is a directory", "Error should mention it's a directory")
+	tmpDir := t.TempDir()
+
+	errDir := streamer.StreamTrack(tmpDir)
+	require.Error(t, errDir, "Directory path should return error")
+	assert.Contains(t, errDir.Error(), "is a directory", "Error should mention it's a directory")
 }
 
 // TestLastChunkDelivery tests that new clients receive the last chunk of data
@@ -227,13 +218,10 @@ func TestLastChunkDelivery(t *testing.T) {
 	defer streamer.Close()
 
 	// Create temporary file with minimal MP3 data
-	tmpDir, err := ioutil.TempDir("", "audio-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	err = ioutil.WriteFile(testFile, audioMinimumMP3Data, 0644)
-	require.NoError(t, err)
+	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	require.NoError(t, errWrite)
 
 	// Start streaming in a separate goroutine
 	go func() {
@@ -245,8 +233,8 @@ func TestLastChunkDelivery(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Now add a new client which should receive the last chunk
-	ch, _, err := streamer.AddClient()
-	require.NoError(t, err)
+	ch, _, errAddClient := streamer.AddClient()
+	require.NoError(t, errAddClient)
 
 	// Check if new client receives data
 	dataReceived := false
@@ -268,20 +256,17 @@ func TestStopCurrentTrack(t *testing.T) {
 	defer streamer.Close()
 
 	// Create temporary file with minimal MP3 data
-	tmpDir, err := ioutil.TempDir("", "audio-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
 	// Create a larger file for longer playback
 	largerData := make([]byte, 10000)
 	copy(largerData, audioMinimumMP3Data)
-	err = ioutil.WriteFile(testFile, largerData, 0644)
-	require.NoError(t, err)
+	errWrite := os.WriteFile(testFile, largerData, 0644)
+	require.NoError(t, errWrite)
 
 	// Add a client
-	ch, _, err := streamer.AddClient()
-	require.NoError(t, err)
+	ch, _, errAddClient := streamer.AddClient()
+	require.NoError(t, errAddClient)
 
 	// Flag to track if streaming was interrupted
 	interrupted := atomic.Bool{}
@@ -314,10 +299,10 @@ func TestStopCurrentTrack(t *testing.T) {
 	// Add WaitGroup for final goroutine to ensure it completes before test finishes
 	var finalWg sync.WaitGroup
 	finalWg.Add(1)
-	
+
 	// Setup a done channel to ensure goroutine cleanup
 	done := make(chan struct{})
-	
+
 	// Check if channel is still functional
 	var receivedData bool
 	// Start another streaming to send data
@@ -340,10 +325,10 @@ func TestStopCurrentTrack(t *testing.T) {
 	}
 
 	assert.True(t, receivedData, "Client should still be able to receive data after stopping track")
-	
+
 	// Stop current track and wait for the final goroutine to complete
 	streamer.StopCurrentTrack() // Ensure the streaming stops
-	
+
 	// Wait for the goroutine to finish with timeout
 	select {
 	case <-done:
@@ -351,6 +336,6 @@ func TestStopCurrentTrack(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Log("Warning: Timeout waiting for streaming goroutine to complete")
 	}
-	
+
 	finalWg.Wait()
-} 
+}
