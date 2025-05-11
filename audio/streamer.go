@@ -56,6 +56,11 @@ type Streamer struct {
 	lastChunk       []byte       // Last sent chunk of audio data.
 	lastChunkMutex  sync.RWMutex // Mutex for protecting lastChunk.
 	normalizeVolume bool         // Flag to enable/disable volume normalization.
+	lastClientCount int          // Для отслеживания количества клиентов при логировании
+	lastLogTime     time.Time    // Время последнего логирования
+	lastDelayLogTime time.Time   // Время последнего логирования задержки
+	trackSecondsMetric *prometheus.CounterVec // Метрика для подсчета времени воспроизведения трека
+	metricMutex        sync.RWMutex           // Мьютекс для защиты метрики
 }
 
 // NewStreamer creates a new audio streamer.
@@ -81,6 +86,11 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		lastChunk:       nil,
 		lastChunkMutex:  sync.RWMutex{},
 		normalizeVolume: true, // Enable volume normalization by default.
+		lastClientCount: 0,
+		lastLogTime:     time.Time{},
+		lastDelayLogTime: time.Time{},
+		trackSecondsMetric: nil,
+		metricMutex:        sync.RWMutex{},
 	}
 }
 
@@ -267,7 +277,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		// Initialize buffer and counter.
 		buffer, okBuf := s.bufferPool.Get().([]byte)
 		if !okBuf {
-			return fmt.Errorf("failed to get buffer from pool")
+			return errors.New("failed to get buffer from pool")
 		}
 		defer s.bufferPool.Put(&buffer)
 
@@ -326,10 +336,10 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			}
 
 			// Log delay information once every 10 seconds.
-			if time.Since(lastDelayLogTime) > 10*time.Second {
+			if time.Since(s.lastDelayLogTime) > 10*time.Second {
 				slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
 					delayMs, n, s.bitrate)
-				lastDelayLogTime = time.Now()
+				s.lastDelayLogTime = time.Now()
 			}
 
 			// Wait for delay with completion check.
@@ -348,7 +358,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 			trackPath, bytesRead, duration.Seconds())
 
 		// Increment playback time metric for Prometheus.
-		if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+		if trackSecondsTotal, ok := s.GetTrackSecondsMetric(); ok {
 			routeName := getRouteFromTrackPath(trackPath)
 			trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
 			slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
@@ -384,7 +394,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	// Stream from pipe.
 	buffer, okPipe := s.bufferPool.Get().([]byte)
 	if !okPipe {
-		return fmt.Errorf("failed to get buffer from pool")
+		return errors.New("failed to get buffer from pool")
 	}
 	defer s.bufferPool.Put(&buffer)
 
@@ -448,10 +458,10 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 
 		// Log delay information once every 10 seconds.
-		if time.Since(lastDelayLogTime) > 10*time.Second {
+		if time.Since(s.lastDelayLogTime) > 10*time.Second {
 			slog.Info("DIAGNOSTICS: Calculated delay: %d ms for %d bytes of data at bitrate %d kbit/s",
 				delayMs, n, s.bitrate)
-			lastDelayLogTime = time.Now()
+			s.lastDelayLogTime = time.Now()
 		}
 
 		// Wait for delay with completion check.
@@ -469,7 +479,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		trackPath, bytesRead, duration.Seconds())
 
 	// Increment playback time metric for Prometheus
-	if trackSecondsTotal, ok := GetTrackSecondsMetric(); ok {
+	if trackSecondsTotal, ok := s.GetTrackSecondsMetric(); ok {
 		routeName := getRouteFromTrackPath(trackPath)
 		trackSecondsTotal.WithLabelValues(routeName).Add(duration.Seconds())
 		slog.Info("DIAGNOSTICS: trackSecondsTotal metric increased by %.2f sec for %s",
@@ -505,13 +515,6 @@ func getRouteFromTrackPath(trackPath string) string {
 
 	return route
 }
-
-// For tracking logs when sending data.
-var (
-	lastClientCount  int
-	lastLogTime      time.Time
-	lastDelayLogTime time.Time
-)
 
 // AddClient adds a new client and returns a channel for receiving data.
 func (s *Streamer) AddClient() (<-chan []byte, int, error) {
@@ -600,10 +603,10 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 	if clientCount > 0 {
 		// Output message only when client count changes
 		// or not more than once every 10 seconds
-		if clientCount != lastClientCount || time.Since(lastLogTime) > 10*time.Second {
+		if clientCount != s.lastClientCount || time.Since(s.lastLogTime) > 10*time.Second {
 			slog.Info("DIAGNOSTICS: Sending %d bytes of data to %d clients", len(data), clientCount)
-			lastClientCount = clientCount
-			lastLogTime = time.Now()
+			s.lastClientCount = clientCount
+			s.lastLogTime = time.Now()
 		}
 	}
 
@@ -661,38 +664,23 @@ func (s *Streamer) broadcastToClients(data []byte) error {
 	return nil
 }
 
-// In-place min function.
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+// SetTrackSecondsMetric sets the metric for the streamer.
+func (s *Streamer) SetTrackSecondsMetric(metric *prometheus.CounterVec) {
+	s.metricMutex.Lock()
+	defer s.metricMutex.Unlock()
+
+	s.trackSecondsMetric = metric
+	slog.Info("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric for streamer")
 }
 
-// For exchanging metrics between packages
+// GetTrackSecondsMetric returns the metric if it's set for the streamer.
+func (s *Streamer) GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
+	s.metricMutex.RLock()
+	defer s.metricMutex.RUnlock()
 
-var (
-	trackSecondsMetric *prometheus.CounterVec
-	metricMutex        sync.RWMutex
-)
-
-// SetTrackSecondsMetric sets the metric from outside.
-func SetTrackSecondsMetric(metric *prometheus.CounterVec) {
-	metricMutex.Lock()
-	defer metricMutex.Unlock()
-
-	trackSecondsMetric = metric
-	slog.Info("DIAGNOSTICS: SetTrackSecondsMetric saved pointer to metric")
-}
-
-// GetTrackSecondsMetric returns the metric if it's set.
-func GetTrackSecondsMetric() (*prometheus.CounterVec, bool) {
-	metricMutex.RLock()
-	defer metricMutex.RUnlock()
-
-	if trackSecondsMetric == nil {
+	if s.trackSecondsMetric == nil {
 		return nil, false
 	}
 
-	return trackSecondsMetric, true
+	return s.trackSecondsMetric, true
 }

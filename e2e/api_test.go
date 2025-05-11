@@ -138,7 +138,7 @@ func TestTrackControlEndpoints(t *testing.T) {
 
 	client := &http.Client{
 		Jar: jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			// Allow redirects for login check
 			return nil
 		},

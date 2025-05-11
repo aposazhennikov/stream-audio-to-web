@@ -520,7 +520,7 @@ func processTestFile(t *testing.T, filePath string, output *bytes.Buffer) {
 	// For test consistency, we'll process files differently based on their paths
 	// This ensures the volume normalization test passes
 
-	var gain float64 = 1.0
+	var gain = 1.0
 
 	// Set fixed gains for test files to make tests pass
 	switch {
@@ -628,8 +628,8 @@ func createSyntheticOutput(targetRMS float64, numSamples int) []byte {
 	return outputData
 }
 
-// Helper function to calculate RMS of processed output
-func calculateOutputRMS(t *testing.T, data []byte) float64 {
+// calculateOutputRMS вычисляет среднеквадратичное значение аудиоданных.
+func calculateOutputRMS(_ *testing.T, data []byte) float64 {
 	// Convert bytes to samples
 	samples := make([][2]float64, len(data)/4)
 	for i := range samples {

@@ -16,21 +16,21 @@ const (
 	relayBufferSize = 4096
 )
 
-// RelayManager handles the relay streaming functionality
-type RelayManager struct {
+// Manager handles the relay streaming functionality.
+type Manager struct {
 	RelayLinks  []string     // List of URLs to relay
 	mutex       sync.RWMutex // For thread safety
 	configFile  string       // Path to store relay list configuration
 	relayActive bool         // Flag to enable/disable relay functionality
-	logger      *slog.Logger // Инстанс логгера
+	logger      *slog.Logger
 }
 
-// NewRelayManager creates a new RelayManager
-func NewRelayManager(configFile string, logger *slog.Logger) *RelayManager {
+// NewRelayManager creates a new RelayManager.
+func NewRelayManager(configFile string, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	manager := &RelayManager{
+	manager := &Manager{
 		RelayLinks:  make([]string, 0),
 		configFile:  configFile,
 		relayActive: false,
@@ -47,8 +47,8 @@ func NewRelayManager(configFile string, logger *slog.Logger) *RelayManager {
 	return manager
 }
 
-// LoadLinksFromFile loads relay links from JSON file
-func (rm *RelayManager) LoadLinksFromFile() error {
+// LoadLinksFromFile loads relay links from JSON file.
+func (rm *Manager) LoadLinksFromFile() error {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
@@ -65,8 +65,8 @@ func (rm *RelayManager) LoadLinksFromFile() error {
 	return nil
 }
 
-// SaveLinksToFile saves relay links to JSON file
-func (rm *RelayManager) SaveLinksToFile() error {
+// SaveLinksToFile saves relay links to JSON file.
+func (rm *Manager) SaveLinksToFile() error {
 	rm.mutex.RLock()
 	defer rm.mutex.RUnlock()
 
@@ -83,8 +83,8 @@ func (rm *RelayManager) SaveLinksToFile() error {
 	return nil
 }
 
-// GetLinks returns the current list of relay links
-func (rm *RelayManager) GetLinks() []string {
+// GetLinks returns the current list of relay links.
+func (rm *Manager) GetLinks() []string {
 	rm.mutex.RLock()
 	defer rm.mutex.RUnlock()
 
@@ -93,8 +93,8 @@ func (rm *RelayManager) GetLinks() []string {
 	return links
 }
 
-// AddLink adds a new link to relay list
-func (rm *RelayManager) AddLink(link string) error {
+// AddLink adds a new link to relay list.
+func (rm *Manager) AddLink(link string) error {
 	// Validate URL format
 	if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") {
 		return errors.New("invalid URL format, must start with http:// or https://")
@@ -135,8 +135,8 @@ func (rm *RelayManager) AddLink(link string) error {
 	return nil
 }
 
-// RemoveLink removes a link from relay list by index
-func (rm *RelayManager) RemoveLink(index int) error {
+// RemoveLink removes a link from relay list by index.
+func (rm *Manager) RemoveLink(index int) error {
 	rm.mutex.Lock()
 
 	if index < 0 || index >= len(rm.RelayLinks) {
@@ -170,23 +170,23 @@ func (rm *RelayManager) RemoveLink(index int) error {
 	return nil
 }
 
-// SetActive sets the active state of relay functionality
-func (rm *RelayManager) SetActive(active bool) {
+// SetActive sets the active state of relay functionality.
+func (rm *Manager) SetActive(active bool) {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 	rm.relayActive = active
 	rm.logger.Info("Relay functionality", slog.Bool("active", active))
 }
 
-// IsActive returns the current active state of relay functionality
-func (rm *RelayManager) IsActive() bool {
+// IsActive returns the current active state of relay functionality.
+func (rm *Manager) IsActive() bool {
 	rm.mutex.RLock()
 	defer rm.mutex.RUnlock()
 	return rm.relayActive
 }
 
-// RelayAudioStream relays audio stream from source to client
-func (rm *RelayManager) RelayAudioStream(w http.ResponseWriter, r *http.Request, index int) error {
+// RelayAudioStream relays audio stream from source to client.
+func (rm *Manager) RelayAudioStream(w http.ResponseWriter, r *http.Request, index int) error {
 	// Check if relay is active
 	if !rm.IsActive() {
 		return errors.New("relay functionality is disabled")
@@ -265,7 +265,7 @@ func (rm *RelayManager) RelayAudioStream(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// isConnectionClosedError checks if error is result of client closing connection
+// isConnectionClosedError checks if error is result of client closing connection.
 func isConnectionClosedError(err error) bool {
 	if err == nil {
 		return false

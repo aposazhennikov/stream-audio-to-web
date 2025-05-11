@@ -8,63 +8,7 @@ import (
 
 	"github.com/user/stream-audio-to-web/playlist"
 	"github.com/user/stream-audio-to-web/slog"
-)
-
-// Minimal valid audio files for testing
-var (
-	// Minimal valid MP3 file (data frame)
-	minimumMP3Data = []byte{
-		0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Minimal data
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
-
-	// Minimal valid WAV file (44 bytes header + minimal data)
-	minimumWAVData = []byte{
-		// RIFF header
-		0x52, 0x49, 0x46, 0x46, // "RIFF"
-		0x24, 0x00, 0x00, 0x00, // Chunk size (36 + data size)
-		0x57, 0x41, 0x56, 0x45, // "WAVE"
-		// fmt subchunk
-		0x66, 0x6D, 0x74, 0x20, // "fmt "
-		0x10, 0x00, 0x00, 0x00, // Subchunk size (16 bytes)
-		0x01, 0x00, // Audio format (1 = PCM)
-		0x01, 0x00, // Number of channels (1 = mono)
-		0x44, 0xAC, 0x00, 0x00, // Sample rate (44100 Hz)
-		0x88, 0x58, 0x01, 0x00, // Byte rate (44100 * 1 * 16/8)
-		0x02, 0x00, // Block align (channels * bits/sample / 8)
-		0x10, 0x00, // Bits per sample (16 bits)
-		// data subchunk
-		0x64, 0x61, 0x74, 0x61, // "data"
-		0x00, 0x00, 0x00, 0x00, // Data size (0 bytes)
-		// Minimal data (1 sample)
-		0x00, 0x00,
-	}
-
-	// Minimal valid OGG file (header only without data)
-	minimumOGGData = []byte{
-		// OGG header
-		0x4F, 0x67, 0x67, 0x53, // "OggS"
-		0x00,                                           // Version
-		0x02,                                           // Header type
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Granule position (0)
-		0x01, 0x02, 0x03, 0x04, // Serial number (arbitrary)
-		0x00, 0x00, 0x00, 0x00, // Page number
-		0x01, 0x00, 0x00, 0x00, // CRC checksum
-		0x01, // Number of segments
-		0x1E, // Segment size (30 bytes)
-		// Vorbis header (simplified)
-		0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73, // "\x01vorbis"
-		0x00, 0x00, 0x00, 0x00, // Vorbis version
-		0x01,                   // Channels (1)
-		0x44, 0xAC, 0x00, 0x00, // Sample rate (44100 Hz)
-		0x00, 0x00, 0x00, 0x00, // Bitrate maximum
-		0x00, 0x00, 0x00, 0x00, // Bitrate nominal
-		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
-		0x00, // Blocksize
-	}
+	"github.com/user/stream-audio-to-web/unit/testdata"
 )
 
 // Creating different audio file types for testing
@@ -73,11 +17,11 @@ func createTestAudioFiles(dir string) error {
 		name string
 		data []byte
 	}{
-		{"test1.mp3", minimumMP3Data},
-		{"test2.mp3", minimumMP3Data},
-		{"test3.wav", minimumWAVData},
-		{"test4.ogg", minimumOGGData},
-		{"test5.mp3", minimumMP3Data},
+		{"test1.mp3", testdata.GetMinimumMP3Data()},
+		{"test2.mp3", testdata.GetMinimumMP3Data()},
+		{"test3.wav", testdata.GetMinimumWAVData()},
+		{"test4.ogg", testdata.GetMinimumOGGData()},
+		{"test5.mp3", testdata.GetMinimumMP3Data()},
 	}
 
 	for _, file := range files {
@@ -272,16 +216,16 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		name string
 		data []byte
 	}{
-		{"01_track.mp3", minimumMP3Data},
-		{"02_track.mp3", minimumMP3Data},
-		{"03_track.mp3", minimumMP3Data},
-		{"04_track.mp3", minimumMP3Data},
-		{"05_track.mp3", minimumMP3Data},
-		{"06_track.mp3", minimumMP3Data},
-		{"07_track.mp3", minimumMP3Data},
-		{"08_track.mp3", minimumMP3Data},
-		{"09_track.mp3", minimumMP3Data},
-		{"10_track.mp3", minimumMP3Data},
+		{"01_track.mp3", testdata.GetMinimumMP3Data()},
+		{"02_track.mp3", testdata.GetMinimumMP3Data()},
+		{"03_track.mp3", testdata.GetMinimumMP3Data()},
+		{"04_track.mp3", testdata.GetMinimumMP3Data()},
+		{"05_track.mp3", testdata.GetMinimumMP3Data()},
+		{"06_track.mp3", testdata.GetMinimumMP3Data()},
+		{"07_track.mp3", testdata.GetMinimumMP3Data()},
+		{"08_track.mp3", testdata.GetMinimumMP3Data()},
+		{"09_track.mp3", testdata.GetMinimumMP3Data()},
+		{"10_track.mp3", testdata.GetMinimumMP3Data()},
 	}
 
 	// Create files
@@ -309,7 +253,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	}
 
 	// Iterate through tracks in sequence
-	for _ = range regularTracks {
+	for range regularTracks {
 		nextTrack := regularPl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
 		if track, ok := nextTrack.(interface{ GetPath() string }); ok {
@@ -354,7 +298,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 	}
 
 	// Iterate through tracks in sequence
-	for _ = range shuffleTracks {
+	for range shuffleTracks {
 		nextTrack := shufflePl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
 		if track, ok := nextTrack.(interface{ GetPath() string }); ok {

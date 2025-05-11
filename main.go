@@ -23,7 +23,7 @@ import (
 	"github.com/user/stream-audio-to-web/relay"
 )
 
-// Default configuration
+// Default configuration.
 const (
 	defaultPort            = 8000
 	defaultAudioDir        = "./audio"
@@ -36,14 +36,14 @@ const (
 	defaultNormalizeVolume = true                // Volume normalization is enabled by default
 	defaultRelayEnabled    = false               // Relay functionality disabled by default
 	defaultRelayConfigFile = "./relay_list.json" // Default path for relay configuration
-	dummyMP3               = "dummy.mp3"
 	readTimeoutSec         = 15
 	idleTimeoutSec         = 60
 	shutdownTimeoutSec     = 10
 	defaultRoute           = "/humor"
+	maxSplitParts          = 2 // Maximum number of parts when splitting configuration strings
 )
 
-// Config описывает параметры конфигурации приложения
+// Config describes the application configuration parameters.
 type Config struct {
 	Port                   int
 	AudioDir               string
@@ -116,8 +116,8 @@ func main() {
 	// Set radio station manager for HTTP server
 	server.SetStationManager(stationManager)
 
-	// Initialize relay manager if enabled
-	var relayManager *relay.RelayManager
+	// Create relay manager if needed
+	var relayManager *relay.Manager
 	if config.RelayEnabled {
 		slog.Info("Initializing relay manager", "config_file", config.RelayConfigFile)
 		relayManager = relay.NewRelayManager(config.RelayConfigFile, slog.Default())
@@ -170,7 +170,7 @@ func main() {
 	}
 
 	// Replace temporary handler for root route with redirection
-	server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	if err := server.Handler().(*mux.Router).HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Redirecting from / to %s (method: %s)", redirectTo, r.Method)
 		// For HEAD requests return only headers without redirect
 		if r.Method == http.MethodHead {
@@ -182,7 +182,10 @@ func main() {
 			return
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
-	}).Methods("GET", "HEAD")
+	}).Methods("GET", "HEAD"); err != nil {
+		slog.Error("Failed to register root handler", "error", err)
+		sentry.CaptureException(err)
+	}
 
 	slog.Info("Redirect configured from / to %s", redirectTo)
 
@@ -265,8 +268,8 @@ func main() {
 	})
 }
 
-// configureSyncRoute configures one audio stream route synchronously
-func configureSyncRoute(server *httpServer.Server, stationManager *radio.RadioStationManager, route, dir string, config *Config) bool {
+// configureSyncRoute configures one audio stream route synchronously.
+func configureSyncRoute(server *httpServer.Server, stationManager *radio.StationManager, route, dir string, config *Config) bool {
 	slog.Info("Starting synchronous configuration of route '%s'...", route)
 
 	if !ensureDirectoryExists(dir, route) {
@@ -421,8 +424,8 @@ func loadConfig() *Config {
 		// Parse directory routes
 		routes := strings.Split(dirRoutes, ",")
 		for _, route := range routes {
-			parts := strings.SplitN(route, ":", 2)
-			if len(parts) == 2 {
+			parts := strings.SplitN(route, ":", maxSplitParts)
+			if len(parts) == maxSplitParts {
 				routePath := strings.TrimSpace(parts[0])
 				dirPath := strings.TrimSpace(parts[1])
 
@@ -449,8 +452,8 @@ func parseShuffleSettings(config *Config, shuffleSettings string) {
 	}
 	settings := strings.Split(shuffleSettings, ",")
 	for _, setting := range settings {
-		parts := strings.SplitN(setting, ":", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(setting, ":", maxSplitParts)
+		if len(parts) == maxSplitParts {
 			routePath := strings.TrimSpace(parts[0])
 			shuffleValue := strings.TrimSpace(parts[1])
 			// Ensure route starts with slash
@@ -515,6 +518,11 @@ func (d *dummyStreamHandler) GetCurrentTrackChannel() <-chan string {
 	return d.clientCh
 }
 
+// getDummyMP3 возвращает имя заглушки MP3 файла
+func getDummyMP3() string {
+	return "dummy.mp3"
+}
+
 // Minimal implementation of PlaylistManager for placeholder
 type dummyPlaylistManager struct{}
 
@@ -523,11 +531,11 @@ func (d *dummyPlaylistManager) Reload() error {
 }
 
 func (d *dummyPlaylistManager) GetCurrentTrack() interface{} {
-	return dummyMP3
+	return getDummyMP3()
 }
 
 func (d *dummyPlaylistManager) NextTrack() interface{} {
-	return dummyMP3
+	return getDummyMP3()
 }
 
 func (d *dummyPlaylistManager) GetHistory() []interface{} {
@@ -539,7 +547,7 @@ func (d *dummyPlaylistManager) GetStartTime() time.Time {
 }
 
 func (d *dummyPlaylistManager) PreviousTrack() interface{} {
-	return dummyMP3
+	return getDummyMP3()
 }
 
 // Shuffle implements PlaylistManager.Shuffle method
@@ -549,7 +557,7 @@ func (d *dummyPlaylistManager) Shuffle() {
 
 func reloadAllPlaylists(server *httpServer.Server) {
 	slog.Info("SIGHUP received, reloading playlists...")
-	walkErr := server.Handler().(*mux.Router).Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+	if walkErr := server.Handler().(*mux.Router).Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		path, pathErr := route.GetPathTemplate()
 		if pathErr != nil {
 			return pathErr
@@ -565,9 +573,8 @@ func reloadAllPlaylists(server *httpServer.Server) {
 			}
 		}
 		return nil
-	})
-	if walkErr != nil {
-		slog.Error("Error walking routes for playlist reload", "error", walkErr)
+	}); walkErr != nil {
+		slog.Error("Error walking routes for playlist reload", slog.String("error", walkErr.Error()))
 		sentry.CaptureException(walkErr)
 	}
 	slog.Info("Playlist reload complete")

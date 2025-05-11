@@ -24,7 +24,7 @@ type mockAudioServer struct {
 }
 
 func newMockAudioServer() *mockAudioServer {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		// Simulate audio stream - send "mock audio data" in chunks
 		for range [3]struct{}{} {

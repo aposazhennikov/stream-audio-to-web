@@ -13,7 +13,7 @@ import (
 )
 
 // Helper function to get base URL and password
-func getBaseURLAndPassword(t *testing.T) (string, string) {
+func getBaseURLAndPassword(_ *testing.T) (string, string) {
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 	return baseURL, password

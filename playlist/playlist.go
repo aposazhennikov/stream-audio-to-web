@@ -17,26 +17,19 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
-// Supported audio file formats
-var supportedExtensions = map[string]bool{
-	".mp3": true,
-	".aac": true,
-	".ogg": true,
-}
-
-// Track represents information about a track
+// Track represents information about a track.
 type Track struct {
 	Path     string
 	Name     string
 	FileInfo os.FileInfo
 }
 
-// GetPath returns the path to the track
+// GetPath returns the path to the track.
 func (t *Track) GetPath() string {
 	return t.Path
 }
 
-// Playlist manages the list of tracks for audio streaming
+// Playlist manages the list of tracks for audio streaming.
 type Playlist struct {
 	directory    string
 	tracks       []Track
@@ -97,7 +90,7 @@ func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.L
 	return pl, nil
 }
 
-// Close closes the watcher
+// Close closes the watcher.
 func (p *Playlist) Close() error {
 	err := p.watcher.Close()
 	if err != nil {
@@ -106,7 +99,7 @@ func (p *Playlist) Close() error {
 	return err
 }
 
-// Reload reloads the list of tracks from the directory
+// Reload reloads the list of tracks from the directory.
 func (p *Playlist) Reload() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -147,7 +140,7 @@ func (p *Playlist) Reload() error {
 
 		if !info.IsDir() {
 			ext := strings.ToLower(filepath.Ext(path))
-			if supportedExtensions[ext] {
+			if isSupportedExtension(ext) {
 				supportedFiles++
 				fileName := filepath.Base(path)
 				// Don't log every added track
@@ -233,7 +226,7 @@ func (p *Playlist) Reload() error {
 	return nil
 }
 
-// minInt возвращает минимум из двух int
+// minInt returns the minimum of two integers.
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -241,15 +234,7 @@ func minInt(a, b int) int {
 	return b
 }
 
-// maxInt возвращает максимум из двух int
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// GetCurrentTrack returns the current track
+// GetCurrentTrack returns the current track.
 func (p *Playlist) GetCurrentTrack() interface{} {
 	// Adding retry mechanism
 	maxAttempts := maxAttempts
@@ -289,7 +274,7 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 	return nil
 }
 
-// NextTrack moves to the next track and returns it
+// NextTrack moves to the next track and returns it.
 func (p *Playlist) NextTrack() interface{} {
 	// Adding retry mechanism
 	maxAttempts := maxAttempts
@@ -326,8 +311,8 @@ func (p *Playlist) NextTrack() interface{} {
 				currentTrackPath := p.tracks[currentPos].Path
 				// Fisher-Yates с crypto/rand
 				for i := len(p.tracks) - 1; i > 0; i-- {
-					max := big.NewInt(int64(i + 1))
-					jBig, err := rand.Int(rand.Reader, max)
+					maxNum := big.NewInt(int64(i + 1))
+					jBig, err := rand.Int(rand.Reader, maxNum)
 					if err != nil {
 						p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
 						jBig = big.NewInt(int64(i))
@@ -373,7 +358,7 @@ func (p *Playlist) NextTrack() interface{} {
 	return nil
 }
 
-// PreviousTrack moves to the previous track and returns it
+// PreviousTrack moves to the previous track and returns it.
 func (p *Playlist) PreviousTrack() interface{} {
 	// Adding retry mechanism
 	maxAttempts := maxAttempts
@@ -436,7 +421,7 @@ func (p *Playlist) PreviousTrack() interface{} {
 	return nil
 }
 
-// addTrackToHistory adds a track to history
+// addTrackToHistory adds a track to history.
 func (p *Playlist) addTrackToHistory(track Track) {
 	p.historyMutex.Lock()
 	defer p.historyMutex.Unlock()
@@ -450,7 +435,7 @@ func (p *Playlist) addTrackToHistory(track Track) {
 	}
 }
 
-// GetHistory returns the history of played tracks
+// GetHistory returns the history of played tracks.
 func (p *Playlist) GetHistory() []interface{} {
 	p.historyMutex.RLock()
 	defer p.historyMutex.RUnlock()
@@ -482,12 +467,12 @@ func (p *Playlist) GetHistory() []interface{} {
 	return history
 }
 
-// GetStartTime returns the playlist start time
+// GetStartTime returns the playlist start time.
 func (p *Playlist) GetStartTime() time.Time {
 	return p.startTime
 }
 
-// Shuffle randomizes the track list
+// Shuffle randomizes the track list.
 func (p *Playlist) Shuffle() {
 	p.logger.Info("SHUFFLE: Starting playlist shuffle for directory", slog.String("directory", p.directory))
 
@@ -543,8 +528,8 @@ func (p *Playlist) Shuffle() {
 
 	// Fisher-Yates с crypto/rand
 	for i := len(tracksToShuffle) - 1; i > 0; i-- {
-		max := big.NewInt(int64(i + 1))
-		jBig, err := rand.Int(rand.Reader, max)
+		maxNum := big.NewInt(int64(i + 1))
+		jBig, err := rand.Int(rand.Reader, maxNum)
 		if err != nil {
 			p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
 			jBig = big.NewInt(int64(i))
@@ -603,7 +588,7 @@ func (p *Playlist) Shuffle() {
 	}
 }
 
-// GetTracks returns a copy of the track list
+// GetTracks returns a copy of the track list.
 func (p *Playlist) GetTracks() []Track {
 	// Adding retry mechanism
 	maxAttempts := maxAttempts
@@ -647,7 +632,7 @@ func (p *Playlist) GetTracks() []Track {
 	return []Track{}
 }
 
-// watchDirectory monitors changes in the playlist directory
+// watchDirectory monitors changes in the playlist directory.
 func (p *Playlist) watchDirectory() {
 	for {
 		select {
@@ -657,7 +642,7 @@ func (p *Playlist) watchDirectory() {
 			}
 
 			ext := strings.ToLower(filepath.Ext(event.Name))
-			if !supportedExtensions[ext] {
+			if !isSupportedExtension(ext) {
 				continue
 			}
 
@@ -685,4 +670,14 @@ func (p *Playlist) watchDirectory() {
 			sentry.CaptureException(fmt.Errorf("fsnotify error: %w", err))
 		}
 	}
+}
+
+// isSupportedExtension проверяет, поддерживается ли расширение файла.
+func isSupportedExtension(ext string) bool {
+	supportedExtensions := map[string]bool{
+		".mp3": true,
+		".aac": true,
+		".ogg": true,
+	}
+	return supportedExtensions[ext]
 }

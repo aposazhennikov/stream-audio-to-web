@@ -11,17 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/user/stream-audio-to-web/audio"
+	"github.com/user/stream-audio-to-web/unit/testdata"
 	"go.uber.org/goleak"
 )
-
-// Minimal valid MP3 file data for testing
-var audioMinimumMP3Data = []byte{
-	0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Minimal data
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-}
 
 // TestMain sets up and tears down tests, including goroutine leak detection
 func TestMain(m *testing.M) {
@@ -124,7 +116,7 @@ func TestBroadcastToClients(t *testing.T) {
 	// Create temporary file with minimal MP3 data
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	errWrite := os.WriteFile(testFile, testdata.GetMinimumMP3Data(), 0644)
 	require.NoError(t, errWrite)
 
 	// Start streaming in a separate goroutine
@@ -151,7 +143,7 @@ func TestStreamTrackHappyPath(t *testing.T) {
 	// Create temporary file with minimal MP3 data
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	errWrite := os.WriteFile(testFile, testdata.GetMinimumMP3Data(), 0644)
 	require.NoError(t, errWrite)
 
 	// Add a test client
@@ -220,7 +212,7 @@ func TestLastChunkDelivery(t *testing.T) {
 	// Create temporary file with minimal MP3 data
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	errWrite := os.WriteFile(testFile, audioMinimumMP3Data, 0644)
+	errWrite := os.WriteFile(testFile, testdata.GetMinimumMP3Data(), 0644)
 	require.NoError(t, errWrite)
 
 	// Start streaming in a separate goroutine
@@ -260,7 +252,7 @@ func TestStopCurrentTrack(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.mp3")
 	// Create a larger file for longer playback
 	largerData := make([]byte, 10000)
-	copy(largerData, audioMinimumMP3Data)
+	copy(largerData, testdata.GetMinimumMP3Data())
 	errWrite := os.WriteFile(testFile, largerData, 0644)
 	require.NoError(t, errWrite)
 

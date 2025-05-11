@@ -9,21 +9,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/user/stream-audio-to-web/relay"
 	"github.com/user/stream-audio-to-web/slog"
 )
 
 // mockHTTPServer создает мок HTTP-сервера для тестов релея
 type mockHTTPServer struct {
-	relayManager *relay.RelayManager
-	password     string
-	t            *testing.T
+	router        *mux.Router
+	statusPassword string
+	relayManager *relay.Manager
+	t           *testing.T
 }
 
-func newMockHTTPServer(relayManager *relay.RelayManager, password string, t *testing.T) *mockHTTPServer {
+func newMockHTTPServer(relayManager *relay.Manager, password string, t *testing.T) *mockHTTPServer {
 	return &mockHTTPServer{
 		relayManager: relayManager,
-		password:     password,
+		statusPassword: password,
 		t:            t,
 	}
 }
@@ -31,7 +33,7 @@ func newMockHTTPServer(relayManager *relay.RelayManager, password string, t *tes
 func (m *mockHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Проверка аутентификации
 	authCookie, err := r.Cookie("status_auth")
-	if err != nil || authCookie.Value != m.password {
+	if err != nil || authCookie.Value != m.statusPassword {
 		m.t.Logf("DEBUG: Аутентификация не прошла: %v", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

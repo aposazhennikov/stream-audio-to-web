@@ -24,84 +24,88 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Constants for normalization.
+// Configuration for normalization.
 const (
-	// Analysis duration in milliseconds for each window.
-	defaultAnalysisDurationMs = 200
-	// Default number of analysis windows.
-	defaultAnalysisWindows = 6
-	// True peak safety margin in dB.
-	truePeakSafetyMargin = -2.0
-	// Maximum analysis time before timeout.
-	analysisTimeoutMs = 120
-	// --- Magic numbers for normalization and audio processing ---.
-	stereoFrameBytes      = 4
-	int16MaxValue         = 32767.0
-	int16MinValue         = -32768.0
-	mask15Bits            = 0x7FFF
-	mask16Bits            = 0x8000
-	analyzeBufferSize     = 8000
-	thresholdRMSHighLow1  = 0.399
-	thresholdRMSHighLow2  = 0.401
-	thresholdRMSLow1      = 0.099
-	thresholdRMSLow2      = 0.101
-	thresholdRMSVeryLow1  = 0.009
-	thresholdRMSVeryLow2  = 0.011
-	thresholdRMSVeryHigh1 = 2.9
-	thresholdRMSVeryHigh2 = 3.1
-	testRMSValue          = 0.1
-	averageChannelsDiv    = 2.0
-	maxSampleSeconds     = 10      // Maximum seconds to analyze in analyzeWholeFile.
-	defaultSampleRate    = 44100   // Default sample rate for max sample calculation.
-	lufsOffset           = -10.0   // Offset for LUFS calculation (empirical).
-	logBase              = 2       // Base for logarithmic volume calculation.
-	truePeakThreshold    = 0.9     // True peak threshold for limiting gain.
-	msInSecond           = 1000.0  // Milliseconds in one second.
-	pcmFrameBytes        = 4       // 2 bytes per channel (16-bit stereo).
-	streamBufferSize     = 16384   // Buffer size for normalized streaming (16KB).
-	rawStreamBufferSize  = 4096    // Buffer size for raw MP3 streaming (4KB).
-	analyzeRawBufferSize = 8000    // Buffer size for raw audio analysis (8KB).
-	testTargetRMS        = 0.2
-	testTolerance        = 0.001 // Tolerance for test RMS comparisons.
-	gainFactorLoud       = 0.5   // Gain factor for loud test case.
-	gainFactorQuiet      = 2.0   // Gain factor for quiet test case.
-	gainFactorVeryQuiet  = 10.0  // Gain factor for very quiet test case.
-	gainFactorVeryLoud   = 0.1   // Gain factor for very loud test case.
-	veryQuietRMS         = 0.01  // RMS for very quiet test case.
-	veryLoudRMS          = 3.0   // RMS for very loud test case.
+	// Default values.
+	defaultAnalysisDurationMs = 1000
+	defaultAnalysisWindows    = 10
+	
+	// Analysis timeout in milliseconds.
+	analysisTimeoutMs = 5000
+	
+	// Conversion factors.
+	msInSecond = 1000.0
+	
+	// Constants for gain calculation.
+	decibelBase        = 10.0
+	decibelMultiplier  = 20.0
+	
+	// Maximum values.
+	maxAnalysisWindows  = 30
+	minAnalysisWindows  = 3
+	
+	// Int16 range values.
+	int16Max       = 32767
+	int16MinValue  = -32768
+	int16MaxValue  = 32767.0
+	
+	// Buffer sizes.
+	streamBufferSize   = 8192
+	rawStreamBufferSize = 4096
+	bytesPerSample     = 4
+	pcmFrameBytes      = 4
+	audioBufferSize    = 4096
+	audioBufferMultiplier = 4
+	audioSampleRate    = 8000
+	audioGainThreshold = 0.1
+	analysisWindowSize = 10
+	analysisWindowMultiplier = 2
+	
+	// Margin values.
+	truePeakSafetyMargin = -1.0
+	logBase              = 2.0
+	
+	// Maximum value for a sample.
+	maxSampleSeconds = 10
 
-	// Additional constants for magic numbers.
-	maxAnalysisWindows       = 20    // Maximum number of analysis windows.
-	minAnalysisWindows       = 10    // Minimum number of analysis windows.
-	analysisWindowSize       = 10    // Size of analysis window.
-	analysisWindowMultiplier = 2     // Multiplier for analysis window.
-	audioBufferSize          = 4     // Size of audio buffer.
-	audioBufferMultiplier    = 4     // Multiplier for audio buffer.
-	audioSampleRate          = 8000  // Audio sample rate.
-	audioGainThreshold       = 0.1   // Threshold for audio gain.
-	int16Max                 = 32767 // Maximum value for int16.
-	int16MaxPlusOne          = 32768 // Maximum value for int16 plus one.
-	uint16Max                = 65535 // Maximum value for uint16.
-
-	// Constants for audio processing
-	decibelBase       = 10.0 // Base for decibel calculations
-	decibelMultiplier = 20.0 // Multiplier for decibel calculations
-	bytesPerSample    = 4    // Number of bytes per stereo sample (2 channels * 2 bytes)
-
-	// RMS level thresholds
+	// RMS level thresholds.
 	rmsLevelLoudThreshold     = 0.4
 	rmsLevelQuietThreshold    = 0.1
 	rmsLevelVeryQuietThreshold = 0.01
 	rmsLevelVeryLoudThreshold = 3.0
 	
-	// Sample conversion constants
+	// Sample conversion constants.
 	sampleConversionFactor = 32767.0
 	pcmFrameSize          = 4
 )
 
-// Normalization metrics.
-var (
-	normalizeGainMetric = promauto.NewGaugeVec(
+// NormalizerConfig holds configuration for the audio normalizer.
+type NormalizerConfig struct {
+	// Analysis duration in milliseconds for each window.
+	AnalysisDurationMs int
+	// Number of analysis windows.
+	AnalysisWindows int
+	// Volume cache stores gain factors for already processed audio files.
+	Cache *VolumeCache
+	// Metrics for monitoring normalization.
+	Metrics struct {
+		NormalizeGainMetric    *prometheus.GaugeVec
+		NormalizeSlowTotal     prometheus.Counter
+		NormalizeDisabledTotal prometheus.Counter
+		NormalizeWindowsUsed   prometheus.Gauge
+	}
+}
+
+// DefaultNormalizerConfig creates a default configuration for the normalizer.
+func DefaultNormalizerConfig() *NormalizerConfig {
+	config := &NormalizerConfig{
+		AnalysisDurationMs: defaultAnalysisDurationMs,
+		AnalysisWindows:    defaultAnalysisWindows,
+		Cache:              NewVolumeCache(),
+	}
+	
+	// Initialize metrics
+	config.Metrics.NormalizeGainMetric = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "normalize_gain",
 			Help: "Gain factor applied to audio files.",
@@ -109,49 +113,51 @@ var (
 		[]string{"route", "file"},
 	)
 
-	normalizeSlowTotal = promauto.NewCounter(
+	config.Metrics.NormalizeSlowTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "normalize_slow_total",
 			Help: "Total count of slow normalization operations.",
 		},
 	)
 
-	normalizeDisabledTotal = promauto.NewCounter(
+	config.Metrics.NormalizeDisabledTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "normalize_disabled_total",
 			Help: "Total count of disabled normalizations due to errors.",
 		},
 	)
 
-	normalizeWindowsUsed = promauto.NewGauge(
+	config.Metrics.NormalizeWindowsUsed = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "normalize_windows_used",
 			Help: "Number of analysis windows used in the last normalization operation.",
 		},
 	)
-)
+	
+	return config
+}
 
-// Configuration for normalization.
-var (
-	// Analysis duration in milliseconds for each window.
-	analysisDurationMs = defaultAnalysisDurationMs
-	// Number of analysis windows.
-	analysisWindows = defaultAnalysisWindows
-)
+// Global default normalizer configuration.
+var defaultNormalizerConfig = DefaultNormalizerConfig()
 
 // SetNormalizeConfig sets the configuration parameters for normalization.
 func SetNormalizeConfig(windowCount, durationMs int) {
 	if windowCount > 0 {
-		analysisWindows = windowCount
+		defaultNormalizerConfig.AnalysisWindows = windowCount
 	}
 	if durationMs > 0 {
-		analysisDurationMs = durationMs
+		defaultNormalizerConfig.AnalysisDurationMs = durationMs
 	}
 	slog.Info(
 		"DIAGNOSTICS: Normalization configuration updated",
-		"windows", analysisWindows,
-		"duration", analysisDurationMs,
+		"windows", defaultNormalizerConfig.AnalysisWindows,
+		"duration", defaultNormalizerConfig.AnalysisDurationMs,
 	)
+}
+
+// GetNormalizerConfig returns the default normalizer configuration.
+func GetNormalizerConfig() *NormalizerConfig {
+	return defaultNormalizerConfig
 }
 
 // VolumeCache stores gain factors for already processed audio files.
@@ -190,9 +196,6 @@ func (vc *VolumeCache) Set(filePath string, gain float64) {
 	slog.Info("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
 }
 
-// Global volume cache.
-var volumeCache = NewVolumeCache()
-
 // generateFileHash creates a hash based on file path and modification time to detect changes.
 func generateFileHash(filePath string) string {
 	fileInfo, err := os.Stat(filePath)
@@ -209,23 +212,25 @@ func generateFileHash(filePath string) string {
 // CalculateGain determines the gain factor needed to normalize audio.
 // Returns gain factor and an error if analysis fails.
 func CalculateGain(filePath string, route string) (float64, error) {
+	config := GetNormalizerConfig()
+	
 	// Check cache first for faster response
-	if gain, exists := volumeCache.Get(filePath); exists {
+	if gain, exists := config.Cache.Get(filePath); exists {
 		// Update metric
-		normalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
+		config.Metrics.NormalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
 		return gain, nil
 	}
 
 	// Set a timeout for analysis
 	analysisDone := make(chan struct{})
-	var gain float64 = 1.0
+	var gain = 1.0
 	var analysisErr error
 
 	// Start analysis in a goroutine
 	go func() {
 		defer close(analysisDone)
 		var calculatedGain float64
-		calculatedGain, analysisErr = analyzeFile(filePath)
+		calculatedGain, analysisErr = analyzeFile(filePath, config)
 		if analysisErr != nil {
 			return
 		}
@@ -237,27 +242,27 @@ func CalculateGain(filePath string, route string) (float64, error) {
 	case <-analysisDone:
 		if analysisErr != nil {
 			slog.Info("DIAGNOSTICS: Analysis error for", "filePath", filePath, "error", analysisErr, "using gain", 1.0)
-			normalizeDisabledTotal.Inc()
+			config.Metrics.NormalizeDisabledTotal.Inc()
 			return 1.0, analysisErr
 		}
 	case <-time.After(time.Duration(analysisTimeoutMs) * time.Millisecond):
 		slog.Info("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
-		normalizeSlowTotal.Inc()
+		config.Metrics.NormalizeSlowTotal.Inc()
 		return 1.0, errors.New("analysis timeout")
 	}
 
 	// Cache the gain for future use
-	volumeCache.Set(filePath, gain)
+	config.Cache.Set(filePath, gain)
 
 	// Update metric
-	normalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
+	config.Metrics.NormalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
 
 	slog.Info("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
 	return gain, nil
 }
 
 // analyzeFile calculates the RMS and true peak values from multiple windows to determine gain.
-func analyzeFile(filePath string) (float64, error) {
+func analyzeFile(filePath string, config *NormalizerConfig) (float64, error) {
 	// Open file
 	file, openErr := os.Open(filePath)
 	if openErr != nil {
@@ -272,7 +277,7 @@ func analyzeFile(filePath string) (float64, error) {
 	}
 
 	// Calculate number of samples per window
-	samplesPerWindow := int(float64(decoder.SampleRate()) * float64(analysisDurationMs) / msInSecond)
+	samplesPerWindow := int(float64(decoder.SampleRate()) * float64(config.AnalysisDurationMs) / msInSecond)
 
 	// Create buffer for samples
 	samples := make([][2]float64, samplesPerWindow)
@@ -285,7 +290,7 @@ func analyzeFile(filePath string) (float64, error) {
 	// Set timeout for analysis
 	analysisTimeout := time.After(time.Duration(analysisTimeoutMs) * time.Millisecond)
 
-	for windowCount < analysisWindows {
+	for windowCount < config.AnalysisWindows {
 		// Check for timeout
 		select {
 		case <-analysisTimeout:
@@ -331,7 +336,7 @@ func analyzeFile(filePath string) (float64, error) {
 	gainFactor = math.Min(gainFactor, truePeakGain)
 
 	// Update metric
-	normalizeWindowsUsed.Set(float64(windowCount))
+	config.Metrics.NormalizeWindowsUsed.Set(float64(windowCount))
 
 	// Replace magic number 10 with minAnalysisWindows
 	if windowCount < minAnalysisWindows {
@@ -423,8 +428,20 @@ func (m *mp3Streamer) Stream(samples [][2]float64) (int, bool) {
 	if rightUint16 > uint16(int16Max) {
 		rightUint16 = uint16(int16Max)
 	}
-	left := int16(leftUint16)
-	right := int16(rightUint16)
+	
+	// Безопасное преобразование uint16 в int16
+	var left, right int16
+	if leftUint16 <= uint16(int16Max) {
+		left = int16(leftUint16)
+	} else {
+		left = int16Max
+	}
+	
+	if rightUint16 <= uint16(int16Max) {
+		right = int16(rightUint16)
+	} else {
+		right = int16Max
+	}
 
 	// Convert to float64 in range [-1, 1]
 	samples[0][0] = float64(left) / sampleConversionFactor
@@ -698,8 +715,24 @@ func AnalyzeFileVolume(filePath string) (float64, error) {
 		if (i*pcmFrameBytes+3) >= n || (i*pcmFrameBytes+2) >= n {
 			break
 		}
-		leftSample := int16(binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes:]))
-		rightSample := int16(binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes+2:]))
+		
+		// Безопасное преобразование uint16 в int16
+		leftUint16 := binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes:])
+		rightUint16 := binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes+2:])
+		
+		var leftSample, rightSample int16
+		if leftUint16 <= uint16(int16Max) {
+			leftSample = int16(leftUint16)
+		} else {
+			leftSample = int16Max
+		}
+		
+		if rightUint16 <= uint16(int16Max) {
+			rightSample = int16(rightUint16)
+		} else {
+			rightSample = int16Max
+		}
+		
 		samples[i][0] = float64(leftSample) / sampleConversionFactor
 		samples[i][1] = float64(rightSample) / sampleConversionFactor
 	}
@@ -755,9 +788,23 @@ func NormalizeMP3StreamForTests(file *os.File, writer io.Writer) error {
 func ProcessAudioBuffer(buffer []byte, gainFactor float64) {
 	for i := range make([]struct{}, len(buffer)/pcmFrameBytes) {
 		offset := i * pcmFrameBytes
+		
+		// Безопасное преобразование uint16 в int16
+		leftUint16 := binary.LittleEndian.Uint16(buffer[offset : offset+2])
+		rightUint16 := binary.LittleEndian.Uint16(buffer[offset+2 : offset+4])
+		
 		var leftSample, rightSample int16
-		leftSample = int16(binary.LittleEndian.Uint16(buffer[offset : offset+2]))
-		rightSample = int16(binary.LittleEndian.Uint16(buffer[offset+2 : offset+4]))
+		if leftUint16 <= uint16(int16Max) {
+			leftSample = int16(leftUint16)
+		} else {
+			leftSample = int16Max
+		}
+		
+		if rightUint16 <= uint16(int16Max) {
+			rightSample = int16(rightUint16)
+		} else {
+			rightSample = int16Max
+		}
 
 		// Convert to float and apply gain.
 		leftFloat := float64(leftSample) / float64(int16Max)

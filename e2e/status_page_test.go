@@ -24,7 +24,7 @@ func TestStatusPageContent(t *testing.T) {
 
 	client := &http.Client{
 		Jar: jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			return nil // allow redirects
 		},
 		Timeout: 10 * time.Second,
@@ -99,7 +99,7 @@ func TestAuthenticationFailure(t *testing.T) {
 
 	// 1. Check access to status-page without authentication
 	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse // don't follow redirects
 		},
 		Timeout: 5 * time.Second,
@@ -132,7 +132,7 @@ func TestAuthenticationFailure(t *testing.T) {
 	}
 	clientWithCookies := &http.Client{
 		Jar: jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			return nil // follow redirects
 		},
 		Timeout: 5 * time.Second,

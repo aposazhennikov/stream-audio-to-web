@@ -21,8 +21,8 @@ func (m *mockStreamHandler) AddClient() (<-chan []byte, int, error) {
 	return ch, 1, nil
 }
 
-func (m *mockStreamHandler) RemoveClient(clientID int) {
-	m.clientCount--
+func (m *mockStreamHandler) RemoveClient(_ int) {
+	// Do nothing - this is a mock
 }
 
 func (m *mockStreamHandler) GetClientCount() int {

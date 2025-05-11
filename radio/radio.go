@@ -33,8 +33,8 @@ type PlaylistManager interface {
 	PreviousTrack() interface{}
 }
 
-// RadioStation manages a single radio station.
-type RadioStation struct {
+// Station manages a single radio station.
+type Station struct {
 	streamer     AudioStreamer
 	playlist     PlaylistManager
 	route        string
@@ -43,15 +43,15 @@ type RadioStation struct {
 	currentTrack chan struct{} // Channel for interrupting current track playback
 	waitGroup    sync.WaitGroup
 	mutex        sync.Mutex // Mutex for synchronizing access to channels
-	logger       *slog.Logger // Инстанс логгера
+	logger       *slog.Logger
 }
 
 // NewRadioStation creates a new radio station.
-func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistManager, logger *slog.Logger) *RadioStation {
+func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistManager, logger *slog.Logger) *Station {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RadioStation{
+	return &Station{
 		streamer:     streamer,
 		playlist:     playlist,
 		route:        route,
@@ -63,7 +63,7 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 }
 
 // Start launches the radio station.
-func (rs *RadioStation) Start() {
+func (rs *Station) Start() {
 	rs.logger.Info("DIAGNOSTICS: Starting radio station...", slog.String("route", rs.route))
 
 	// Create new stop channel
@@ -84,7 +84,7 @@ func (rs *RadioStation) Start() {
 }
 
 // Stop stops the radio station.
-func (rs *RadioStation) Stop() {
+func (rs *Station) Stop() {
 	rs.mutex.Lock()
 	close(rs.stop)
 	rs.mutex.Unlock()
@@ -95,7 +95,7 @@ func (rs *RadioStation) Stop() {
 
 // RestartPlayback restarts playback of the current track.
 // Called when switching tracks via API.
-func (rs *RadioStation) RestartPlayback() {
+func (rs *Station) RestartPlayback() {
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
 
@@ -132,8 +132,8 @@ func (rs *RadioStation) RestartPlayback() {
 	}
 }
 
-// streamLoop main track playback loop
-func (rs *RadioStation) streamLoop() {
+// streamLoop main track playback loop.
+func (rs *Station) streamLoop() {
 	defer rs.waitGroup.Done()
 
 	rs.logger.Info("DIAGNOSTICS: Main playback loop started for station...", slog.String("route", rs.route))
@@ -169,18 +169,18 @@ func (rs *RadioStation) streamLoop() {
 				// Wait and try again
 				time.Sleep(emptyTrackWaitSec * time.Second)
 				continue
-			} else {
-				// If after several attempts playlist is still empty, switch to long wait mode
-				rs.logger.Info("Playlist is empty. Switching to wait mode...", slog.String("route", rs.route))
-				// Don't send to Sentry - this is an informational message
-
-				// Wait longer between checks to save resources
-				time.Sleep(longWaitSec * time.Second)
-
-				// Reset counter for new series of checks
-				consecutiveEmptyTracks = 0
-				continue
 			}
+			
+			// If after several attempts playlist is still empty, switch to long wait mode
+			rs.logger.Info("Playlist is empty. Switching to wait mode...", slog.String("route", rs.route))
+			// Don't send to Sentry - this is an informational message
+
+			// Wait longer between checks to save resources
+			time.Sleep(longWaitSec * time.Second)
+
+			// Reset counter for new series of checks
+			consecutiveEmptyTracks = 0
+			continue
 		}
 
 		// Reset empty attempt counter if track is found
@@ -261,26 +261,26 @@ func (rs *RadioStation) streamLoop() {
 	}
 }
 
-// RadioStationManager manages multiple radio stations.
-type RadioStationManager struct {
-	stations map[string]*RadioStation
+// StationManager manages multiple radio stations.
+type StationManager struct {
+	stations map[string]*Station
 	mutex    sync.RWMutex
-	logger   *slog.Logger // Инстанс логгера
+	logger   *slog.Logger
 }
 
 // NewRadioStationManager creates a new radio station manager.
-func NewRadioStationManager(logger *slog.Logger) *RadioStationManager {
+func NewRadioStationManager(logger *slog.Logger) *StationManager {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RadioStationManager{
-		stations: make(map[string]*RadioStation),
+	return &StationManager{
+		stations: make(map[string]*Station),
 		logger:   logger,
 	}
 }
 
 // AddStation adds a new radio station.
-func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, playlist PlaylistManager) {
+func (rm *StationManager) AddStation(route string, streamer AudioStreamer, playlist PlaylistManager) {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
@@ -310,7 +310,7 @@ func (rm *RadioStationManager) AddStation(route string, streamer AudioStreamer, 
 }
 
 // RemoveStation removes a radio station.
-func (rm *RadioStationManager) RemoveStation(route string) {
+func (rm *StationManager) RemoveStation(route string) {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
@@ -322,7 +322,7 @@ func (rm *RadioStationManager) RemoveStation(route string) {
 }
 
 // StopAll stops all radio stations.
-func (rm *RadioStationManager) StopAll() {
+func (rm *StationManager) StopAll() {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
@@ -334,7 +334,7 @@ func (rm *RadioStationManager) StopAll() {
 }
 
 // GetStation returns a radio station by route.
-func (rm *RadioStationManager) GetStation(route string) *RadioStation {
+func (rm *StationManager) GetStation(route string) *Station {
 	rm.mutex.RLock()
 	defer rm.mutex.RUnlock()
 
@@ -345,7 +345,7 @@ func (rm *RadioStationManager) GetStation(route string) *RadioStation {
 }
 
 // RestartPlayback restarts playback for specified route.
-func (rm *RadioStationManager) RestartPlayback(route string) bool {
+func (rm *StationManager) RestartPlayback(route string) bool {
 	rm.mutex.RLock()
 	defer rm.mutex.RUnlock()
 
@@ -356,7 +356,7 @@ func (rm *RadioStationManager) RestartPlayback(route string) bool {
 	return false
 }
 
-// getTrackPath extracts track path from interface
+// getTrackPath extracts track path from interface.
 func getTrackPath(track interface{}) string {
 	// Interface unpacking depends on specific Track implementation
 	// Here it's assumed that track has a Path field

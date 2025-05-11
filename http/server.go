@@ -28,41 +28,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-var (
-	// Prometheus metrics.
-	listenerCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "audio_stream_listeners",
-			Help: "Number of active listeners per stream",
-		},
-		[]string{"stream"},
-	)
-
-	bytesSent = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "audio_stream_bytes_sent_total",
-			Help: "Total number of bytes sent to clients",
-		},
-		[]string{"stream"},
-	)
-
-	// Counter for audio playback time in seconds.
-	trackSecondsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "audio_stream_track_seconds_total",
-			Help: "Total seconds of audio played",
-		},
-		[]string{"stream"},
-	)
-)
-
-// RegisterPrometheusMetrics регистрирует метрики Prometheus.
-func RegisterPrometheusMetrics() {
-	prometheus.MustRegister(listenerCount)
-	prometheus.MustRegister(bytesSent)
-	prometheus.MustRegister(trackSecondsTotal)
-}
-
 // StreamHandler interface for handling audio stream.
 type StreamHandler interface {
 	AddClient() (<-chan []byte, int, error)
@@ -94,10 +59,14 @@ type Server struct {
 	trackMutex     sync.RWMutex
 	statusPassword string                                    // Password for accessing /status page.
 	stationManager interface{ RestartPlayback(string) bool } // Interface for restarting playback.
-	relayManager   *relay.RelayManager                       // Manager for relay functionality.
+	relayManager   *relay.Manager                            // Manager for relay functionality.
+	// Prometheus metrics.
+	listenerCount     *prometheus.GaugeVec  // Gauge for tracking active listeners
+	bytesSent         *prometheus.CounterVec // Counter for bytes sent
+	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time
 }
 
-const xmlHTTPRequestHeader = "XMLHttpRequest"
+const xmlHTTPRequestHeader = "Xmlhttprequest"
 
 const (
 	defaultStatusPassword     = "1234554321"
@@ -112,28 +81,54 @@ const (
 
 // NewServer creates a new HTTP server.
 func NewServer(streamFormat string, maxClients int) *Server {
-	// Явная регистрация метрик Prometheus
-	RegisterPrometheusMetrics()
-
 	// Get password for status page from environment variable.
 	statusPassword := getEnvOrDefault("STATUS_PASSWORD", defaultStatusPassword)
 
+	// Create Prometheus metrics
+	listenerCount := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "audio_stream_listeners",
+			Help: "Number of active listeners per stream",
+		},
+		[]string{"stream"},
+	)
+
+	bytesSent := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "audio_stream_bytes_sent_total",
+			Help: "Total number of bytes sent to clients",
+		},
+		[]string{"stream"},
+	)
+
+	trackSecondsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "audio_stream_track_seconds_total",
+			Help: "Total seconds of audio played",
+		},
+		[]string{"stream"},
+	)
+
+	// Register metrics
+	prometheus.MustRegister(listenerCount)
+	prometheus.MustRegister(bytesSent)
+	prometheus.MustRegister(trackSecondsTotal)
+
 	server := &Server{
-		router:         mux.NewRouter(),
-		streams:        make(map[string]StreamHandler),
-		playlists:      make(map[string]PlaylistManager),
-		streamFormat:   streamFormat,
-		maxClients:     maxClients,
-		currentTracks:  make(map[string]string),
-		statusPassword: statusPassword,
+		router:            mux.NewRouter(),
+		streams:           make(map[string]StreamHandler),
+		playlists:         make(map[string]PlaylistManager),
+		streamFormat:      streamFormat,
+		maxClients:        maxClients,
+		currentTracks:     make(map[string]string),
+		statusPassword:    statusPassword,
+		listenerCount:     listenerCount,
+		bytesSent:         bytesSent,
+		trackSecondsTotal: trackSecondsTotal,
 	}
 
 	// Setup routes.
 	server.setupRoutes()
-
-	// Pass trackSecondsTotal metric directly to audio package.
-	audio.SetTrackSecondsMetric(trackSecondsTotal)
-	slog.Info("DIAGNOSTICS: trackSecondsTotal metric passed to audio package")
 
 	slog.Info("HTTP server created, stream format: %s, max clients: %d", streamFormat, maxClients)
 	return server
@@ -169,6 +164,12 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	s.streams[route] = stream
 	slog.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
 	s.playlists[route] = playlist
+
+	// Set trackSecondsTotal metric directly to stream
+	if streamer, ok := stream.(*audio.Streamer); ok {
+		streamer.SetTrackSecondsMetric(s.trackSecondsTotal)
+		slog.Info("DIAGNOSTICS: trackSecondsTotal metric set for streamer on route %s", route)
+	}
 
 	// Check if stream was added.
 	if _, exists := s.streams[route]; exists {
@@ -226,7 +227,7 @@ func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 
 // hasUnicodeChars checks for non-ASCII characters in string.
 func hasUnicodeChars(s string) bool {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] > asciiMax {
 			return true
 		}
@@ -369,7 +370,7 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamsHandler handles requests for stream information.
-func (s *Server) streamsHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -599,8 +600,8 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		defer stream.RemoveClient(clientID)
 
 		// Update metrics ONLY AFTER successful connection and headers sent
-		listenerCount.WithLabelValues(route).Inc()
-		defer listenerCount.WithLabelValues(route).Dec()
+		s.listenerCount.WithLabelValues(route).Inc()
+		defer s.listenerCount.WithLabelValues(route).Dec()
 
 		// Log client connection
 		remoteAddr := r.RemoteAddr
@@ -650,7 +651,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 				// Update counter and metrics
 				totalBytesSent += int64(n)
-				bytesSent.WithLabelValues(route).Add(float64(n))
+				s.bytesSent.WithLabelValues(route).Add(float64(n))
 
 				// Periodically log sent data amount
 				if totalBytesSent >= logEveryBytes && time.Since(lastLogTime) > logIntervalSec*time.Second {
@@ -680,7 +681,7 @@ func (s *Server) ReloadPlaylist(route string) error {
 	return playlist.Reload()
 }
 
-// statusLoginHandler displays login form page
+// statusLoginHandler displays login form page.
 func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
 	// If already authenticated, redirect to status page
 	if s.checkAuth(r) {
@@ -710,7 +711,7 @@ func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// statusLoginSubmitHandler handles login form submission
+// statusLoginSubmitHandler handles login form submission.
 func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	parseErr := r.ParseForm()
 	if parseErr != nil {
@@ -761,13 +762,13 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// checkAuth checks authentication for accessing status page
+// checkAuth checks authentication for accessing status page.
 func (s *Server) checkAuth(r *http.Request) bool {
 	cookie, err := r.Cookie("status_auth")
 	return err == nil && cookie.Value == s.statusPassword
 }
 
-// statusPageHandler handles requests for the status page
+// statusPageHandler handles requests for the status page.
 func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(r) {
 		s.redirectToLogin(w, r)
@@ -828,7 +829,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleTrackSwitchHandler handles track switching
+// handleTrackSwitchHandler handles track switching.
 func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
 	if !s.checkAuth(r) {
 		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
@@ -959,7 +960,7 @@ func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
 	s.handleTrackSwitchHandler(w, r, "prev")
 }
 
-// notFoundHandler handles requests to non-existent routes
+// notFoundHandler handles requests to non-existent routes.
 func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Info("404 - route not found: %s", r.URL.Path)
 
@@ -987,17 +988,12 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SetStationManager sets station manager for restarting playback.
-func (s *Server) SetStationManager(manager interface{ RestartPlayback(string) bool }) {
-	s.stationManager = manager
-}
-
-// redirectToLogin redirects user to login page
+// redirectToLogin redirects user to login page.
 func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/status", http.StatusSeeOther)
 }
 
-// handleShufflePlaylist handles the request to manually shuffle a playlist
+// handleShufflePlaylist handles the request to manually shuffle a playlist.
 func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Check authentication (same as for status page)
 	if !s.checkAuth(r) {
@@ -1047,7 +1043,7 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			// Catch any panics from Shuffle operation
 			if r := recover(); r != nil {
-				slog.Error("ERROR: Shuffle operation panicked: %v", r)
+				slog.Error("ERROR: Shuffle operation panicked", slog.Any("error", r))
 				shuffleDone <- false
 			}
 		}()
@@ -1083,7 +1079,7 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SetShuffleMode toggles the shuffle mode for a specific stream
+// SetShuffleMode toggles the shuffle mode for a specific stream.
 func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
 	// Check authentication (same as for status page)
 	if !s.checkAuth(r) {
@@ -1158,7 +1154,7 @@ func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				// Catch any panics from Shuffle operation
 				if r := recover(); r != nil {
-					slog.Error("ERROR: Shuffle operation panicked: %v", r)
+					slog.Error("ERROR: Shuffle operation panicked", slog.Any("error", r))
 					shuffleDone <- false
 				}
 			}()
@@ -1206,16 +1202,13 @@ func (s *Server) SetStatusPassword(password string) {
 	s.statusPassword = password
 }
 
-// SetRelayManager sets the relay manager for the server.
-func (s *Server) SetRelayManager(manager *relay.RelayManager) {
+// SetRelayManager sets the relay manager instance.
+func (s *Server) SetRelayManager(manager *relay.Manager) {
 	s.relayManager = manager
-	slog.Info("Relay manager set for HTTP server")
-
-	// Configure relay routes only when relay manager is set
 	s.setupRelayRoutes()
 }
 
-// setupRelayRoutes adds relay-related routes to the router
+// setupRelayRoutes adds relay-related routes to the router.
 func (s *Server) setupRelayRoutes() {
 	// Add relay management page
 	s.router.HandleFunc("/relay-management", s.relayManagementHandler).Methods("GET")
@@ -1229,8 +1222,7 @@ func (s *Server) setupRelayRoutes() {
 	slog.Info("Relay routes configured")
 }
 
-// Relay handler functions
-// relayManagementHandler serves the relay management UI
+// relayManagementHandler serves the relay management UI.
 func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
@@ -1277,7 +1269,7 @@ func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// relayToggleHandler toggles relay functionality on/off
+// relayToggleHandler toggles relay functionality on/off.
 func (s *Server) relayToggleHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
@@ -1312,7 +1304,7 @@ func (s *Server) relayToggleHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/relay-management?success=Relay "+status, http.StatusSeeOther)
 }
 
-// relayAddHandler adds a new relay URL
+// relayAddHandler adds a new relay URL.
 func (s *Server) relayAddHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
@@ -1344,7 +1336,7 @@ func (s *Server) relayAddHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/relay-management?success=Relay URL added successfully", http.StatusSeeOther)
 }
 
-// relayRemoveHandler removes a relay URL by index
+// relayRemoveHandler removes a relay URL by index.
 func (s *Server) relayRemoveHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
@@ -1378,7 +1370,7 @@ func (s *Server) relayRemoveHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/relay-management?success=Relay URL removed successfully", http.StatusSeeOther)
 }
 
-// relayStreamHandler streams the audio from a relay source
+// relayStreamHandler streams the audio from a relay source.
 func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if relay manager is set
 	if s.relayManager == nil {
@@ -1402,4 +1394,9 @@ func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to relay audio stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// SetStationManager sets station manager for restarting playback.
+func (s *Server) SetStationManager(manager interface{ RestartPlayback(string) bool }) {
+	s.stationManager = manager
 }
