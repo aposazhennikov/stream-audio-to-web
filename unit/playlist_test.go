@@ -67,7 +67,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 
 	// Check that the current track is not empty.
 	var track interface{}
-	// Retry for up to 2 seconds to get a non-nil track
+	// Retry for up to 2 seconds to get a non-nil track.
 	for range 10 {
 		track = pl.GetCurrentTrack()
 		if track != nil {
@@ -85,7 +85,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 		t.Fatalf("Expected track to have a valid path")
 	}
 
-	// Manually add the track to history if it's not there yet
+	// Manually add the track to history if it's not there yet.
 	pl.NextTrack() // This will add the current track to history
 	time.Sleep(200 * time.Millisecond)
 	pl.PreviousTrack() // Go back to the original track
@@ -93,7 +93,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 
 	// Check that history starts with the current track.
 	var history []interface{}
-	// Retry for up to 2 seconds to get a non-empty history
+	// Retry for up to 2 seconds to get a non-empty history.
 	for range 10 {
 		history = pl.GetHistory()
 		if len(history) > 0 {
@@ -125,7 +125,7 @@ func TestPlaylist_NextTrack(t *testing.T) {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Get current track with retry
+	// Get current track with retry.
 	var currentTrack interface{}
 	for range 10 {
 		currentTrack = pl.GetCurrentTrack()
@@ -159,11 +159,11 @@ func TestPlaylist_NextTrack(t *testing.T) {
 		checkTrackPaths(t, nextTrack, currentTrack)
 	}
 
-	// Move to next track again to ensure we have at least 2 tracks in history
+	// Move to next track again to ensure we have at least 2 tracks in history.
 	pl.NextTrack()
 	time.Sleep(200 * time.Millisecond)
 
-	// Check that history has been updated with retry
+	// Check that history has been updated with retry.
 	var history []interface{}
 	for range 10 {
 		history = pl.GetHistory()

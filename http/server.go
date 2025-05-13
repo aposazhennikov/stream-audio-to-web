@@ -1297,27 +1297,27 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 
 // handleSetShuffleMode sets the shuffle mode for a specific stream.
 func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
+	// Check authentication.
 	if !s.isShuffleModeAuthValid(w, r) {
 		return
 	}
 
-	// Extract vars and validate
+	// Extract vars and validate.
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
 	mode := vars["mode"]
 
-	// Validate mode
+	// Validate mode.
 	if !s.isShuffleModeValid(w, r, route, mode) {
 		return
 	}
 
-	// Validate route
+	// Validate route.
 	if !s.isShuffleRouteValid(w, r, route) {
 		return
 	}
 
-	// Process the shuffle mode setting
+	// Process the shuffle mode setting.
 	s.processShuffleModeSetting(w, r, route, mode)
 }
 

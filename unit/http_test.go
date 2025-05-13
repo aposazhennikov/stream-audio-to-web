@@ -12,7 +12,7 @@ import (
 
 // Синглтон для тестового HTTP сервера.
 
-//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна.
 var (
 	serverInstance *httpServer.Server
 	serverOnce     sync.Once
@@ -174,9 +174,9 @@ func TestSetShuffleMode(t *testing.T) {
 	// Create HTTP server.
 	server := getTestServer()
 
-	// We cannot directly call SetStatusPassword,
+	// We cannot directly call SetStatusPassword,.
 	// so we will rely on the default password ("1234554321").
-	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword")
+	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword").
 
 	// Create mocks for stream and playlist.
 	mockStream := &mockStreamHandler{

@@ -97,10 +97,10 @@ const (
 
 // defaultNormalizerConfigInstance хранит единственный экземпляр конфигурации нормализатора.
 //
-//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна.
 var defaultNormalizerConfigInstance *NormalizerConfig
 
-//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна с потокобезопасной инициализацией
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна с потокобезопасной инициализацией.
 var normalizerConfigOnce sync.Once
 
 // getDefaultNormalizerConfig возвращает конфигурацию нормализатора по умолчанию.

@@ -107,14 +107,57 @@ func main() {
 
 // initSentry initializes Sentry for error tracking.
 func initSentry(logger *slog.Logger) {
-	// Initialize Sentry.
-	err := sentry.Init(sentry.ClientOptions{
-		Dsn: "https://your-sentry-dsn",
-	})
-	if err != nil {
-		logger.Error("sentry.Init", "error", err)
-		os.Exit(1)
+	// Get DSN from environment.
+	sentryDSN := strings.TrimSpace(os.Getenv("SENTRY_DSN"))
+	if sentryDSN == "" {
+		logger.Info("Sentry monitoring disabled (SENTRY_DSN not set or empty)")
+		return
 	}
+
+	logger.Info("Initializing Sentry with DSN", "dsn_length", len(sentryDSN))
+
+	// Initialize Sentry with DSN from environment.
+	err := initSentryWithDSN(logger, sentryDSN)
+	if err == nil {
+		logger.Info("Sentry initialization succeeded")
+	}
+}
+
+// initSentryWithDSN attempts to initialize Sentry with the given DSN.
+// It handles common errors and tries alternative approaches if needed.
+func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
+	// First attempt with original DSN.
+	err := sentry.Init(sentry.ClientOptions{
+		Dsn:   sentryDSN,
+		Debug: true, // Enable debug mode for more verbose logging
+	})
+
+	if err == nil {
+		return nil
+	}
+
+	logger.Error("sentry.Init", "error", err)
+
+	// If we have the specific "empty username" error, try with URL encoded @ symbol.
+	if !strings.Contains(err.Error(), "empty username") {
+		return err
+	}
+
+	// Try alternative solution.
+	logger.Info("Attempting alternative Sentry initialization method")
+	altDSN := strings.ReplaceAll(sentryDSN, "@", "%40")
+	altErr := sentry.Init(sentry.ClientOptions{
+		Dsn:   altDSN,
+		Debug: true,
+	})
+
+	if altErr != nil {
+		logger.Error("Alternative sentry.Init also failed", "error", altErr)
+		return altErr
+	}
+
+	logger.Info("Alternative Sentry initialization succeeded")
+	return nil
 }
 
 // logConfiguration logs the application configuration.
