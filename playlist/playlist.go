@@ -3,6 +3,7 @@
 package playlist
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -107,19 +108,22 @@ func (p *Playlist) Close() error {
 // Reload reloads the playlist from the directory.
 // Split into smaller functions to fix funlen issue.
 func (p *Playlist) Reload() error {
+	// Сначала получаем информацию о текущем треке без блокировок
+	var currentTrackPath string
+
+	// Получаем текущий трек до захвата блокировки
+	if trackInterface := p.GetCurrentTrack(); trackInterface != nil {
+		if track, ok := trackInterface.(*Track); ok {
+			currentTrackPath = track.Path
+		}
+	}
+
+	// Теперь захватываем блокировку для обновления
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
 	// Сохраняем текущие данные.
 	currentIndex := p.current
-
-	// Получаем текущий трек с проверкой типа.
-	var currentTrack *Track
-	if trackInterface := p.GetCurrentTrack(); trackInterface != nil {
-		if track, ok := trackInterface.(*Track); ok {
-			currentTrack = track
-		}
-	}
 
 	// Загружаем файлы и проверяем ошибки.
 	files, err := p.loadDirectoryFiles()
@@ -140,8 +144,8 @@ func (p *Playlist) Reload() error {
 		return p.handleNoTracks()
 	}
 
-	// Обновляем плейлист.
-	p.updatePlaylist(tracks, currentTrack, currentIndex)
+	// Обновляем плейлист без использования GetCurrentTrack внутри блокировки
+	p.updatePlaylistWithPath(tracks, currentTrackPath, currentIndex)
 	return nil
 }
 
@@ -234,8 +238,8 @@ func (p *Playlist) createTracksFromFiles(files []os.FileInfo) []Track {
 	return tracks
 }
 
-// updatePlaylist обновляет плейлист новыми треками.
-func (p *Playlist) updatePlaylist(tracks []Track, currentTrack *Track, currentIndex int) {
+// updatePlaylistWithPath обновляет плейлист новыми треками, используя путь трека вместо объекта трека.
+func (p *Playlist) updatePlaylistWithPath(tracks []Track, currentTrackPath string, currentIndex int) {
 	// Сохраняем старые треки для логирования.
 	oldTracks := p.tracks
 
@@ -244,7 +248,11 @@ func (p *Playlist) updatePlaylist(tracks []Track, currentTrack *Track, currentIn
 
 	// Если треки изменены, сбрасываем историю.
 	if !p.tracksEqual(oldTracks, tracks) {
+		// Используем новую блокировку для истории
+		p.historyMutex.Lock()
 		p.history = make([]Track, 0, maxHistorySize)
+		p.historyMutex.Unlock()
+
 		p.logger.Info(
 			"Tracks changed, history reset",
 			slog.Int("oldTracks", len(oldTracks)),
@@ -262,13 +270,8 @@ func (p *Playlist) updatePlaylist(tracks []Track, currentTrack *Track, currentIn
 		})
 	}
 
-	// Если текущий трек существует, пытаемся найти его в новом плейлисте.
-	if currentTrack != nil {
-		p.restoreCurrentTrack(currentTrack, currentIndex)
-	} else {
-		// Иначе устанавливаем первый трек текущим.
-		p.current = 0
-	}
+	// Установка текущего трека
+	p.setCurrentTrackByPath(currentTrackPath, currentIndex)
 
 	// Логируем результаты.
 	p.logger.Info(
@@ -276,6 +279,30 @@ func (p *Playlist) updatePlaylist(tracks []Track, currentTrack *Track, currentIn
 		slog.Int("trackCount", len(p.tracks)),
 		slog.String("directory", p.directory),
 	)
+}
+
+// setCurrentTrackByPath устанавливает текущий трек по пути или индексу.
+func (p *Playlist) setCurrentTrackByPath(currentTrackPath string, currentIndex int) {
+	// Если путь не указан, используем индекс 0 (начало плейлиста).
+	if currentTrackPath == "" {
+		p.current = 0
+		return
+	}
+
+	// Пытаемся найти трек с указанным путем.
+	for i, track := range p.tracks {
+		if track.Path == currentTrackPath {
+			p.current = i
+			return
+		}
+	}
+
+	// Если трек не найден, используем текущий индекс, если он валиден.
+	if currentIndex < len(p.tracks) {
+		p.current = currentIndex
+	} else {
+		p.current = 0
+	}
 }
 
 // tracksEqual проверяет равенство двух списков треков.
@@ -336,29 +363,6 @@ func (p *Playlist) shuffleTracks() {
 	)
 }
 
-// restoreCurrentTrack пытается найти текущий трек в новом плейлисте.
-func (p *Playlist) restoreCurrentTrack(currentTrack *Track, currentIndex int) {
-	found := false
-
-	// Пытаемся найти текущий трек по пути.
-	for i, track := range p.tracks {
-		if track.Path == currentTrack.Path {
-			p.current = i
-			found = true
-			break
-		}
-	}
-
-	// Если не нашли, используем индекс текущего трека или 0.
-	if !found {
-		if currentIndex < len(p.tracks) {
-			p.current = currentIndex
-		} else {
-			p.current = 0
-		}
-	}
-}
-
 // isAudioFile проверяет, является ли файл аудиофайлом по его расширению.
 func isAudioFile(fileName string) bool {
 	ext := strings.ToLower(filepath.Ext(fileName))
@@ -381,183 +385,106 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
 	tracksEmpty := len(p.tracks) == 0
+	hasCurrentIndex := p.current < len(p.tracks) && p.current >= 0
 	p.mutex.RUnlock()
 
-	// Если треков нет, сразу возвращаем nil без запуска горутин и логирования.
-	if tracksEmpty {
+	// Если треков нет или недопустимый индекс, сразу возвращаем nil без запуска горутин и логирования.
+	if tracksEmpty || !hasCurrentIndex {
 		return nil
 	}
-
-	// Adding retry mechanism.
-	maxAttempts := maxAttempts
 
 	// Определяем таймаут в зависимости от окружения.
 	timeout := getTimeoutForEnvironment()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Use timeout channel for deadlock protection.
-		c := make(chan interface{}, 1)
+	// Используем канал с буфером для предотвращения утечек горутин.
+	c := make(chan interface{}, 1)
 
-		go func() {
-			p.mutex.RLock()
-			defer p.mutex.RUnlock()
+	go func() {
+		// Используем RLock вместо Lock для повышения производительности.
+		p.mutex.RLock()
+		defer p.mutex.RUnlock()
 
-			if len(p.tracks) == 0 {
-				c <- nil
-				return
-			}
-			c <- &p.tracks[p.current]
-		}()
-
-		// Wait with timeout.
-		select {
-		case track := <-c:
-			return track
-		case <-time.After(timeout):
-			// Логируем только на последней попытке, чтобы не спамить логи.
-			if attempt == maxAttempts {
-				p.logger.Warn(
-					"WARNING: All GetCurrentTrack attempts timed out, returning nil",
-					slog.Int("maxAttempts", maxAttempts),
-					slog.String("timeout", timeout.String()),
-				)
-				return nil
-			}
-			// Small pause before next attempt.
-			time.Sleep(getTrackPause)
+		if len(p.tracks) == 0 || p.current >= len(p.tracks) {
+			c <- nil
+			return
 		}
-	}
 
-	// This code should not be reached, but for completeness:.
-	p.logger.Error("ERROR: Unexpected flow in GetCurrentTrack, returning nil")
-	return nil
+		// Создаем копию трека, чтобы избежать проблем с параллельным доступом.
+		track := p.tracks[p.current]
+		c <- &track
+	}()
+
+	// Ожидаем с таймаутом и возвращаем результат.
+	select {
+	case track := <-c:
+		return track
+	case <-time.After(timeout):
+		p.logger.Warn(
+			"WARNING: GetCurrentTrack timed out",
+			slog.String("timeout", timeout.String()),
+		)
+		return nil
+	}
 }
 
 // NextTrack moves to the next track and returns it.
 func (p *Playlist) NextTrack() interface{} {
-	// Adding retry mechanism.
-	maxAttempts := maxAttempts
+	// Быстрая проверка с минимальной блокировкой.
+	p.mutex.RLock()
+	tracksEmpty := len(p.tracks) == 0
+	p.mutex.RUnlock()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Use timeout channel for safe mutex locking.
-		c := make(chan interface{}, 1)
-
-		go func() {
-			// Try to lock mutex in goroutine.
-			p.mutex.Lock()
-			defer p.mutex.Unlock()
-
-			if len(p.tracks) == 0 {
-				p.logger.Info("DIAGNOSTICS: NextTrack() called but no tracks available")
-				c <- nil
-				return
-			}
-
-			// Process next track operations.
-			track := p.processNextTrackWithHistory()
-			c <- track
-		}()
-
-		// Wait for result with timeout.
-		result, success := p.waitForTrackResult(c, "NextTrack", attempt, maxAttempts)
-		if success {
-			return result
-		}
+	// Если треков нет, сразу возвращаем nil без запуска горутин.
+	if tracksEmpty {
+		return nil
 	}
 
-	// This code should not be reached, but for completeness:.
-	p.logger.Error("ERROR: Unexpected flow in NextTrack, returning nil")
-	return nil
-}
-
-// processNextTrackWithHistory handles the core logic of moving to the next track.
-// and updating history. Must be called with mutex locked.
-func (p *Playlist) processNextTrackWithHistory() interface{} {
-	// Add current track to history before moving to the next.
-	currentTrack := p.tracks[p.current]
-	p.addTrackToHistory(currentTrack)
-
-	// Move to the next track.
-	p.current = (p.current + 1) % len(p.tracks)
-
-	// Check if we need to reshuffle.
-	p.checkAndReshufflePlaylist()
-
-	return &p.tracks[p.current]
-}
-
-// checkAndReshufflePlaylist checks if we've reached the end of the playlist.
-// and shuffles if needed. Must be called with mutex locked.
-func (p *Playlist) checkAndReshufflePlaylist() {
-	// If we reached the end of playlist and shuffle is enabled, reshuffle for the next cycle.
-	if p.current == 0 && p.shuffle && len(p.tracks) > 1 {
-		p.logger.Info(
-			"DIAGNOSTICS: Reached end of playlist with shuffle enabled, " +
-				"performing reshuffle directly",
-		)
-		p.reshufflePlaylistPreservingCurrent()
-	}
-}
-
-// reshufflePlaylistPreservingCurrent reshuffles the playlist while maintaining the current track.
-// Must be called with mutex locked.
-func (p *Playlist) reshufflePlaylistPreservingCurrent() {
-	currentPos := p.current
-	currentTrackPath := p.tracks[currentPos].Path
-
-	// Fisher-Yates с crypto/rand.
-	for i := len(p.tracks) - 1; i > 0; i-- {
-		maxNum := big.NewInt(int64(i + 1))
-		jBig, err := rand.Int(rand.Reader, maxNum)
-		if err != nil {
-			p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
-			jBig = big.NewInt(int64(i))
-		}
-		j := int(jBig.Int64())
-		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
-	}
-
-	// Find current track in shuffled playlist.
-	for i, track := range p.tracks {
-		if track.Path == currentTrackPath {
-			p.current = i
-			break
-		}
-	}
-
-	p.logger.Info(
-		"DIAGNOSTICS: Playlist shuffled in NextTrack, "+
-			"current track at position",
-		slog.Int("position", p.current),
-	)
-}
-
-// waitForTrackResult waits for track result with timeout and handles retries.
-func (p *Playlist) waitForTrackResult(
-	c chan interface{},
-	operation string,
-	attempt int,
-	maxAttempts int,
-) (interface{}, bool) {
 	// Определяем таймаут в зависимости от окружения.
 	timeout := getTimeoutForEnvironment()
 
+	// Используем канал с буфером для предотвращения утечек горутин.
+	c := make(chan interface{}, 1)
+
+	go func() {
+		// Захватываем блокировку в горутине.
+		p.mutex.Lock()
+		defer p.mutex.Unlock()
+
+		if len(p.tracks) == 0 {
+			p.logger.Info("DIAGNOSTICS: NextTrack() called but no tracks available")
+			c <- nil
+			return
+		}
+
+		// Добавляем текущий трек в историю.
+		if p.current < len(p.tracks) {
+			currentTrack := p.tracks[p.current]
+			p.addTrackToHistory(currentTrack)
+		}
+
+		// Переходим к следующему треку.
+		p.current = (p.current + 1) % len(p.tracks)
+
+		// Проверяем необходимость повторного перемешивания.
+		if p.current == 0 && p.shuffle && len(p.tracks) > 1 {
+			p.reshufflePlaylistPreservingCurrent()
+		}
+
+		// Создаем копию трека для безопасного возврата.
+		track := p.tracks[p.current]
+		c <- &track
+	}()
+
+	// Ожидаем результат с таймаутом.
 	select {
 	case result := <-c:
-		return result, true
+		return result
 	case <-time.After(timeout):
-		// Логируем только на последней попытке, чтобы не спамить логи.
-		if attempt == maxAttempts {
-			p.logger.Warn(
-				"WARNING: All "+operation+" attempts timed out, returning nil",
-				slog.Int("maxAttempts", maxAttempts),
-				slog.String("timeout", timeout.String()),
-			)
-			return nil, true
-		}
-		// Small pause before next attempt.
-		time.Sleep(getTrackPause)
-		return nil, false
+		p.logger.Warn(
+			"WARNING: NextTrack timed out",
+			slog.String("timeout", timeout.String()),
+		)
+		return nil
 	}
 }
 
@@ -568,65 +495,55 @@ func (p *Playlist) PreviousTrack() interface{} {
 	tracksEmpty := len(p.tracks) == 0
 	p.mutex.RUnlock()
 
-	// Если треков нет, сразу возвращаем nil без запуска горутин и логирования.
+	// Если треков нет, сразу возвращаем nil без запуска горутин.
 	if tracksEmpty {
 		return nil
 	}
 
-	// Adding retry mechanism.
-	maxAttempts := maxAttempts
 	// Определяем таймаут в зависимости от окружения.
 	timeout := getTimeoutForEnvironment()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Use timeout channel for safe mutex locking.
-		c := make(chan interface{}, 1)
+	// Используем канал с буфером для предотвращения утечек горутин.
+	c := make(chan interface{}, 1)
 
-		go func() {
-			p.mutex.Lock()
-			defer p.mutex.Unlock()
+	go func() {
+		p.mutex.Lock()
+		defer p.mutex.Unlock()
 
-			if len(p.tracks) == 0 {
-				c <- nil
-				return
-			}
+		if len(p.tracks) == 0 {
+			c <- nil
+			return
+		}
 
-			// Add current track to history before moving to the previous.
+		// Добавляем текущий трек в историю перед переходом к предыдущему.
+		if p.current < len(p.tracks) {
 			currentTrack := p.tracks[p.current]
 			p.addTrackToHistory(currentTrack)
-
-			// Move to the previous track considering the possibility of going to a negative index.
-			if p.current == 0 {
-				p.current = len(p.tracks) - 1
-			} else {
-				p.current--
-			}
-
-			c <- &p.tracks[p.current]
-		}()
-
-		// Wait for result with timeout.
-		select {
-		case result := <-c:
-			return result
-		case <-time.After(timeout):
-			// Логируем только на последней попытке, чтобы не спамить логи.
-			if attempt == maxAttempts {
-				p.logger.Warn(
-					"WARNING: All PreviousTrack attempts timed out, returning nil",
-					slog.Int("maxAttempts", maxAttempts),
-					slog.String("timeout", timeout.String()),
-				)
-				return nil
-			}
-			// Small pause before next attempt.
-			time.Sleep(getTrackPause)
 		}
-	}
 
-	// This code should not be reached, but for completeness:.
-	p.logger.Error("ERROR: Unexpected flow in PreviousTrack, returning nil")
-	return nil
+		// Переходим к предыдущему треку с учетом возможности отрицательного индекса.
+		if p.current == 0 {
+			p.current = len(p.tracks) - 1
+		} else {
+			p.current--
+		}
+
+		// Создаем копию трека для безопасного возврата.
+		track := p.tracks[p.current]
+		c <- &track
+	}()
+
+	// Ожидаем результат с таймаутом.
+	select {
+	case result := <-c:
+		return result
+	case <-time.After(timeout):
+		p.logger.Warn(
+			"WARNING: PreviousTrack timed out",
+			slog.String("timeout", timeout.String()),
+		)
+		return nil
+	}
 }
 
 // addTrackToHistory adds a track to history.
@@ -645,24 +562,28 @@ func (p *Playlist) addTrackToHistory(track Track) {
 
 // GetHistory returns the history of played tracks.
 func (p *Playlist) GetHistory() []interface{} {
+	// Используем отдельную блокировку для истории.
 	p.historyMutex.RLock()
-	defer p.historyMutex.RUnlock()
-
 	historyLen := len(p.history)
-	p.logger.Info("DIAGNOSTICS: GetHistory() called, history length", slog.Int("historyLength", historyLen))
 
+	// Если история пуста, сразу возвращаем пустой слайс без дополнительных операций.
 	if historyLen == 0 {
-		p.logger.Info("DIAGNOSTICS: Warning - History is empty!")
+		p.historyMutex.RUnlock()
+		p.logger.Debug("GetHistory: history is empty")
 		return []interface{}{}
 	}
 
+	// Копируем историю для безопасного возврата.
 	history := make([]interface{}, historyLen)
 	for i, track := range p.history {
-		history[i] = &track
+		// Создаем копию каждого трека, чтобы избежать проблем с параллельным доступом.
+		trackCopy := track
+		history[i] = &trackCopy
 	}
+	p.historyMutex.RUnlock()
 
-	// Log first few tracks in history.
-	if historyLen > 0 {
+	// Log first few tracks in history for debugging.
+	if historyLen > 0 && p.logger.Enabled(context.Background(), slog.LevelInfo) {
 		trackNames := make([]string, 0, minInt(maxShowTracks, historyLen))
 		for i := range history[:minInt(maxShowTracks, historyLen)] {
 			if track, ok := history[i].(interface{ GetPath() string }); ok {
@@ -803,7 +724,6 @@ func (p *Playlist) GetTracks() []Track {
 	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
 	tracksEmpty := len(p.tracks) == 0
-	tracksCount := len(p.tracks)
 	p.mutex.RUnlock()
 
 	// Если треков нет, сразу возвращаем пустой слайс.
@@ -811,56 +731,34 @@ func (p *Playlist) GetTracks() []Track {
 		return []Track{}
 	}
 
-	// Adding retry mechanism.
-	maxAttempts := maxAttempts
 	// Определяем таймаут в зависимости от окружения.
 	timeout := getTimeoutForEnvironment()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Use timeout channel for deadlock protection.
-		c := make(chan []Track, 1)
+	// Используем канал с буфером для предотвращения утечек горутин.
+	c := make(chan []Track, 1)
 
-		go func() {
-			p.mutex.RLock()
-			defer p.mutex.RUnlock()
+	go func() {
+		// Используем RLock для множественного чтения.
+		p.mutex.RLock()
+		defer p.mutex.RUnlock()
 
-			tracks := make([]Track, len(p.tracks))
-			copy(tracks, p.tracks)
-			c <- tracks
-		}()
+		// Создаем копию треков для безопасного возврата.
+		tracks := make([]Track, len(p.tracks))
+		copy(tracks, p.tracks)
+		c <- tracks
+	}()
 
-		// Wait for result with timeout.
-		select {
-		case tracks := <-c:
-			// Check if slice is empty.
-			if len(tracks) == 0 && tracksCount > 0 {
-				// If main slice is not empty but we got empty one, this might be a copy error.
-				if attempt == maxAttempts {
-					p.logger.Warn(
-						"WARNING: GetTracks returned empty list despite having tracks",
-						slog.Int("tracks", tracksCount),
-					)
-				}
-				continue // Retry
-			}
-			return tracks
-		case <-time.After(timeout):
-			if attempt == maxAttempts {
-				p.logger.Warn(
-					"WARNING: All GetTracks attempts timed out, returning empty list",
-					slog.Int("maxAttempts", maxAttempts),
-					slog.String("timeout", timeout.String()),
-				)
-				return []Track{}
-			}
-			// Small pause before next attempt.
-			time.Sleep(getTrackPause)
-		}
+	// Ожидаем результат с таймаутом.
+	select {
+	case tracks := <-c:
+		return tracks
+	case <-time.After(timeout):
+		p.logger.Warn(
+			"WARNING: GetTracks timed out",
+			slog.String("timeout", timeout.String()),
+		)
+		return []Track{}
 	}
-
-	// This code should not be reached, but for completeness:.
-	p.logger.Error("ERROR: Unexpected flow in GetTracks, returning empty list")
-	return []Track{}
 }
 
 // watchDirectory monitors changes in the playlist directory.
@@ -933,4 +831,36 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// reshufflePlaylistPreservingCurrent перемешивает плейлист, сохраняя текущий трек.
+// Должен вызываться с захваченной блокировкой.
+func (p *Playlist) reshufflePlaylistPreservingCurrent() {
+	currentPos := p.current
+	currentTrackPath := p.tracks[currentPos].Path
+
+	// Fisher-Yates с crypto/rand.
+	for i := len(p.tracks) - 1; i > 0; i-- {
+		maxNum := big.NewInt(int64(i + 1))
+		jBig, err := rand.Int(rand.Reader, maxNum)
+		if err != nil {
+			p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
+			jBig = big.NewInt(int64(i))
+		}
+		j := int(jBig.Int64())
+		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
+	}
+
+	// Находим текущий трек в перемешанном плейлисте.
+	for i, track := range p.tracks {
+		if track.Path == currentTrackPath {
+			p.current = i
+			break
+		}
+	}
+
+	p.logger.Info(
+		"DIAGNOSTICS: Playlist shuffled in NextTrack, current track at position",
+		slog.Int("position", p.current),
+	)
 }

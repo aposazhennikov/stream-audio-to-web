@@ -20,7 +20,7 @@ func TestParallelPlaylistInitialization(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	// Установим переменную окружения для увеличения таймаутов
+	// Установим переменную окружения для увеличения таймаутов.
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	t.Log("STRESS TEST START: Beginning parallel playlist test with detailed logging")
@@ -217,7 +217,7 @@ func waitForCompletion(t *testing.T, wg *sync.WaitGroup, results chan error) {
 
 // TestConcurrentShuffling specifically tests concurrent shuffling of the same playlist.
 func TestConcurrentShuffling(t *testing.T) {
-	// Установим переменную окружения для увеличения таймаутов
+	// Установим переменную окружения для увеличения таймаутов.
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	// Create a temp directory.
@@ -311,7 +311,7 @@ func TestConcurrentShuffling(t *testing.T) {
 
 // TestShufflePerformance tests the performance of shuffle for large playlists.
 func TestShufflePerformance(t *testing.T) {
-	// Установим переменную окружения для увеличения таймаутов
+	// Установим переменную окружения для увеличения таймаутов.
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	// Create test directories with different sizes.

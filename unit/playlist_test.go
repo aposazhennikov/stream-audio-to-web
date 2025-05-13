@@ -50,6 +50,7 @@ func checkTrackPaths(t *testing.T, track1 interface{}, track2 interface{}) {
 	}
 }
 
+// GetCurrentTrack returns the current track.
 func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	// Create a temporary directory for tests.
 	tmpDir := t.TempDir()
@@ -59,21 +60,44 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
+	// Установим переменную окружения для увеличения таймаута в тестах
+	t.Setenv("TEST_ENVIRONMENT", "1")
+
 	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
+	defer pl.Close() // Убедимся, что ресурсы освобождаются
 
-	// Check that the current track is not empty.
-	var track interface{}
-	// Retry for up to 2 seconds to get a non-nil track.
-	for range 10 {
-		track = pl.GetCurrentTrack()
-		if track != nil {
-			break
+	// Даем время плейлисту инициализироваться перед запросом трека
+	time.Sleep(300 * time.Millisecond)
+
+	// Проверка с таймаутом для избежания зависания теста
+	timeout := time.After(5 * time.Second)
+	done := make(chan interface{}, 1)
+
+	go func() {
+		// Check that the current track is not empty.
+		var track interface{}
+		// Retry for up to 2 seconds to get a non-nil track.
+		for range 10 {
+			track = pl.GetCurrentTrack()
+			if track != nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
+		done <- track
+	}()
+
+	// Ожидаем результата или таймаута
+	var track interface{}
+	select {
+	case result := <-done:
+		track = result
+	case <-timeout:
+		t.Fatalf("Test timed out while waiting for GetCurrentTrack")
 	}
 
 	if track == nil {
@@ -85,21 +109,52 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 		t.Fatalf("Expected track to have a valid path")
 	}
 
-	// Manually add the track to history if it's not there yet.
-	pl.NextTrack() // This will add the current track to history
-	time.Sleep(200 * time.Millisecond)
-	pl.PreviousTrack() // Go back to the original track
-	time.Sleep(200 * time.Millisecond)
+	// Оборачиваем операции с историей в отдельную горутину с таймаутом
+	historyTimeout := time.After(5 * time.Second)
+	historyDone := make(chan struct{})
 
-	// Check that history starts with the current track.
-	var history []interface{}
-	// Retry for up to 2 seconds to get a non-empty history.
-	for range 10 {
-		history = pl.GetHistory()
-		if len(history) > 0 {
-			break
+	go func() {
+		// Manually add the track to history if it's not there yet.
+		pl.NextTrack() // This will add the current track to history
+		time.Sleep(300 * time.Millisecond)
+		pl.PreviousTrack() // Go back to the original track
+		time.Sleep(300 * time.Millisecond)
+		historyDone <- struct{}{}
+	}()
+
+	// Ожидаем завершения операций с историей или таймаута
+	select {
+	case <-historyDone:
+		// продолжаем выполнение
+	case <-historyTimeout:
+		t.Fatalf("Test timed out while manipulating track history")
+	}
+
+	// Проверка истории с таймаутом
+	historyCheckTimeout := time.After(5 * time.Second)
+	historyResult := make(chan []interface{})
+
+	go func() {
+		// Check that history starts with the current track.
+		var history []interface{}
+		// Retry for up to 2 seconds to get a non-empty history.
+		for range 10 {
+			history = pl.GetHistory()
+			if len(history) > 0 {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
+		historyResult <- history
+	}()
+
+	// Ожидаем результата или таймаута
+	var history []interface{}
+	select {
+	case result := <-historyResult:
+		history = result
+	case <-historyCheckTimeout:
+		t.Fatalf("Test timed out while waiting for GetHistory")
 	}
 
 	if len(history) == 0 {
@@ -110,7 +165,37 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	t.Logf("History: %v", history)
 }
 
+// Упрощенная версия с разделением на подфункции для уменьшения сложности.
 func TestPlaylist_NextTrack(t *testing.T) {
+	// Подготовка тестового окружения.
+	pl := setupNextTrackTest(t)
+	defer pl.Close()
+
+	// Получение текущего трека.
+	currentTrack := getCurrentTrackWithTimeout(t, pl)
+
+	// Логирование начального состояния.
+	t.Logf("Initial track: %v", currentTrack)
+	t.Logf("Initial history: %v", pl.GetHistory())
+
+	// Переход к следующему треку и проверка результата.
+	nextTrack := moveToNextTrackWithTimeout(t, pl)
+	validateNextTrack(t, nextTrack, currentTrack)
+
+	// Еще раз переход к следующему треку.
+	moveToNextTrackAgainWithTimeout(t, pl)
+
+	// Проверка истории.
+	history := getHistoryWithTimeout(t, pl, 2)
+
+	// Логирование результатов.
+	t.Logf("After next track operation:")
+	t.Logf("Next track: %v", nextTrack)
+	t.Logf("Updated history: %v", history)
+}
+
+// Вспомогательные функции для TestPlaylist_NextTrack.
+func setupNextTrackTest(t *testing.T) *playlist.Playlist {
 	// Create a temporary directory for tests.
 	tmpDir := t.TempDir()
 
@@ -119,68 +204,144 @@ func TestPlaylist_NextTrack(t *testing.T) {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
+	// Установим переменную окружения для увеличения таймаута в тестах.
+	t.Setenv("TEST_ENVIRONMENT", "1")
+
 	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Get current track with retry.
-	var currentTrack interface{}
-	for range 10 {
-		currentTrack = pl.GetCurrentTrack()
-		if currentTrack != nil {
-			break
+	// Даем время плейлисту инициализироваться.
+	time.Sleep(300 * time.Millisecond)
+
+	return pl
+}
+
+func getCurrentTrackWithTimeout(t *testing.T, pl *playlist.Playlist) interface{} {
+	getCurrentTrackTimeout := time.After(5 * time.Second)
+	currentTrackDone := make(chan interface{}, 1)
+
+	go func() {
+		// Get current track with retry
+		var currentTrack interface{}
+		for range 10 {
+			currentTrack = pl.GetCurrentTrack()
+			if currentTrack != nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
+		currentTrackDone <- currentTrack
+	}()
+
+	// Ожидаем результата или таймаута
+	var currentTrack interface{}
+	select {
+	case result := <-currentTrackDone:
+		currentTrack = result
+	case <-getCurrentTrackTimeout:
+		t.Fatalf("Test timed out while waiting for GetCurrentTrack")
 	}
 
 	if currentTrack == nil {
 		t.Fatalf("Expected current track to not be nil before switching after multiple attempts")
 	}
 
-	// Log current state for debugging.
-	t.Logf("Initial track: %v", currentTrack)
-	t.Logf("Initial history: %v", pl.GetHistory())
+	return currentTrack
+}
 
-	// Move to next track.
-	nextTrack := pl.NextTrack()
+func moveToNextTrackWithTimeout(t *testing.T, pl *playlist.Playlist) interface{} {
+	nextTrackTimeout := time.After(5 * time.Second)
+	nextTrackDone := make(chan interface{}, 1)
+
+	go func() {
+		// Move to next track
+		nextTrack := pl.NextTrack()
+		nextTrackDone <- nextTrack
+	}()
+
+	// Ожидаем результата или таймаута
+	var nextTrack interface{}
+	select {
+	case result := <-nextTrackDone:
+		nextTrack = result
+	case <-nextTrackTimeout:
+		t.Fatalf("Test timed out while waiting for NextTrack")
+	}
+
 	if nextTrack == nil {
 		t.Fatalf("Expected next track to not be nil")
 	}
 
-	// Check that the track has a path.
+	return nextTrack
+}
+
+func validateNextTrack(t *testing.T, nextTrack, currentTrack interface{}) {
+	// Check that the track has a path
 	if track, okNext := nextTrack.(interface{ GetPath() string }); !okNext || track.GetPath() == "" {
 		t.Fatalf("Expected next track to have a valid path")
 	}
 
-	// Check that the next track is different from the current track.
+	// Check that the next track is different from the current track
 	if nextTrack == currentTrack {
 		checkTrackPaths(t, nextTrack, currentTrack)
 	}
+}
 
-	// Move to next track again to ensure we have at least 2 tracks in history.
-	pl.NextTrack()
-	time.Sleep(200 * time.Millisecond)
+func moveToNextTrackAgainWithTimeout(t *testing.T, pl *playlist.Playlist) {
+	nextTrack2Timeout := time.After(5 * time.Second)
+	nextTrack2Done := make(chan struct{}, 1)
 
-	// Check that history has been updated with retry.
-	var history []interface{}
-	for range 10 {
-		history = pl.GetHistory()
-		if len(history) >= 2 {
-			break
+	go func() {
+		// Move to next track again to ensure we have at least 2 tracks in history
+		pl.NextTrack()
+		time.Sleep(300 * time.Millisecond)
+		nextTrack2Done <- struct{}{}
+	}()
+
+	// Ожидаем результата или таймаута
+	select {
+	case <-nextTrack2Done:
+		// продолжаем выполнение
+	case <-nextTrack2Timeout:
+		t.Fatalf("Test timed out while moving to the next track again")
+	}
+}
+
+func getHistoryWithTimeout(t *testing.T, pl *playlist.Playlist, minSize int) []interface{} {
+	historyTimeout := time.After(5 * time.Second)
+	historyDone := make(chan []interface{}, 1)
+
+	go func() {
+		// Check that history has been updated with retry
+		var history []interface{}
+		for range 10 {
+			history = pl.GetHistory()
+			if len(history) >= minSize {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
+		historyDone <- history
+	}()
+
+	// Ожидаем результата или таймаута
+	var history []interface{}
+	select {
+	case result := <-historyDone:
+		history = result
+	case <-historyTimeout:
+		t.Fatalf("Test timed out while waiting for GetHistory")
 	}
 
-	if len(history) < 2 {
-		t.Fatalf("Expected history to contain at least two items after multiple attempts, but got %d", len(history))
+	if len(history) < minSize {
+		t.Fatalf("Expected history to contain at least %d items after multiple attempts, but got %d",
+			minSize, len(history))
 	}
 
-	// Log results for debugging.
-	t.Logf("After next track operation:")
-	t.Logf("Next track: %v", nextTrack)
-	t.Logf("Updated history: %v", history)
+	return history
 }
 
 func TestPlaylist_PreviousTrack(t *testing.T) {
@@ -192,42 +353,109 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
+	// Установим переменную окружения для увеличения таймаута в тестах
+	t.Setenv("TEST_ENVIRONMENT", "1")
+
 	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
+	defer pl.Close() // Убедимся, что ресурсы освобождаются
 
 	// Allow time for playlist initialization.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+
+	// Получение текущего трека с таймаутом
+	getCurrentTrackTimeout := time.After(5 * time.Second)
+	currentTrackChan := make(chan interface{}, 1)
+
+	go func() {
+		currentTrack := pl.GetCurrentTrack()
+		currentTrackChan <- currentTrack
+	}()
 
 	// Remember current track.
-	currentTrack := pl.GetCurrentTrack()
+	var currentTrack interface{}
+	select {
+	case result := <-currentTrackChan:
+		currentTrack = result
+	case <-getCurrentTrackTimeout:
+		t.Fatalf("Test timed out while getting current track")
+	}
+
 	currentTrackPath := ""
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
 		currentTrackPath = track.GetPath()
 		t.Logf("Initial track path: %s", currentTrackPath)
 	}
 
-	// Move to next track.
-	pl.NextTrack()
+	// Переход к следующему треку с таймаутом
+	nextTrackTimeout := time.After(5 * time.Second)
+	nextTrackDone := make(chan struct{}, 1)
+
+	go func() {
+		// Move to next track.
+		pl.NextTrack()
+		nextTrackDone <- struct{}{}
+	}()
+
+	// Ожидаем результата или таймаута
+	select {
+	case <-nextTrackDone:
+		// продолжаем выполнение
+	case <-nextTrackTimeout:
+		t.Fatalf("Test timed out while moving to next track")
+	}
 
 	// Allow time for playlist to update.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+
+	// Получение промежуточного трека с таймаутом
+	getMidTrackTimeout := time.After(5 * time.Second)
+	midTrackChan := make(chan interface{}, 1)
+
+	go func() {
+		midTrack := pl.GetCurrentTrack()
+		midTrackChan <- midTrack
+	}()
 
 	// Check that the track has changed.
-	midTrack := pl.GetCurrentTrack()
+	var midTrack interface{}
+	select {
+	case result := <-midTrackChan:
+		midTrack = result
+	case <-getMidTrackTimeout:
+		t.Fatalf("Test timed out while getting mid track")
+	}
+
 	var midTrackPath string
 	if track, ok := midTrack.(interface{ GetPath() string }); ok {
 		midTrackPath = track.GetPath()
 		t.Logf("Middle track path (after next): %s", midTrackPath)
 	}
 
-	// Move back to previous track.
-	previousTrack := pl.PreviousTrack()
+	// Возврат к предыдущему треку с таймаутом
+	previousTrackTimeout := time.After(5 * time.Second)
+	previousTrackChan := make(chan interface{}, 1)
+
+	go func() {
+		// Move back to previous track.
+		previousTrack := pl.PreviousTrack()
+		previousTrackChan <- previousTrack
+	}()
+
+	// Ожидаем результат или таймаут
+	var previousTrack interface{}
+	select {
+	case result := <-previousTrackChan:
+		previousTrack = result
+	case <-previousTrackTimeout:
+		t.Fatalf("Test timed out while moving to previous track")
+	}
 
 	// Allow time for playlist to update.
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	// Check that the previous track is not empty.
 	if previousTrack == nil {
@@ -248,7 +476,24 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 	}
 
 	// Log history state.
-	t.Logf("Final history: %v", pl.GetHistory())
+	historyTimeout := time.After(5 * time.Second)
+	historyChan := make(chan []interface{}, 1)
+
+	go func() {
+		history := pl.GetHistory()
+		historyChan <- history
+	}()
+
+	// Получаем историю с таймаутом
+	var history []interface{}
+	select {
+	case result := <-historyChan:
+		history = result
+	case <-historyTimeout:
+		t.Fatalf("Test timed out while getting history")
+	}
+
+	t.Logf("Final history: %v", history)
 }
 
 func TestPlaylist_ShuffleMode(t *testing.T) {
