@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -770,6 +771,37 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		return
 	}
 
+	// Попробуем сначала обработать формат JSON
+	var jsonRoutes map[string]string
+	if err := json.Unmarshal([]byte(dirRoutes), &jsonRoutes); err == nil {
+		logger.Info("Обнаружен JSON формат в DIRECTORY_ROUTES")
+
+		// Перебираем маршруты из JSON
+		for route, path := range jsonRoutes {
+			// Нормализуем маршрут (добавляем слэш в начало, если его нет)
+			if !strings.HasPrefix(route, "/") {
+				logger.Info("Normalized route", slog.String("from", route), slog.String("to", "/"+route))
+				route = "/" + route
+			}
+
+			// Проверяем существование директории
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", route))
+				continue
+			}
+
+			// Добавляем в конфигурацию
+			config.DirectoryRoutes[path] = route
+			logger.Info("Added directory route from JSON", slog.String("path", path), slog.String("route", route))
+		}
+
+		logger.Info("Directory routes configured from JSON", slog.Int("count", len(config.DirectoryRoutes)))
+		return
+	}
+
+	// Если JSON не сработал, пробуем старый формат
+	logger.Info("Пробуем старый формат DIRECTORY_ROUTES с разделителями")
+
 	// Process each directory route.
 	routes := strings.Split(dirRoutes, ";")
 	for _, route := range routes {
@@ -786,7 +818,7 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		}
 
 		// Check if directory exists.
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 			logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", url))
 			continue
 		}
