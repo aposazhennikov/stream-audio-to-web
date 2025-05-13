@@ -27,7 +27,7 @@ func getServerURL() string {
 	if url := os.Getenv("SERVER_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:8080"
+	return "http://aposazhennikov.ru:8000"
 }
 
 // TestVolumeNormalization tests that volume normalization works correctly in the end-to-end system.

@@ -970,11 +970,11 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Get playlist history.
 		history := s.playlists[route].GetHistory()
 		historyHTML := ""
-		for i := range make([]struct{}, len(history)) {
+		for i, item := range history {
 			if i > 0 {
 				historyHTML += "<br>"
 			}
-			historyHTML += html.EscapeString(fmt.Sprintf("%v", history[i]))
+			historyHTML += html.EscapeString(fmt.Sprintf("%v", item))
 		}
 
 		streams = append(streams, StreamInfo{
@@ -993,11 +993,29 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		return streams[i].Route < streams[j].Route
 	})
 
-	tmpl := template.Must(template.ParseFiles("templates/status.html"))
+	// Загружаем шаблон с правильными путями
+	tmpl, tmplErr := template.ParseFiles(
+		"templates/status.html",
+		"templates/partials/head.html",
+	)
+	if tmplErr != nil {
+		s.logger.Error("Unable to load status.html template", slog.String("error", tmplErr.Error()))
+		http.Error(w, "Server error: "+tmplErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Устанавливаем тип контента перед выполнением шаблона
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Передаем данные в шаблон и обрабатываем ошибки
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams": streams,
+		"Streams":      streams,
+		"Title":        "Audio Streams Status",
+		"RelayEnabled": s.relayManager != nil,
+		"RelayActive":  s.relayManager != nil && s.relayManager.IsActive(),
 	}); executeErr != nil {
-		s.logger.Error("Failed to execute template", slog.String("error", executeErr.Error()))
+		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
+		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -1228,8 +1246,25 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 
 // redirectToLogin redirects to login page.
 func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info(
+		"Redirecting to login page",
+		slog.String("remoteAddr", r.RemoteAddr),
+		slog.String("path", r.URL.Path),
+		slog.String("userAgent", r.UserAgent()),
+		slog.String("cookie", fmt.Sprintf("%v", r.Cookies())),
+	)
+
+	// Проверим куки для диагностики
+	cookie, cookieErr := r.Cookie("status_auth")
+	if cookieErr != nil {
+		s.logger.Info("Auth cookie not found", slog.String("error", cookieErr.Error()))
+	} else {
+		s.logger.Info("Auth cookie found", slog.String("value", cookie.Value))
+		s.logger.Info("Expected password", slog.String("password", s.statusPassword))
+		s.logger.Info("Cookie match", slog.Bool("match", cookie.Value == s.statusPassword))
+	}
+
 	http.Redirect(w, r, "/status", http.StatusFound)
-	s.logger.Info("Redirected to login page", slog.String("remoteAddr", r.RemoteAddr))
 }
 
 // handleShufflePlaylist shuffles the playlist for a specific stream.

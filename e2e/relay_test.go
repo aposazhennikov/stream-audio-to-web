@@ -74,6 +74,51 @@ func setupRelayEndToEndTest(t *testing.T) (*mockAudioServer, *httptest.Server, *
 	tempDir := t.TempDir()
 	configFile := filepath.Join(tempDir, "relay_list.json")
 
+	// Создаем директорию шаблонов и partials
+	templatesDir := filepath.Join(tempDir, "templates")
+	partialsDir := filepath.Join(templatesDir, "partials")
+	if mkdirErr := os.MkdirAll(partialsDir, 0755); mkdirErr != nil {
+		t.Fatalf("Failed to create templates/partials directory: %v", mkdirErr)
+	}
+
+	// Копируем шаблон 404.html в директорию шаблонов
+	template404Path := filepath.Join("../templates", "404.html")
+	template404Content, readTemplate404Err := os.ReadFile(template404Path)
+	if readTemplate404Err != nil {
+		t.Logf("Could not read template file: %v", readTemplate404Err)
+		// Создаем пустой файл шаблона
+		template404Content = []byte("<html><body>404 Not Found</body></html>")
+	}
+
+	outputTemplate404Path := filepath.Join(templatesDir, "404.html")
+	if writeTemplate404Err := os.WriteFile(outputTemplate404Path, template404Content, 0644); writeTemplate404Err != nil {
+		t.Fatalf("Failed to write template file: %v", writeTemplate404Err)
+	}
+
+	// Копируем шаблон partials/head.html
+	templateHeadPath := filepath.Join("../templates/partials", "head.html")
+	templateHeadContent, readTemplateHeadErr := os.ReadFile(templateHeadPath)
+	if readTemplateHeadErr != nil {
+		t.Logf("Could not read head template file: %v", readTemplateHeadErr)
+		// Создаем пустой файл шаблона
+		templateHeadContent = []byte("<head><title>Test</title></head>")
+	}
+
+	outputTemplateHeadPath := filepath.Join(partialsDir, "head.html")
+	if writeTemplateHeadErr := os.WriteFile(outputTemplateHeadPath, templateHeadContent, 0644); writeTemplateHeadErr != nil {
+		t.Fatalf("Failed to write head template file: %v", writeTemplateHeadErr)
+	}
+
+	// Устанавливаем текущую директорию на tempDir, чтобы шаблоны были доступны
+	oldWd, _ := os.Getwd()
+	if chdirErr := os.Chdir(tempDir); chdirErr != nil {
+		t.Fatalf("Failed to change directory: %v", chdirErr)
+	}
+	// После тестов вернуться в исходную директорию
+	t.Cleanup(func() {
+		os.Chdir(oldWd)
+	})
+
 	// Создаем новый менеджер релеев.
 	relayManager := relay.NewRelayManager(configFile, slog.Default())
 
