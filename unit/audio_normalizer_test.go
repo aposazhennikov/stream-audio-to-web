@@ -588,7 +588,7 @@ func createSyntheticOutput(targetRMS float64, numSamples int) []byte {
 	// For a sine wave, amplitude = rms * sqrt(2).
 	amplitude := targetRMS * math.Sqrt(2)
 
-	for i := range numSamples {
+	for i := 0; i < numSamples; i++ {
 		// Generate sine wave.
 		phase := float64(i) * 2 * math.Pi * 440 / 44100
 		value := amplitude * math.Sin(phase)
