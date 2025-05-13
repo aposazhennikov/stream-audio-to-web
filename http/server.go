@@ -1297,6 +1297,32 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 
 // handleSetShuffleMode sets the shuffle mode for a specific stream.
 func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.isShuffleModeAuthValid(w, r) {
+		return
+	}
+
+	// Extract vars and validate
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	mode := vars["mode"]
+
+	// Validate mode
+	if !s.isShuffleModeValid(w, r, route, mode) {
+		return
+	}
+
+	// Validate route
+	if !s.isShuffleRouteValid(w, r, route) {
+		return
+	}
+
+	// Process the shuffle mode setting
+	s.processShuffleModeSetting(w, r, route, mode)
+}
+
+// isShuffleModeAuthValid checks if the user is authenticated for setting shuffle mode.
+func (s *Server) isShuffleModeAuthValid(w http.ResponseWriter, r *http.Request) bool {
 	if !s.checkAuth(r) {
 		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
 		if isAjax {
@@ -1306,19 +1332,18 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 				"error":   "Authentication required",
 			}); encodeErr != nil {
 				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
+				return false
 			}
-			return
+			return false
 		}
 		http.Redirect(w, r, "/status", http.StatusSeeOther)
-		return
+		return false
 	}
+	return true
+}
 
-	vars := mux.Vars(r)
-	route := "/" + vars["route"]
-	mode := vars["mode"]
-
-	// Validate mode value
+// isShuffleModeValid validates the shuffle mode value.
+func (s *Server) isShuffleModeValid(w http.ResponseWriter, r *http.Request, route, mode string) bool {
 	if mode != "on" && mode != "off" {
 		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
 		if isAjax {
@@ -1329,14 +1354,18 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 				"error":   "Invalid mode value, must be 'on' or 'off'",
 			}); encodeErr != nil {
 				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
+				return false
 			}
-			return
+			return false
 		}
 		http.Error(w, "Invalid mode value, must be 'on' or 'off'", http.StatusBadRequest)
-		return
+		return false
 	}
+	return true
+}
 
+// isShuffleRouteValid checks if the route exists.
+func (s *Server) isShuffleRouteValid(w http.ResponseWriter, r *http.Request, route string) bool {
 	s.mutex.RLock()
 	_, exists := s.playlists[route]
 	s.mutex.RUnlock()
@@ -1351,14 +1380,18 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 				"error":   "Route not found",
 			}); encodeErr != nil {
 				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
+				return false
 			}
-			return
+			return false
 		}
 		http.Error(w, "Route not found", http.StatusNotFound)
-		return
+		return false
 	}
+	return true
+}
 
+// processShuffleModeSetting processes the shuffle mode setting and sends response.
+func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Request, route, mode string) {
 	// TODO: Implement setting shuffle mode for the playlist.
 	// This would require extending the PlaylistManager interface.
 	// For now, just acknowledge the request.

@@ -68,7 +68,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	// Check that the current track is not empty.
 	var track interface{}
 	// Retry for up to 2 seconds to get a non-nil track
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		track = pl.GetCurrentTrack()
 		if track != nil {
 			break
@@ -94,7 +94,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	// Check that history starts with the current track.
 	var history []interface{}
 	// Retry for up to 2 seconds to get a non-empty history
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		history = pl.GetHistory()
 		if len(history) > 0 {
 			break
@@ -127,7 +127,7 @@ func TestPlaylist_NextTrack(t *testing.T) {
 
 	// Get current track with retry
 	var currentTrack interface{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		currentTrack = pl.GetCurrentTrack()
 		if currentTrack != nil {
 			break
@@ -165,7 +165,7 @@ func TestPlaylist_NextTrack(t *testing.T) {
 
 	// Check that history has been updated with retry
 	var history []interface{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		history = pl.GetHistory()
 		if len(history) >= 2 {
 			break
