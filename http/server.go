@@ -263,6 +263,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
 	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
+	s.router.HandleFunc("/status-page/", s.statusPageHandler).Methods("GET")
 
 	// Add handlers for track switching.
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")

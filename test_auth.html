@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }
+        button { padding: 10px; margin: 10px 0; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Отладка авторизации</h1>
+    <button onclick="checkAuthCookie()">Проверить куки авторизации</button>
+    <button onclick="setCookie()">Установить тестовую куку</button>
+    <button onclick="deleteCookie()">Удалить куку</button>
+    <h2>Текущие куки:</h2>
+    <pre id="cookieInfo">Нажмите кнопку для проверки куки</pre>
+    
+    <script>
+        function checkAuthCookie() {
+            const allCookies = document.cookie;
+            const cookieObj = {};
+            
+            allCookies.split(';').forEach(cookie => {
+                const parts = cookie.split('=');
+                if (parts.length === 2) {
+                    cookieObj[parts[0].trim()] = parts[1].trim();
+                }
+            });
+            
+            document.getElementById('cookieInfo').textContent = 
+                JSON.stringify(cookieObj, null, 2) || 'Нет куки';
+            
+            // Проверяем есть ли status_auth
+            if (cookieObj['status_auth']) {
+                document.getElementById('cookieInfo').textContent += 
+                    '\n\nКука status_auth найдена! Значение: ' + cookieObj['status_auth'];
+            } else {
+                document.getElementById('cookieInfo').textContent += 
+                    '\n\nКука status_auth НЕ НАЙДЕНА!';
+            }
+        }
+        
+        function setCookie() {
+            const password = prompt('Введите пароль для установки куки:');
+            if (!password) return;
+            
+            // Установить куку на 1 день
+            document.cookie = `status_auth=${password}; path=/; max-age=86400`;
+            checkAuthCookie();
+        }
+        
+        function deleteCookie() {
+            document.cookie = "status_auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+            checkAuthCookie();
+        }
+        
+        // Проверить куки при загрузке
+        window.onload = checkAuthCookie;
+    </script>
+</body>
+</html> 
