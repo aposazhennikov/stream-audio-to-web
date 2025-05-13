@@ -9,7 +9,7 @@ import (
 	httpServer "github.com/user/stream-audio-to-web/http"
 )
 
-// Mock implementation for StreamHandler
+// Mock implementation for StreamHandler.
 type mockStreamHandler struct {
 	clientCount int
 	trackChan   chan string
@@ -22,7 +22,7 @@ func (m *mockStreamHandler) AddClient() (<-chan []byte, int, error) {
 }
 
 func (m *mockStreamHandler) RemoveClient(_ int) {
-	// Do nothing - this is a mock
+	// Do nothing - this is a mock.
 }
 
 func (m *mockStreamHandler) GetClientCount() int {
@@ -33,7 +33,7 @@ func (m *mockStreamHandler) GetCurrentTrackChannel() <-chan string {
 	return m.trackChan
 }
 
-// Mock implementation for PlaylistManager
+// Mock implementation for PlaylistManager.
 type mockPlaylistManager struct {
 	currentTrack string
 	history      []interface{}
@@ -69,34 +69,34 @@ func (m *mockPlaylistManager) PreviousTrack() interface{} {
 	return m.currentTrack
 }
 
-// Shuffle implements PlaylistManager.Shuffle method
+// Shuffle implements PlaylistManager.Shuffle method.
 func (m *mockPlaylistManager) Shuffle() {
-	// Mock implementation, doesn't need to actually shuffle anything
+	// Mock implementation, doesn't need to actually shuffle anything.
 }
 
 func TestHealthzEndpoint(t *testing.T) {
-	// Create HTTP server
+	// Create HTTP server.
 	server := httpServer.NewServer("mp3", 10)
 
-	// Create test HTTP request
+	// Create test HTTP request.
 	req, err := http.NewRequest(http.MethodGet, "/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Create ResponseRecorder to record the response
+	// Create ResponseRecorder to record the response.
 	rr := httptest.NewRecorder()
 
-	// Process the request
+	// Process the request.
 	server.Handler().ServeHTTP(rr, req)
 
-	// Check response code
+	// Check response code.
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Check response body
+	// Check response body.
 	expected := "OK"
 	if rr.Body.String() != expected {
 		t.Errorf("handler returned unexpected body: got %v want %v",
@@ -105,22 +105,22 @@ func TestHealthzEndpoint(t *testing.T) {
 }
 
 func TestReadyzEndpoint(t *testing.T) {
-	// Create HTTP server
+	// Create HTTP server.
 	server := httpServer.NewServer("mp3", 10)
 
-	// Create test HTTP request
+	// Create test HTTP request.
 	req, err := http.NewRequest(http.MethodGet, "/readyz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Create ResponseRecorder to record the response
+	// Create ResponseRecorder to record the response.
 	rr := httptest.NewRecorder()
 
-	// Process the request
+	// Process the request.
 	server.Handler().ServeHTTP(rr, req)
 
-	// Check response code
+	// Check response code.
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
@@ -128,10 +128,10 @@ func TestReadyzEndpoint(t *testing.T) {
 }
 
 func TestStreamRegistration(t *testing.T) {
-	// Create HTTP server
+	// Create HTTP server.
 	server := httpServer.NewServer("mp3", 10)
 
-	// Create mocks for stream and playlist
+	// Create mocks for stream and playlist.
 	mockStream := &mockStreamHandler{
 		clientCount: 0,
 		trackChan:   make(chan string),
@@ -143,25 +143,25 @@ func TestStreamRegistration(t *testing.T) {
 		startTime:    time.Now(),
 	}
 
-	// Register stream
+	// Register stream.
 	server.RegisterStream("/test", mockStream, mockPlaylist)
 
-	// Check that stream is registered
+	// Check that stream is registered.
 	if !server.IsStreamRegistered("/test") {
 		t.Errorf("Stream not registered properly")
 	}
 }
 
-// AddTestSetShuffleMode tests the SetShuffleMode handler
+// AddTestSetShuffleMode tests the SetShuffleMode handler.
 func TestSetShuffleMode(t *testing.T) {
-	// Create HTTP server
+	// Create HTTP server.
 	server := httpServer.NewServer("mp3", 10)
 
-	// We cannot directly call SetStatusPassword,
-	// so we will rely on the default password ("1234554321")
-	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword")
+	// We cannot directly call SetStatusPassword,.
+	// so we will rely on the default password ("1234554321").
+	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword").
 
-	// Create mocks for stream and playlist
+	// Create mocks for stream and playlist.
 	mockStream := &mockStreamHandler{
 		clientCount: 0,
 		trackChan:   make(chan string),
@@ -173,13 +173,13 @@ func TestSetShuffleMode(t *testing.T) {
 		startTime:    time.Now(),
 	}
 
-	// Register stream
+	// Register stream.
 	server.RegisterStream("/test", mockStream, mockPlaylist)
 
-	// Use default password for tests
+	// Use default password for tests.
 	defaultPassword := "1234554321"
 
-	// Test cases
+	// Test cases.
 	testCases := []struct {
 		name           string
 		path           string
@@ -233,13 +233,13 @@ func TestSetShuffleMode(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create test HTTP request
+			// Create test HTTP request.
 			req, err := http.NewRequest(tc.method, tc.path, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			// Add authentication cookie if needed
+			// Add authentication cookie if needed.
 			if tc.cookieAuth {
 				req.AddCookie(&http.Cookie{
 					Name:  "status_auth",
@@ -247,13 +247,13 @@ func TestSetShuffleMode(t *testing.T) {
 				})
 			}
 
-			// Create ResponseRecorder to record the response
+			// Create ResponseRecorder to record the response.
 			rr := httptest.NewRecorder()
 
-			// Process the request
+			// Process the request.
 			server.Handler().ServeHTTP(rr, req)
 
-			// Check response code
+			// Check response code.
 			if status := rr.Code; status != tc.expectedStatus {
 				t.Errorf("handler returned wrong status code: got %v want %v",
 					status, tc.expectedStatus)

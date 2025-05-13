@@ -11,21 +11,18 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	html "html"
 
-	"github.com/getsentry/sentry-go"
+	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/user/stream-audio-to-web/audio"
 	"github.com/user/stream-audio-to-web/relay"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 // StreamHandler interface for handling audio stream.
@@ -61,9 +58,10 @@ type Server struct {
 	stationManager interface{ RestartPlayback(string) bool } // Interface for restarting playback.
 	relayManager   *relay.Manager                            // Manager for relay functionality.
 	// Prometheus metrics.
-	listenerCount     *prometheus.GaugeVec  // Gauge for tracking active listeners
-	bytesSent         *prometheus.CounterVec // Counter for bytes sent
-	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time
+	listenerCount     *prometheus.GaugeVec   // Gauge for tracking active listeners.
+	bytesSent         *prometheus.CounterVec // Counter for bytes sent.
+	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time.
+	logger            *slog.Logger           // Logger for server operations.
 }
 
 const xmlHTTPRequestHeader = "Xmlhttprequest"
@@ -71,12 +69,13 @@ const xmlHTTPRequestHeader = "Xmlhttprequest"
 const (
 	defaultStatusPassword     = "1234554321"
 	defaultStreamsSortTimeout = 1 * time.Second
-	asciiMax         = 127
-	shortSleepMs     = 50
-	kb               = 1024
-	mb               = 1024 * 1024
-	cookieExpireHours = 24
-	logIntervalSec   = 5
+	asciiMax                  = 127
+	shortSleepMs              = 50
+	kb                        = 1024
+	mb                        = 1024 * 1024
+	cookieExpireHours         = 24
+	logIntervalSec            = 5
+	logEveryBytes             = mb // Log every sent megabyte.
 )
 
 // NewServer creates a new HTTP server.
@@ -84,7 +83,7 @@ func NewServer(streamFormat string, maxClients int) *Server {
 	// Get password for status page from environment variable.
 	statusPassword := getEnvOrDefault("STATUS_PASSWORD", defaultStatusPassword)
 
-	// Create Prometheus metrics
+	// Create Prometheus metrics.
 	listenerCount := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "audio_stream_listeners",
@@ -109,10 +108,13 @@ func NewServer(streamFormat string, maxClients int) *Server {
 		[]string{"stream"},
 	)
 
-	// Register metrics
+	// Register metrics.
 	prometheus.MustRegister(listenerCount)
 	prometheus.MustRegister(bytesSent)
 	prometheus.MustRegister(trackSecondsTotal)
+
+	// Create logger.
+	logger := slog.Default()
 
 	server := &Server{
 		router:            mux.NewRouter(),
@@ -125,12 +127,17 @@ func NewServer(streamFormat string, maxClients int) *Server {
 		listenerCount:     listenerCount,
 		bytesSent:         bytesSent,
 		trackSecondsTotal: trackSecondsTotal,
+		logger:            logger,
 	}
 
 	// Setup routes.
 	server.setupRoutes()
 
-	slog.Info("HTTP server created, stream format: %s, max clients: %d", streamFormat, maxClients)
+	server.logger.Info(
+		"HTTP server created",
+		slog.String("streamFormat", streamFormat),
+		slog.Int("maxClients", maxClients),
+	)
 	return server
 }
 
@@ -149,7 +156,7 @@ func (s *Server) Handler() http.Handler {
 
 // RegisterStream registers a new audio stream.
 func (s *Server) RegisterStream(route string, stream StreamHandler, playlist PlaylistManager) {
-	slog.Info("DIAGNOSTICS: Starting audio stream registration", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: Starting audio stream registration", slog.String("route", route))
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -157,36 +164,36 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 	// Make sure route starts with a slash.
 	if route[0] != '/' {
 		route = "/" + route
-		slog.Info("Fixed route during registration", slog.String("route", route))
+		s.logger.Info("Fixed route during registration", slog.String("route", route))
 	}
 
-	slog.Info("DIAGNOSTICS: Adding stream to streams map", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: Adding stream to streams map", slog.String("route", route))
 	s.streams[route] = stream
-	slog.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
 	s.playlists[route] = playlist
 
-	// Set trackSecondsTotal metric directly to stream
+	// Set trackSecondsTotal metric directly to stream.
 	if streamer, ok := stream.(*audio.Streamer); ok {
 		streamer.SetTrackSecondsMetric(s.trackSecondsTotal)
-		slog.Info("DIAGNOSTICS: trackSecondsTotal metric set for streamer on route %s", route)
+		s.logger.Info("DIAGNOSTICS: trackSecondsTotal metric set for streamer", slog.String("route", route))
 	}
 
 	// Check if stream was added.
 	if _, exists := s.streams[route]; exists {
-		slog.Info("DIAGNOSTICS: Stream for route successfully added to streams map", slog.String("route", route))
+		s.logger.Info("DIAGNOSTICS: Stream for route successfully added to streams map", slog.String("route", route))
 	} else {
-		slog.Error("ERROR: Stream for route was not added to streams map!", slog.String("route", route))
+		s.logger.Error("ERROR: Stream for route was not added to streams map!", slog.String("route", route))
 	}
 
 	// IMPORTANT: Register route handler in router for GET and HEAD requests.
 	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET", "HEAD")
-	slog.Info("DIAGNOSTICS: HTTP handler registered for route", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: HTTP handler registered for route", slog.String("route", route))
 
 	// Start goroutine to track current track.
-	slog.Info("DIAGNOSTICS: Starting goroutine to track current track", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: Starting goroutine to track current track", slog.String("route", route))
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	slog.Info("DIAGNOSTICS: Audio stream for route successfully registered", slog.String("route", route))
+	s.logger.Info("DIAGNOSTICS: Audio stream for route successfully registered", slog.String("route", route))
 }
 
 // IsStreamRegistered checks if stream with specified route is registered.
@@ -203,7 +210,12 @@ func (s *Server) IsStreamRegistered(route string) bool {
 func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	for trackPath := range trackCh {
 		fileName := filepath.Base(trackPath)
-		slog.Info("Current track for %s: %s (path: %s)", route, fileName, trackPath)
+		s.logger.Info(
+			"Current track",
+			slog.String("route", route),
+			slog.String("fileName", fileName),
+			slog.String("path", trackPath),
+		)
 
 		if hasUnicodeChars(fileName) {
 			sentry.ConfigureScope(func(scope *sentry.Scope) {
@@ -227,8 +239,8 @@ func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 
 // hasUnicodeChars checks for non-ASCII characters in string.
 func hasUnicodeChars(s string) bool {
-	for i := range len(s) {
-		if s[i] > asciiMax {
+	for _, char := range s {
+		if char > asciiMax {
 			return true
 		}
 	}
@@ -237,52 +249,56 @@ func hasUnicodeChars(s string) bool {
 
 // setupRoutes configures HTTP server routes.
 func (s *Server) setupRoutes() {
-	// Monitoring and health endpoints
+	// Monitoring and health endpoints.
 	s.router.HandleFunc("/healthz", s.healthzHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/readyz", s.readyzHandler).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", promhttp.Handler()).Methods("GET")
 
-	// API for playlist management
+	// API for playlist management.
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
 
-	// Add status page with password check
+	// Add status page with password check.
 	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
 	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
 
-	// Add handlers for track switching
+	// Add handlers for track switching.
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")
 	s.router.HandleFunc("/prev-track/{route}", s.prevTrackHandler).Methods("POST")
 
-	// Endpoint to shuffle playlist manually
+	// Endpoint to shuffle playlist manually.
 	s.router.HandleFunc("/shuffle-playlist/{route}", s.handleShufflePlaylist).Methods("POST")
 
-	// Endpoint to set shuffle mode for specific stream
-	s.router.HandleFunc("/set-shuffle/{route}/{mode}", s.SetShuffleMode).Methods("POST")
+	// Endpoint to set shuffle mode for specific stream.
+	s.router.HandleFunc("/set-shuffle/{route}/{mode}", s.handleSetShuffleMode).Methods("POST")
 
-	// Add static files for web interface
+	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 
-	// Add favicon and image files
+	// Add favicon and image files.
 	s.router.PathPrefix("/image/").Handler(http.StripPrefix("/image/", http.FileServer(http.Dir("./image"))))
 
-	// Handle favicon.ico requests in root
+	// Handle favicon.ico requests in root.
 	s.router.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./image/favicon.ico")
 	})
 
-	// Configure 404 handler
+	// Configure 404 handler.
 	s.router.NotFoundHandler = http.HandlerFunc(s.notFoundHandler)
 
-	slog.Info("HTTP routes configured", slog.String("status", "done"))
+	s.logger.Info("HTTP routes configured", slog.String("status", "done"))
 }
 
 // healthzHandler returns 200 OK if server is running.
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	// Log healthz request.
-	slog.Info("Received healthz request", slog.String("method", r.Method), slog.String("remoteAddr", r.RemoteAddr), slog.String("uri", r.RequestURI))
+	s.logger.Info(
+		"Received healthz request",
+		slog.String("method", r.Method),
+		slog.String("remote_addr", r.RemoteAddr),
+	)
 
 	// Check for registered streams.
 	s.mutex.RLock()
@@ -295,9 +311,9 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Log status.
 	if streamsCount == 0 {
-		slog.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
+		s.logger.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
 	} else {
-		slog.Info("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
+		s.logger.Info("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
 	}
 
 	// Add headers to prevent caching.
@@ -312,7 +328,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	// If not a HEAD request, send response body.
 	if r.Method != http.MethodHead {
 		if _, writeErr := w.Write([]byte("OK")); writeErr != nil {
-			slog.Error("Failed to write healthz response", slog.String("error", writeErr.Error()))
+			s.logger.Error("Failed to write healthz response", slog.String("error", writeErr.Error()))
 			return
 		}
 
@@ -323,13 +339,18 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Additional logging of successful response.
-	slog.Info("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	s.logger.Info("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
 }
 
 // readyzHandler checks readiness.
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// Log readyz request.
-	slog.Info("Received readyz request", slog.String("method", r.Method), slog.String("remoteAddr", r.RemoteAddr), slog.String("uri", r.RequestURI))
+	s.logger.Info(
+		"Received readyz request",
+		slog.String("method", r.Method),
+		slog.String("remoteAddr", r.RemoteAddr),
+		slog.String("uri", r.RequestURI),
+	)
 
 	// Add headers to prevent caching.
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -347,7 +368,7 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	s.mutex.RUnlock()
 
 	// Log status.
-	slog.Info("Readyz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
+	s.logger.Info("Readyz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
 
 	// Always return OK for readyz to avoid container restarts.
 	w.WriteHeader(http.StatusOK)
@@ -355,7 +376,7 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	// If not a HEAD request, send response body.
 	if r.Method != http.MethodHead {
 		if _, writeErr := fmt.Fprintf(w, "Ready - %d streams registered", streamsCount); writeErr != nil {
-			slog.Error("Failed to write readyz response", slog.String("error", writeErr.Error()))
+			s.logger.Error("Failed to write readyz response", slog.String("error", writeErr.Error()))
 			return
 		}
 
@@ -366,7 +387,7 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Additional logging of successful response.
-	slog.Info("Sent successful readyz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	s.logger.Info("Sent successful readyz response to client", slog.String("remoteAddr", r.RemoteAddr))
 }
 
 // streamsHandler handles requests for stream information.
@@ -393,7 +414,7 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 
-	// Sort streams by route for consistent output
+	// Sort streams by route for consistent output.
 	sort.Slice(streams, func(i, j int) bool {
 		return streams[i].Route < streams[j].Route
 	})
@@ -402,7 +423,7 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 	if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
 		"streams": streams,
 	}); encodeErr != nil {
-		slog.Error("Failed to encode streams response", slog.String("error", encodeErr.Error()))
+		s.logger.Error("Failed to encode streams response", slog.String("error", encodeErr.Error()))
 		return
 	}
 }
@@ -412,7 +433,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Query().Get("route")
 
 	if route == "" {
-		// Reload all playlists
+		// Reload all playlists.
 		s.mutex.RLock()
 		playlists := make([]PlaylistManager, 0, len(s.playlists))
 		for _, playlist := range s.playlists {
@@ -429,22 +450,22 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		slog.Info("All playlists reloaded")
+		s.logger.Info("All playlists reloaded")
 		w.WriteHeader(http.StatusOK)
 		if _, writeErr := w.Write([]byte("All playlists reloaded")); writeErr != nil {
-			slog.Error("ERROR: Failed to write response", slog.String("error", writeErr.Error()))
+			s.logger.Error("ERROR: Failed to write response", slog.String("error", writeErr.Error()))
 		}
 		return
 	}
 
-	// Reload specific playlist
+	// Reload specific playlist.
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
 
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
-		slog.Error("ERROR: %s", errorMsg)
+		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
 		sentry.CaptureMessage(errorMsg)
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return
@@ -452,15 +473,16 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 
 	if reloadErr := playlist.Reload(); reloadErr != nil {
 		errorMsg := fmt.Sprintf("Error reloading playlist: %s", reloadErr)
+		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", reloadErr.Error()))
 		sentry.CaptureException(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr))
 		http.Error(w, errorMsg, http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Playlist for stream %s reloaded", route)
+	s.logger.Info("Playlist reloaded", slog.String("route", route))
 	w.WriteHeader(http.StatusOK)
 	if _, writeErr := fmt.Fprintf(w, "Playlist for stream %s reloaded", route); writeErr != nil {
-		slog.Error("ERROR: Failed to write response", slog.String("error", writeErr.Error()))
+		s.logger.Error("ERROR: Failed to write response", slog.String("error", writeErr.Error()))
 	}
 }
 
@@ -476,12 +498,12 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	track, exists := s.currentTracks[route]
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
-		slog.Error("ERROR: %s", errorMsg)
+		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
 		sentry.CaptureMessage(errorMsg)
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return
 	}
-	slog.Info("Request for track information for %s: %s", route, track)
+	s.logger.Info("Track information request", slog.String("route", route), slog.String("track", track))
 	s.mutex.RLock()
 	playlist, playlistExists := s.playlists[route]
 	s.mutex.RUnlock()
@@ -490,7 +512,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 		"track": track,
 	}
 	if playlistExists {
-		for attempt := 0; attempt < 3; attempt++ {
+		for range 3 {
 			if currentTrack := playlist.GetCurrentTrack(); currentTrack != nil {
 				if trackWithPath, ok := currentTrack.(interface{ GetPath() string }); ok {
 					currentTrackInfo["path"] = trackWithPath.GetPath()
@@ -501,7 +523,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if encodeErr := json.NewEncoder(w).Encode(currentTrackInfo); encodeErr != nil {
-		slog.Error("ERROR: Failed to encode track info: %v", encodeErr)
+		s.logger.Error("Failed to encode track info", slog.String("error", encodeErr.Error()))
 	}
 }
 
@@ -519,9 +541,69 @@ func isConnectionClosedError(err error) bool {
 
 // StreamAudioHandler creates HTTP handler for audio streaming.
 func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
-	slog.Info("Creating audio stream handler for route %s", route)
+	s.logger.Info("Creating audio stream handler", slog.String("route", route))
 
-	contentType := ""
+	contentType := s.determineContentType()
+	s.logger.Info(
+		"Audio stream format",
+		slog.String("route", route),
+		slog.String("format", s.streamFormat),
+		slog.String("MIME", contentType),
+	)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Info(
+			"Received request for audio stream",
+			slog.String("method", r.Method),
+			slog.String("route", route),
+			slog.String("remoteAddr", r.RemoteAddr),
+		)
+
+		// Verify stream exists.
+		stream, exists := s.getStream(route, w)
+		if !exists {
+			return
+		}
+
+		// Set up appropriate headers for streaming.
+		s.setupStreamingHeaders(w, contentType)
+
+		// For HEAD requests, just send headers and return.
+		if r.Method == http.MethodHead {
+			s.logger.Info("Handled HEAD request", slog.String("route", route), slog.String("remoteAddr", r.RemoteAddr))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Verify flushing capability.
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			errorMsg := "Streaming not supported"
+			s.logger.Error("ERROR: Streaming not supported")
+			sentry.CaptureMessage(errorMsg) // Save as this is an error
+			http.Error(w, errorMsg, http.StatusInternalServerError)
+			return
+		}
+
+		// Flush headers immediately - critical for streaming.
+		flusher.Flush()
+
+		// Connect client to stream.
+		clientData, err := s.connectClientToStream(stream, route, r.RemoteAddr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer stream.RemoveClient(clientData.clientID)
+
+		// Start streaming data to client.
+		s.streamDataToClient(w, flusher, clientData, route, r.Context().Done())
+	}
+}
+
+// determineContentType sets the appropriate MIME type based on stream format.
+func (s *Server) determineContentType() string {
+	var contentType string
 	switch s.streamFormat {
 	case "mp3":
 		contentType = "audio/mpeg"
@@ -532,170 +614,260 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	default:
 		contentType = "audio/mpeg"
 	}
+	return contentType
+}
 
-	slog.Info("Audio stream format for route %s: %s (MIME: %s)", route, s.streamFormat, contentType)
+// getStream retrieves the stream handler for the given route.
+func (s *Server) getStream(route string, w http.ResponseWriter) (StreamHandler, bool) {
+	s.mutex.RLock()
+	stream, exists := s.streams[route]
+	s.mutex.RUnlock()
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("Received %s request for audio stream %s from %s", r.Method, route, r.RemoteAddr)
+	if !exists {
+		errorMsg := fmt.Sprintf("Stream %s not found", route)
+		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
+		sentry.CaptureMessage(errorMsg) // Save as this is an error
+		http.Error(w, errorMsg, http.StatusNotFound)
+		return nil, false
+	}
 
-		s.mutex.RLock()
-		stream, exists := s.streams[route]
-		s.mutex.RUnlock()
+	s.logger.Info("Stream found, setting up headers", slog.String("route", route))
+	return stream, true
+}
 
-		if !exists {
-			errorMsg := fmt.Sprintf("Stream %s not found", route)
-			slog.Error("ERROR: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Save as this is an error
-			http.Error(w, errorMsg, http.StatusNotFound)
+// setupStreamingHeaders sets appropriate HTTP headers for audio streaming.
+func (s *Server) setupStreamingHeaders(w http.ResponseWriter, contentType string) {
+	// 1. Content-Type must match audio stream format.
+	w.Header().Set("Content-Type", contentType)
+	// 2. Disable caching for live stream.
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	// 3. Protect against content type guessing.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// DO NOT set Transfer-Encoding: chunked, Go will do this itself.
+	// DO NOT set Connection: keep-alive, this is default behavior for HTTP/1.1.
+}
+
+// clientStreamData contains information about a connected client.
+type clientStreamData struct {
+	clientCh   <-chan []byte
+	clientID   int
+	remoteAddr string
+}
+
+// connectClientToStream adds a client to the stream.
+func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr string) (*clientStreamData, error) {
+	s.logger.Info("Adding client to stream", slog.String("route", route))
+
+	// Get data channel and client ID.
+	clientCh, clientID, addErr := stream.AddClient()
+	if addErr != nil {
+		s.logger.Error(
+			"ERROR: Error adding client to stream",
+			slog.String("route", route),
+			slog.String("error", addErr.Error()),
+		)
+		sentry.CaptureException(addErr) // Save as this is an error
+		return nil, addErr
+	}
+
+	// Update metrics ONLY AFTER successful connection and headers sent.
+	s.listenerCount.WithLabelValues(route).Inc()
+	defer s.listenerCount.WithLabelValues(route).Dec()
+
+	// Log client connection.
+	s.logger.Info(
+		"Client connected to stream",
+		slog.String("route", route),
+		slog.String("remoteAddr", remoteAddr),
+		slog.Int("clientID", clientID),
+	)
+
+	return &clientStreamData{
+		clientCh:   clientCh,
+		clientID:   clientID,
+		remoteAddr: remoteAddr,
+	}, nil
+}
+
+// streamDataToClient manages the streaming of audio data to a connected client.
+func (s *Server) streamDataToClient(
+	w http.ResponseWriter,
+	flusher http.Flusher,
+	clientData *clientStreamData,
+	route string,
+	clientClosed <-chan struct{},
+) {
+	s.logger.Info("Starting data transmission", slog.Int("clientID", clientData.clientID), slog.String("route", route))
+
+	// Counter for tracking sent data.
+	var totalBytesSent int64
+	var lastLogTime = time.Now()
+
+	// Send data to client.
+	for {
+		select {
+		case <-clientClosed:
+			// Client disconnected.
+			s.logger.Info("Client disconnected from stream",
+				slog.String("route", route),
+				slog.String("remoteAddr", clientData.remoteAddr),
+				slog.Int("clientID", clientData.clientID),
+				slog.Int64("totalBytesSent", totalBytesSent))
 			return
-		}
-
-		slog.Info("Stream %s found, setting up headers for streaming", route)
-
-		// Set up streaming headers - IMPORTANT!
-		// 1. Content-Type must match audio stream format
-		w.Header().Set("Content-Type", contentType)
-		// 2. Disable caching for live stream
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-		// 3. Protect against content type guessing
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// DO NOT set Transfer-Encoding: chunked, Go will do this itself
-		// DO NOT set Connection: keep-alive, this is default behavior for HTTP/1.1
-
-		// For HEAD requests, just send headers and return
-		if r.Method == http.MethodHead {
-			slog.Info("Handled HEAD request for stream %s from %s", route, r.RemoteAddr)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// IMPORTANT: DO NOT set Content-Length for streams, otherwise browser will wait for exact byte count
-
-		// Check for Flusher support
-		flusher, ok2 := w.(http.Flusher)
-		if !ok2 {
-			errorMsg := "Streaming not supported"
-			slog.Error("ERROR: %s", errorMsg)
-			sentry.CaptureMessage(errorMsg) // Save as this is an error
-			http.Error(w, errorMsg, http.StatusInternalServerError)
-			return
-		}
-
-		// Immediately send headers - CRITICAL IMPORTANT!
-		// This signals to the browser that streaming is starting
-		flusher.Flush()
-
-		slog.Info("Adding client to stream %s...", route)
-
-		// Get data channel and client ID
-		clientCh, clientID, addErr := stream.AddClient()
-		if addErr != nil {
-			slog.Error("ERROR: Error adding client to stream %s: %s", route, addErr)
-			sentry.CaptureException(addErr) // Save as this is an error
-			http.Error(w, addErr.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		defer stream.RemoveClient(clientID)
-
-		// Update metrics ONLY AFTER successful connection and headers sent
-		s.listenerCount.WithLabelValues(route).Inc()
-		defer s.listenerCount.WithLabelValues(route).Dec()
-
-		// Log client connection
-		remoteAddr := r.RemoteAddr
-		slog.Info("Client connected to stream %s: %s (ID: %d)", route, remoteAddr, clientID)
-
-		// Check for connection closure
-		clientClosed := r.Context().Done()
-
-		slog.Info("Starting data transmission to client %d for stream %s", clientID, route)
-
-		// Counter for tracking sent data
-		var totalBytesSent int64
-		var lastLogTime = time.Now()
-		const logEveryBytes = mb // Log every sent megabyte
-
-		// Send data to client
-		for {
-			select {
-			case <-clientClosed:
-				// Client disconnected
-				slog.Info("Client disconnected from stream %s: %s (ID: %d). Total sent: %d bytes",
-					route, remoteAddr, clientID, totalBytesSent)
+		case data, ok := <-clientData.clientCh:
+			if !ok {
+				// Channel closed.
+				s.logger.Info("Channel closed for client",
+					slog.String("remoteAddr", clientData.remoteAddr),
+					slog.Int("clientID", clientData.clientID),
+					slog.Int64("totalBytesSent", totalBytesSent))
 				return
-			case data, ok := <-clientCh:
-				if !ok {
-					// Channel closed
-					slog.Info("Channel closed for client %s (ID: %d). Total sent: %d bytes",
-						remoteAddr, clientID, totalBytesSent)
-					return
-				}
-
-				// Send data to client
-				n, writeErr := w.Write(data)
-				if writeErr != nil {
-					if isConnectionClosedError(writeErr) {
-						// Just log, don't send to Sentry
-						slog.Info("Client %d disconnected: %s. Total sent: %d bytes",
-							clientID, writeErr, totalBytesSent)
-					} else {
-						// Send to Sentry only for unusual errors
-						slog.Error("ERROR: Error sending data to client %d: %s. Total sent: %d bytes",
-							clientID, writeErr, totalBytesSent)
-						sentry.CaptureException(fmt.Errorf("error sending data to client %d: %w", clientID, writeErr))
-					}
-					return
-				}
-
-				// Update counter and metrics
-				totalBytesSent += int64(n)
-				s.bytesSent.WithLabelValues(route).Add(float64(n))
-
-				// Periodically log sent data amount
-				if totalBytesSent >= logEveryBytes && time.Since(lastLogTime) > logIntervalSec*time.Second {
-					slog.Info("Sent %d Mbytes of data to client %d (IP: %s)",
-						totalBytesSent/1024/1024, clientID, remoteAddr)
-					lastLogTime = time.Now()
-				}
-
-				// MUST call Flush after EACH data sent!
-				// This ensures data is sent immediately to client
-				flusher.Flush()
 			}
+
+			// Send data and handle errors.
+			if err := s.sendDataToClient(w, data, clientData, route, &totalBytesSent); err != nil {
+				return
+			}
+
+			// Update metrics and log periodically.
+			s.bytesSent.WithLabelValues(route).Add(float64(len(data)))
+			s.logDataTransfer(clientData, &totalBytesSent, &lastLogTime)
+
+			// MUST call Flush after EACH data sent!.
+			// This ensures data is sent immediately to client.
+			flusher.Flush()
 		}
 	}
 }
 
-// ReloadPlaylist reloads playlist for specified route.
-func (s *Server) ReloadPlaylist(route string) error {
-	s.mutex.RLock()
-	playlist, exists := s.playlists[route]
-	s.mutex.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("playlist for route %s not found", route)
+// sendDataToClient writes data to the client and handles potential errors.
+func (s *Server) sendDataToClient(
+	w http.ResponseWriter,
+	data []byte,
+	clientData *clientStreamData,
+	_ string,
+	totalBytesSent *int64,
+) error {
+	n, writeErr := w.Write(data)
+	if writeErr != nil {
+		if isConnectionClosedError(writeErr) {
+			// Just log, don't send to Sentry.
+			s.logger.Info("Client disconnected",
+				slog.Int("clientID", clientData.clientID),
+				slog.String("error", writeErr.Error()),
+				slog.Int64("totalBytesSent", *totalBytesSent))
+		} else {
+			// Send to Sentry only for unusual errors.
+			s.logger.Error("ERROR: Error sending data to client",
+				slog.Int("clientID", clientData.clientID),
+				slog.String("error", writeErr.Error()),
+				slog.Int64("totalBytesSent", *totalBytesSent))
+			sentry.CaptureException(fmt.Errorf("error sending data to client %d: %w", clientData.clientID, writeErr))
+		}
+		return writeErr
 	}
 
-	return playlist.Reload()
+	*totalBytesSent += int64(n)
+	return nil
+}
+
+// logDataTransfer logs information about data transfer periodically.
+func (s *Server) logDataTransfer(clientData *clientStreamData, totalBytesSent *int64, lastLogTime *time.Time) {
+	if *totalBytesSent >= logEveryBytes && time.Since(*lastLogTime) > logIntervalSec*time.Second {
+		s.logger.Info("Sent data to client",
+			slog.Int("mbytes", int(*totalBytesSent/mb)),
+			slog.Int("clientID", clientData.clientID),
+			slog.String("remoteAddr", clientData.remoteAddr))
+		*lastLogTime = time.Now()
+	}
+}
+
+// ReloadAllPlaylists reloads all playlists.
+func (s *Server) ReloadAllPlaylists() error {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var lastErr error
+	for route := range s.playlists {
+		if reloadErr := s.reloadPlaylistInternal(route); reloadErr != nil {
+			lastErr = reloadErr
+			s.logger.Error(
+				"Error reloading playlist",
+				slog.String("route", route),
+				slog.String("error", reloadErr.Error()),
+			)
+			sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", reloadErr))
+		}
+	}
+
+	s.logger.Info("All playlists reloaded")
+	return lastErr
+}
+
+// ReloadPlaylist reloads a playlist for a specific stream.
+func (s *Server) ReloadPlaylist(route string) error {
+	// Make sure route starts with a slash.
+	if route[0] != '/' {
+		route = "/" + route
+	}
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	err := s.reloadPlaylistInternal(route)
+	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to reload playlist for %s: %v", route, err)
+		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", err.Error()))
+		sentry.CaptureMessage(errorMsg)
+		return err
+	}
+
+	s.logger.Info("Playlist reloaded", slog.String("route", route))
+	return nil
+}
+
+// reloadPlaylistInternal reloads a specific playlist. Must be called with mutex held.
+func (s *Server) reloadPlaylistInternal(route string) error {
+	playlist, exists := s.playlists[route]
+	if !exists {
+		s.logger.Error("Playlist not found", slog.String("route", route))
+		sentry.CaptureMessage(fmt.Sprintf("Playlist for %s not found", route))
+		return fmt.Errorf("playlist for %s not found", route)
+	}
+
+	// This is where we actually load and update the playlist.
+	reloadErr := playlist.Reload()
+	if reloadErr != nil {
+		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", reloadErr.Error()))
+		sentry.CaptureException(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr))
+		return reloadErr
+	}
+
+	// Notify station manager (if set) to restart playback.
+	if s.stationManager != nil {
+		s.stationManager.RestartPlayback(route)
+	}
+
+	return nil
 }
 
 // statusLoginHandler displays login form page.
 func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
-	// If already authenticated, redirect to status page
+	// If already authenticated, redirect to status page.
 	if s.checkAuth(r) {
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
 
-	// Load and render login template page
+	// Load and render login template page.
 	tmpl, tmplErr := template.ParseFiles(
 		"templates/login.html",
 		"templates/partials/head.html",
 	)
 	if tmplErr != nil {
-		slog.Error("ERROR: Unable to load login.html template: %v", tmplErr)
+		s.logger.Error("Unable to load login.html template", slog.String("error", tmplErr.Error()))
 		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
@@ -706,7 +878,7 @@ func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if executeErr := tmpl.Execute(w, data); executeErr != nil {
-		slog.Error("Failed to execute template", slog.String("error", executeErr.Error()))
+		s.logger.Error("Failed to execute template", slog.String("error", executeErr.Error()))
 		return
 	}
 }
@@ -715,17 +887,17 @@ func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	parseErr := r.ParseForm()
 	if parseErr != nil {
-		slog.Error("ERROR: Unable to parse login form: %v", parseErr)
+		s.logger.Error("Unable to parse login form", slog.String("error", parseErr.Error()))
 		http.Error(w, "Form processing error", http.StatusInternalServerError)
 		return
 	}
 
-	// Get password from form
+	// Get password from form.
 	password := r.FormValue("password")
 
-	// Check password
+	// Check password.
 	if password == s.statusPassword {
-		// Create cookies for authentication
+		// Create cookies for authentication.
 		http.SetCookie(w, &http.Cookie{
 			Name:     "status_auth",
 			Value:    s.statusPassword,
@@ -734,18 +906,18 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 			HttpOnly: true,
 		})
 
-		// Redirect to status page
+		// Redirect to status page.
 		http.Redirect(w, r, "/status-page", http.StatusFound)
 		return
 	}
 
-	// If password is incorrect, show error message
+	// If password is incorrect, show error message.
 	tmpl, tmplErr := template.ParseFiles(
 		"templates/login.html",
 		"templates/partials/head.html",
 	)
 	if tmplErr != nil {
-		slog.Error("ERROR: Unable to load login.html template: %v", tmplErr)
+		s.logger.Error("Unable to load login.html template", slog.String("error", tmplErr.Error()))
 		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
@@ -757,7 +929,7 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if executeErr := tmpl.Execute(w, data); executeErr != nil {
-		slog.Error("Failed to execute template", slog.String("error", executeErr.Error()))
+		s.logger.Error("Failed to execute template", slog.String("error", executeErr.Error()))
 		return
 	}
 }
@@ -794,7 +966,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		currentTrack := s.currentTracks[route]
 		s.trackMutex.RUnlock()
 
-		// Get playlist history
+		// Get playlist history.
 		history := s.playlists[route].GetHistory()
 		historyHTML := ""
 		for i := range make([]struct{}, len(history)) {
@@ -815,7 +987,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Sort streams by route for consistent output
+	// Sort streams by route for consistent output.
 	sort.Slice(streams, func(i, j int) bool {
 		return streams[i].Route < streams[j].Route
 	})
@@ -824,23 +996,252 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
 		"Streams": streams,
 	}); executeErr != nil {
-		slog.Error("Failed to execute template", slog.String("error", executeErr.Error()))
+		s.logger.Error("Failed to execute template", slog.String("error", executeErr.Error()))
 		return
 	}
 }
 
 // handleTrackSwitchHandler handles track switching.
 func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
+	// Check authentication.
+	if !s.checkAuth(r) {
+		s.handleUnauthenticatedTrackSwitch(w, r)
+		return
+	}
+
+	// Get route.
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+
+	// Get playlist.
+	playlist, exists := s.getPlaylistForRoute(route)
+	if !exists {
+		s.handlePlaylistNotFound(w, r, route)
+		return
+	}
+
+	// Get track.
+	track := s.getTrackForDirection(playlist, direction)
+	if track == nil {
+		s.handleTrackNotFound(w, r, route, direction)
+		return
+	}
+
+	s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
+
+	// Handle track switching.
+	s.handleTrackSwitchResult(w, r, route, track)
+}
+
+// handleUnauthenticatedTrackSwitch handles unauthenticated track switching requests.
+func (s *Server) handleUnauthenticatedTrackSwitch(w http.ResponseWriter, r *http.Request) {
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"route":   "",
+			"error":   "Authentication required",
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+		return
+	}
+	http.Redirect(w, r, "/status", http.StatusFound)
+}
+
+// getPlaylistForRoute gets the playlist for the specified route.
+func (s *Server) getPlaylistForRoute(route string) (PlaylistManager, bool) {
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	return playlist, exists
+}
+
+// handlePlaylistNotFound handles case when playlist for route is not found.
+func (s *Server) handlePlaylistNotFound(w http.ResponseWriter, r *http.Request, route string) {
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"route":   route,
+			"error":   "Route not found",
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+		return
+	}
+	http.Error(w, "Route not found", http.StatusNotFound)
+}
+
+// getTrackForDirection gets the track for the specified direction.
+func (s *Server) getTrackForDirection(playlist PlaylistManager, direction string) interface{} {
+	if direction == "next" {
+		return playlist.NextTrack()
+	}
+	return playlist.PreviousTrack()
+}
+
+// handleTrackNotFound handles case when track for direction is not found.
+func (s *Server) handleTrackNotFound(w http.ResponseWriter, r *http.Request, route, direction string) {
+	s.logger.Error("Track not found for direction", slog.String("direction", direction))
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"route":   route,
+			"error":   fmt.Sprintf("Track not found for direction %s", direction),
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+		}
+	} else {
+		http.Error(w, fmt.Sprintf("Track not found for direction %s", direction), http.StatusNotFound)
+	}
+}
+
+// handleTrackSwitchResult handles the result of track switching.
+func (s *Server) handleTrackSwitchResult(w http.ResponseWriter, r *http.Request, route string, track interface{}) {
+	trackName := "Unknown"
+
+	// Check if station manager is set.
+	if s.stationManager == nil {
+		s.handleMissingStationManager(w, r, route, trackName)
+		return
+	}
+
+	// Try to restart playback.
+	success := s.stationManager.RestartPlayback(route)
+	if success {
+		trackName = s.updateTrackInfo(route, track)
+	} else {
+		s.logger.Error("Unable to restart playback", slog.String("route", route))
+	}
+
+	// Send response.
+	s.sendTrackSwitchResponse(w, r, route, trackName, success)
+}
+
+// handleMissingStationManager handles case when station manager is not set.
+func (s *Server) handleMissingStationManager(w http.ResponseWriter, r *http.Request, route, trackName string) {
+	s.logger.Warn("WARNING: Station manager not set, restart playback not possible")
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"route":   route,
+			"track":   trackName,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+		}
+	} else {
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
+}
+
+// updateTrackInfo updates track information and returns track name.
+func (s *Server) updateTrackInfo(route string, track interface{}) string {
+	s.logger.Info("Restart playback completed successfully", slog.String("route", route))
+
+	trackName := "Unknown"
+	if trackWithPath, ok := track.(interface{ GetPath() string }); ok {
+		trackName = filepath.Base(trackWithPath.GetPath())
+		s.trackMutex.Lock()
+		s.currentTracks[route] = trackName
+		s.trackMutex.Unlock()
+		s.logger.Info("Updated current track information", slog.String("route", route), slog.String("track", trackName))
+	}
+
+	return trackName
+}
+
+// sendTrackSwitchResponse sends response for track switch.
+func (s *Server) sendTrackSwitchResponse(
+	w http.ResponseWriter,
+	r *http.Request,
+	route, trackName string,
+	success bool,
+) {
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": success,
+			"route":   route,
+			"track":   trackName,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+	} else {
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
+}
+
+// nextTrackHandler handles next track requests.
+func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
+	s.handleTrackSwitchHandler(w, r, "next")
+}
+
+// prevTrackHandler handles previous track requests.
+func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
+	s.handleTrackSwitchHandler(w, r, "prev")
+}
+
+// notFoundHandler handles 404 not found requests.
+func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info(
+		"404 not found request",
+		slog.String("path", r.URL.Path),
+		slog.String("method", r.Method),
+		slog.String("remoteAddr", r.RemoteAddr),
+	)
+
+	// Load and render 404 template page.
+	tmpl, err := template.ParseFiles(
+		"templates/404.html",
+		"templates/partials/head.html",
+	)
+	if err != nil {
+		s.logger.Error("Unable to load 404.html template", slog.String("error", err.Error()))
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"Title": "404 - Page not found",
+		"Path":  r.URL.Path,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	if executeErr := tmpl.Execute(w, data); executeErr != nil {
+		s.logger.Error("Failed to execute template", slog.String("error", executeErr.Error()))
+		return
+	}
+}
+
+// redirectToLogin redirects to login page.
+func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/status", http.StatusFound)
+	s.logger.Info("Redirected to login page", slog.String("remoteAddr", r.RemoteAddr))
+}
+
+// handleShufflePlaylist shuffles the playlist for a specific stream.
+func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(r) {
 		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
-				"route":   "",
 				"error":   "Authentication required",
 			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
 				return
 			}
 			return
@@ -865,13 +1266,162 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 				"route":   route,
 				"error":   "Route not found",
 			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
 				return
 			}
 			return
 		}
 		http.Error(w, "Route not found", http.StatusNotFound)
 		return
+	}
+
+	// Shuffle the playlist.
+	playlist.Shuffle()
+	s.logger.Info("Playlist shuffled for route", slog.String("route", route))
+
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"route":   route,
+			"message": "Playlist shuffled",
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+	} else {
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
+}
+
+// handleSetShuffleMode sets the shuffle mode for a specific stream.
+func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(r) {
+		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		if isAjax {
+			w.Header().Set("Content-Type", "application/json")
+			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Authentication required",
+			}); encodeErr != nil {
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				return
+			}
+			return
+		}
+		http.Redirect(w, r, "/status", http.StatusFound)
+		return
+	}
+
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	mode := vars["mode"]
+
+	s.mutex.RLock()
+	_, exists := s.playlists[route]
+	s.mutex.RUnlock()
+
+	if !exists {
+		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		if isAjax {
+			w.Header().Set("Content-Type", "application/json")
+			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Route not found",
+			}); encodeErr != nil {
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				return
+			}
+			return
+		}
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+
+	// TODO: Implement setting shuffle mode for the playlist.
+	// This would require extending the PlaylistManager interface.
+	// For now, just acknowledge the request.
+
+	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"route":   route,
+			"mode":    mode,
+			"message": fmt.Sprintf("Shuffle mode set to %s for route %s", mode, route),
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+	} else {
+		http.Redirect(w, r, "/status-page", http.StatusFound)
+	}
+}
+
+// SetStationManager sets the station manager for the server.
+func (s *Server) SetStationManager(manager interface{ RestartPlayback(string) bool }) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.stationManager = manager
+	s.logger.Info("Station manager set for HTTP server")
+}
+
+// SetRelayManager sets the relay manager for the server.
+func (s *Server) SetRelayManager(manager *relay.Manager) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.relayManager = manager
+	s.logger.Info("Relay manager set for HTTP server")
+}
+
+// SetStatusPassword sets the password for accessing the status page.
+func (s *Server) SetStatusPassword(password string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.statusPassword = password
+	s.logger.Info("Status password set for HTTP server")
+}
+
+// TrackInfo returns track information for specified stream.
+func (s *Server) TrackInfo(route string, track string) (map[string]interface{}, error) {
+	s.logger.Info("Track information request", slog.String("route", route), slog.String("track", track))
+
+	s.trackMutex.RLock()
+	defer s.trackMutex.RUnlock()
+
+	trackInfo := map[string]interface{}{
+		"route": route,
+		"track": track,
+	}
+
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+
+	if exists {
+		currentTrack := playlist.GetCurrentTrack()
+		if currentTrack != nil {
+			if trackWithPath, ok := currentTrack.(interface{ GetPath() string }); ok {
+				trackInfo["path"] = trackWithPath.GetPath()
+			}
+		}
+	}
+
+	return trackInfo, nil
+}
+
+// SwitchTrack switches to the next or previous track for a specific stream.
+func (s *Server) SwitchTrack(route string, direction string) error {
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+
+	if !exists {
+		s.logger.Error("Route not found", slog.String("route", route))
+		return fmt.Errorf("route %s not found", route)
 	}
 
 	var track interface{}
@@ -882,521 +1432,34 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if track == nil {
-		c := cases.Title(language.Und)
-		slog.Warn("WARNING: %sTrack returned nil for route %s, likely timeout", c.String(direction), route)
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
-		if isAjax {
-			w.Header().Set("Content-Type", "application/json")
-			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"route":   route,
-				"error":   "Failed to switch track, operation timed out",
-			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
-			}
-		} else {
-			http.Error(w, "Failed to switch track, operation timed out", http.StatusInternalServerError)
-		}
-		return
+		s.logger.Error("Track not found for direction", slog.String("direction", direction))
+		return fmt.Errorf("track not found for direction %s", direction)
 	}
 
-	slog.Info("DIAGNOSTICS: Manual track switch to %s track for route %s", direction, route)
+	s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
 
-	newTrackName := "Unknown"
 	if s.stationManager == nil {
-		slog.Warn("WARNING: Station manager not set, restart playback not possible")
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
-		if isAjax {
-			w.Header().Set("Content-Type", "application/json")
-			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"route":   route,
-				"track":   newTrackName,
-			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
-			}
-		} else {
-			http.Redirect(w, r, "/status-page", http.StatusFound)
-		}
-		return
+		s.logger.Warn("WARNING: Station manager not set, restart playback not possible")
+		return nil
 	}
 
 	success := s.stationManager.RestartPlayback(route)
 	if success {
-		slog.Info("DIAGNOSTICS: Restart playback for route %s completed successfully", route)
+		s.logger.Info("Restart playback completed successfully", slog.String("route", route))
 		if trackWithPath, ok := track.(interface{ GetPath() string }); ok {
-			newTrackName = filepath.Base(trackWithPath.GetPath())
+			trackName := filepath.Base(trackWithPath.GetPath())
 			s.trackMutex.Lock()
-			s.currentTracks[route] = newTrackName
+			s.currentTracks[route] = trackName
 			s.trackMutex.Unlock()
-			slog.Info("DIAGNOSTICS: Immediately updated current track information for %s: %s", route, newTrackName)
+			s.logger.Info(
+				"Updated current track information",
+				slog.String("route", route),
+				slog.String("track", trackName),
+			)
 		}
 	} else {
-		slog.Error("ERROR: Unable to restart playback for route %s", route)
-	}
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
-	if isAjax {
-		w.Header().Set("Content-Type", "application/json")
-		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": success,
-			"route":   route,
-			"track":   newTrackName,
-		}); encodeErr != nil {
-			slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-			return
-		}
-	} else {
-		http.Redirect(w, r, "/status-page", http.StatusFound)
-	}
-}
-
-func (s *Server) nextTrackHandler(w http.ResponseWriter, r *http.Request) {
-	s.handleTrackSwitchHandler(w, r, "next")
-}
-
-func (s *Server) prevTrackHandler(w http.ResponseWriter, r *http.Request) {
-	s.handleTrackSwitchHandler(w, r, "prev")
-}
-
-// notFoundHandler handles requests to non-existent routes.
-func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
-	slog.Info("404 - route not found: %s", r.URL.Path)
-
-	// Load and render 404 template page
-	tmpl, err := template.ParseFiles(
-		"templates/404.html",
-		"templates/partials/head.html",
-	)
-	if err != nil {
-		slog.Error("ERROR: Unable to load 404.html template: %v", err)
-		http.Error(w, "Page not found", http.StatusNotFound)
-		return
+		s.logger.Error("Unable to restart playback", slog.String("route", route))
 	}
 
-	data := map[string]interface{}{
-		"Title": "404 - Page not found",
-		"Path":  r.URL.Path,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
-	if executeErr := tmpl.Execute(w, data); executeErr != nil {
-		slog.Error("Failed to execute template", slog.String("error", executeErr.Error()))
-		return
-	}
-}
-
-// redirectToLogin redirects user to login page.
-func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/status", http.StatusSeeOther)
-}
-
-// handleShufflePlaylist handles the request to manually shuffle a playlist.
-func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
-	// Check authentication (same as for status page)
-	if !s.checkAuth(r) {
-		// Check if this is an AJAX request
-		ajax := r.URL.Query().Get("ajax")
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || ajax == "1"
-
-		if isAjax {
-			// For AJAX requests, send JSON error response
-			w.Header().Set("Content-Type", "application/json")
-			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "Authentication required",
-				"route":   "",
-			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
-			}
-			return
-		}
-
-		// For regular requests, redirect to login page
-		s.redirectToLogin(w, r)
-		return
-	}
-
-	vars := mux.Vars(r)
-	route := "/" + vars["route"]
-
-	// Get playlist by route
-	s.mutex.RLock()
-	playlist, ok := s.playlists[route]
-	s.mutex.RUnlock()
-
-	if !ok {
-		http.Error(w, "Playlist not found", http.StatusNotFound)
-		return
-	}
-
-	// Call Shuffle method on the playlist with error handling
-	slog.Info("Manual shuffle requested for route %s", route)
-
-	// Execute shuffle in goroutine with timeout protection
-	shuffleDone := make(chan bool, 1)
-
-	go func() {
-		defer func() {
-			// Catch any panics from Shuffle operation
-			if r := recover(); r != nil {
-				slog.Error("ERROR: Shuffle operation panicked", slog.Any("error", r))
-				shuffleDone <- false
-			}
-		}()
-
-		// Call shuffle
-		playlist.Shuffle()
-		shuffleDone <- true
-	}()
-
-	// Wait for shuffle to complete with timeout
-	select {
-	case <-shuffleDone:
-		slog.Info("Manual shuffle completed for route %s", route)
-	case <-time.After(1 * time.Second):
-		slog.Warn("WARNING: Shuffle operation timed out for route %s", route)
-	}
-
-	// Check if need to return JSON or perform redirect
-	ajax := r.URL.Query().Get("ajax")
-	if ajax == "1" {
-		w.Header().Set("Content-Type", "application/json")
-		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Playlist shuffled successfully",
-			"route":   route,
-		}); encodeErr != nil {
-			slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-			return
-		}
-	} else {
-		// Redirect back to status page
-		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
-	}
-}
-
-// SetShuffleMode toggles the shuffle mode for a specific stream.
-func (s *Server) SetShuffleMode(w http.ResponseWriter, r *http.Request) {
-	// Check authentication (same as for status page)
-	if !s.checkAuth(r) {
-		// Check if this is an AJAX request
-		ajax := r.URL.Query().Get("ajax")
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || ajax == "1"
-
-		if isAjax {
-			// For AJAX requests, send JSON error response
-			w.Header().Set("Content-Type", "application/json")
-			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": "Authentication required",
-				"route":   "",
-			}); encodeErr != nil {
-				slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-				return
-			}
-			return
-		}
-
-		// For regular requests, redirect to login page
-		s.redirectToLogin(w, r)
-		return
-	}
-
-	// Get route and mode from URL
-	vars := mux.Vars(r)
-	route := "/" + vars["route"]
-	mode := vars["mode"]
-
-	if mode != "on" && mode != "off" {
-		http.Error(w, "Invalid mode. Use 'on' or 'off'", http.StatusBadRequest)
-		return
-	}
-
-	shuffleEnabled := mode == "on"
-
-	// Get playlist by route
-	s.mutex.RLock()
-	playlist, ok := s.playlists[route]
-	s.mutex.RUnlock()
-
-	if !ok {
-		http.Error(w, "Playlist not found", http.StatusNotFound)
-		return
-	}
-
-	// Get the playlist type to check if we can set shuffle mode
-	slog.Info("Setting shuffle mode %s for route %s", mode, route)
-
-	// If shuffle mode is enabled, call Shuffle method, otherwise reload the playlist
-	// This will result in a sequential playlist
-	var success bool
-
-	if !shuffleEnabled {
-		// To effectively disable shuffle, we need to reload the playlist
-		// which will reset it to sequential order
-		err := playlist.Reload()
-		if err != nil {
-			slog.Error("ERROR: Failed to disable shuffle mode for route %s: %v", route, err)
-			success = false
-		} else {
-			slog.Info("Shuffle mode disabled for route %s", route)
-			success = true
-		}
-	} else {
-		// Execute shuffle in goroutine with timeout protection
-		shuffleDone := make(chan bool, 1)
-
-		go func() {
-			defer func() {
-				// Catch any panics from Shuffle operation
-				if r := recover(); r != nil {
-					slog.Error("ERROR: Shuffle operation panicked", slog.Any("error", r))
-					shuffleDone <- false
-				}
-			}()
-
-			// Call shuffle
-			playlist.Shuffle()
-			shuffleDone <- true
-		}()
-
-		// Wait for shuffle to complete with timeout
-		select {
-		case success = <-shuffleDone:
-			if success {
-				slog.Info("Shuffle mode enabled for route %s", route)
-			} else {
-				slog.Error("Failed to enable shuffle mode for route %s", route)
-			}
-		case <-time.After(1 * time.Second):
-			slog.Warn("WARNING: Shuffle operation timed out for route %s", route)
-			success = false
-		}
-	}
-
-	// Check if need to return JSON or perform redirect
-	ajax := r.URL.Query().Get("ajax")
-	if ajax == "1" {
-		w.Header().Set("Content-Type", "application/json")
-		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": success,
-			"message": fmt.Sprintf("Shuffle mode %s for route %s", mode, route),
-			"route":   route,
-			"mode":    mode,
-		}); encodeErr != nil {
-			slog.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
-			return
-		}
-	} else {
-		// Redirect back to status page
-		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
-	}
-}
-
-// SetStatusPassword sets the password for status page (used for testing).
-func (s *Server) SetStatusPassword(password string) {
-	s.statusPassword = password
-}
-
-// SetRelayManager sets the relay manager instance.
-func (s *Server) SetRelayManager(manager *relay.Manager) {
-	s.relayManager = manager
-	s.setupRelayRoutes()
-}
-
-// setupRelayRoutes adds relay-related routes to the router.
-func (s *Server) setupRelayRoutes() {
-	// Add relay management page
-	s.router.HandleFunc("/relay-management", s.relayManagementHandler).Methods("GET")
-
-	// API endpoints for relay management
-	s.router.HandleFunc("/relay/toggle", s.relayToggleHandler).Methods("POST")
-	s.router.HandleFunc("/relay/add", s.relayAddHandler).Methods("POST")
-	s.router.HandleFunc("/relay/remove", s.relayRemoveHandler).Methods("POST")
-	s.router.HandleFunc("/relay/stream/{index:[0-9]+}", s.relayStreamHandler).Methods("GET")
-
-	slog.Info("Relay routes configured")
-}
-
-// relayManagementHandler serves the relay management UI.
-func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
-	if !s.checkAuth(r) {
-		s.redirectToLogin(w, r)
-		return
-	}
-
-	// Check if relay manager is set
-	if s.relayManager == nil {
-		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Load and render template
-	tmpl, err := template.ParseFiles(
-		"templates/relay.html",
-		"templates/partials/head.html",
-	)
-	if err != nil {
-		slog.Error("ERROR: Unable to load relay.html template: %v", err)
-		http.Error(w, "Server error", http.StatusInternalServerError)
-		return
-	}
-
-	// Get relay links from manager
-	links := s.relayManager.GetLinks()
-
-	// Get status messages from URL query parameters
-	errorMessage := r.URL.Query().Get("error")
-	successMessage := r.URL.Query().Get("success")
-
-	data := map[string]interface{}{
-		"Title":          "Relay Stream Management",
-		"RelayLinks":     links,
-		"RelayActive":    s.relayManager.IsActive(),
-		"ErrorMessage":   errorMessage,
-		"SuccessMessage": successMessage,
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if executeErr := tmpl.Execute(w, data); executeErr != nil {
-		slog.Error("Failed to execute template", slog.String("error", executeErr.Error()))
-		return
-	}
-}
-
-// relayToggleHandler toggles relay functionality on/off.
-func (s *Server) relayToggleHandler(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
-	if !s.checkAuth(r) {
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
-		return
-	}
-
-	// Check if relay manager is set
-	if s.relayManager == nil {
-		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Parse active state from form
-	activeStr := r.FormValue("active")
-	active, err := strconv.ParseBool(activeStr)
-	if err != nil {
-		slog.Error("ERROR: Invalid active value: %s", activeStr)
-		http.Redirect(w, r, "/relay-management?error=Invalid active value", http.StatusSeeOther)
-		return
-	}
-
-	// Set active state
-	s.relayManager.SetActive(active)
-
-	// Redirect back to relay management page
-	status := "enabled"
-	if !active {
-		status = "disabled"
-	}
-
-	http.Redirect(w, r, "/relay-management?success=Relay "+status, http.StatusSeeOther)
-}
-
-// relayAddHandler adds a new relay URL.
-func (s *Server) relayAddHandler(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
-	if !s.checkAuth(r) {
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
-		return
-	}
-
-	// Check if relay manager is set
-	if s.relayManager == nil {
-		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Parse URL from form
-	url := r.FormValue("url")
-	if url == "" {
-		http.Redirect(w, r, "/relay-management?error=URL cannot be empty", http.StatusSeeOther)
-		return
-	}
-
-	// Add URL to relay manager
-	if err := s.relayManager.AddLink(url); err != nil {
-		slog.Error("ERROR: Failed to add relay URL: %v", err)
-		http.Redirect(w, r, "/relay-management?error="+err.Error(), http.StatusSeeOther)
-		return
-	}
-
-	// Redirect back to relay management page
-	http.Redirect(w, r, "/relay-management?success=Relay URL added successfully", http.StatusSeeOther)
-}
-
-// relayRemoveHandler removes a relay URL by index.
-func (s *Server) relayRemoveHandler(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
-	if !s.checkAuth(r) {
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
-		return
-	}
-
-	// Check if relay manager is set
-	if s.relayManager == nil {
-		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Parse index from form
-	indexStr := r.FormValue("index")
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		slog.Error("ERROR: Invalid index: %s", indexStr)
-		http.Redirect(w, r, "/relay-management?error=Invalid index", http.StatusSeeOther)
-		return
-	}
-
-	// Remove URL from relay manager
-	if err := s.relayManager.RemoveLink(index); err != nil {
-		slog.Error("ERROR: Failed to remove relay URL: %v", err)
-		http.Redirect(w, r, "/relay-management?error="+err.Error(), http.StatusSeeOther)
-		return
-	}
-
-	// Redirect back to relay management page
-	http.Redirect(w, r, "/relay-management?success=Relay URL removed successfully", http.StatusSeeOther)
-}
-
-// relayStreamHandler streams the audio from a relay source.
-func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
-	// Check if relay manager is set
-	if s.relayManager == nil {
-		http.Error(w, "Relay functionality is not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Parse index from URL
-	vars := mux.Vars(r)
-	indexStr := vars["index"]
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		slog.Error("ERROR: Invalid index: %s", indexStr)
-		http.Error(w, "Invalid index", http.StatusBadRequest)
-		return
-	}
-
-	// Stream the relay audio
-	if err := s.relayManager.RelayAudioStream(w, r, index); err != nil {
-		slog.Error("ERROR: Failed to relay audio stream: %v", err)
-		http.Error(w, "Failed to relay audio stream: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-// SetStationManager sets station manager for restarting playback.
-func (s *Server) SetStationManager(manager interface{ RestartPlayback(string) bool }) {
-	s.stationManager = manager
+	return nil
 }

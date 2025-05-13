@@ -1,3 +1,5 @@
+// Package relay implements functionality for relaying audio streams from external sources.
+// It includes components for managing relay links, streaming from external sources, and handling relay configuration.
 package relay
 
 import (
@@ -37,10 +39,14 @@ func NewRelayManager(configFile string, logger *slog.Logger) *Manager {
 		logger:      logger,
 	}
 
-	// Load existing configuration if file exists
+	// Load existing configuration if file exists.
 	if _, statConfigFileErr := os.Stat(configFile); statConfigFileErr == nil {
 		if loadLinksErr := manager.LoadLinksFromFile(); loadLinksErr != nil {
-			manager.logger.Error("Failed to load relay links from file", slog.String("file", configFile), slog.String("error", loadLinksErr.Error()))
+			manager.logger.Error(
+				"Failed to load relay links from file",
+				slog.String("file", configFile),
+				slog.String("error", loadLinksErr.Error()),
+			)
 		}
 	}
 
@@ -61,7 +67,9 @@ func (rm *Manager) LoadLinksFromFile() error {
 		return fmt.Errorf("failed to parse relay configuration: %w", unmarshalConfigErr)
 	}
 
-	rm.logger.Info("Loaded relay links from file", slog.Int("count", len(rm.RelayLinks)), slog.String("file", rm.configFile))
+	rm.logger.Info("Loaded relay links from file",
+		slog.Int("count", len(rm.RelayLinks)),
+		slog.String("file", rm.configFile))
 	return nil
 }
 
@@ -79,7 +87,11 @@ func (rm *Manager) SaveLinksToFile() error {
 		return fmt.Errorf("failed to write relay configuration to file: %w", writeConfigFileErr)
 	}
 
-	rm.logger.Info("Saved relay links to file", slog.Int("count", len(rm.RelayLinks)), slog.String("file", rm.configFile))
+	rm.logger.Info(
+		"Saved relay links to file",
+		slog.Int("count", len(rm.RelayLinks)),
+		slog.String("file", rm.configFile),
+	)
 	return nil
 }
 
@@ -95,14 +107,14 @@ func (rm *Manager) GetLinks() []string {
 
 // AddLink adds a new link to relay list.
 func (rm *Manager) AddLink(link string) error {
-	// Validate URL format
+	// Validate URL format.
 	if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") {
 		return errors.New("invalid URL format, must start with http:// or https://")
 	}
 
 	rm.mutex.Lock()
 
-	// Check for duplicates
+	// Check for duplicates.
 	for _, existingLink := range rm.RelayLinks {
 		if existingLink == link {
 			rm.mutex.Unlock()
@@ -113,15 +125,15 @@ func (rm *Manager) AddLink(link string) error {
 	rm.RelayLinks = append(rm.RelayLinks, link)
 	rm.logger.Info("Added relay link", slog.String("link", link))
 
-	// Создаем копию ссылок для сохранения
+	// Создаем копию ссылок для сохранения.
 	links := make([]string, len(rm.RelayLinks))
 	copy(links, rm.RelayLinks)
 	configFile := rm.configFile
 
-	// Разблокируем мьютекс перед сохранением
+	// Разблокируем мьютекс перед сохранением.
 	rm.mutex.Unlock()
 
-	// Сохраняем данные в файл
+	// Сохраняем данные в файл.
 	data, marshalLinksErr := json.MarshalIndent(links, "", "  ")
 	if marshalLinksErr != nil {
 		return fmt.Errorf("failed to marshal relay links to JSON: %w", marshalLinksErr)
@@ -144,19 +156,19 @@ func (rm *Manager) RemoveLink(index int) error {
 		return fmt.Errorf("invalid index: %d, valid range is 0-%d", index, len(rm.RelayLinks)-1)
 	}
 
-	// Remove link by index
+	// Remove link by index.
 	rm.RelayLinks = append(rm.RelayLinks[:index], rm.RelayLinks[index+1:]...)
 	rm.logger.Info("Removed relay link at index", slog.Int("index", index))
 
-	// Создаем копию ссылок для сохранения
+	// Создаем копию ссылок для сохранения.
 	links := make([]string, len(rm.RelayLinks))
 	copy(links, rm.RelayLinks)
 	configFile := rm.configFile
 
-	// Разблокируем мьютекс перед сохранением
+	// Разблокируем мьютекс перед сохранением.
 	rm.mutex.Unlock()
 
-	// Сохраняем данные в файл
+	// Сохраняем данные в файл.
 	data, marshalLinksErr := json.MarshalIndent(links, "", "  ")
 	if marshalLinksErr != nil {
 		return fmt.Errorf("failed to marshal relay links to JSON: %w", marshalLinksErr)
@@ -187,80 +199,120 @@ func (rm *Manager) IsActive() bool {
 
 // RelayAudioStream relays audio stream from source to client.
 func (rm *Manager) RelayAudioStream(w http.ResponseWriter, r *http.Request, index int) error {
-	// Check if relay is active
+	// Проверяем параметры запроса.
+	sourceURL, err := rm.validateRelayRequest(index)
+	if err != nil {
+		return err
+	}
+
+	rm.logger.Info("Relaying audio stream from", slog.String("url", sourceURL))
+
+	// Создаем запрос к источнику.
+	req, err := rm.createSourceRequest(r, sourceURL)
+	if err != nil {
+		return err
+	}
+
+	// Выполняем запрос к источнику.
+	resp, err := rm.executeSourceRequest(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Копируем заголовки из ответа источника.
+	rm.copyResponseHeaders(w, resp)
+
+	// Устанавливаем код статуса из ответа источника.
+	w.WriteHeader(resp.StatusCode)
+
+	// Стримим контент от источника к клиенту.
+	return rm.streamFromSourceToClient(w, resp)
+}
+
+// validateRelayRequest проверяет, активна ли функция ретрансляции и валиден ли индекс.
+func (rm *Manager) validateRelayRequest(index int) (string, error) {
+	// Проверяем, активна ли ретрансляция.
 	if !rm.IsActive() {
-		return errors.New("relay functionality is disabled")
+		return "", errors.New("relay functionality is disabled")
 	}
 
 	links := rm.GetLinks()
 	if index < 0 || index >= len(links) {
-		return fmt.Errorf("invalid stream index: %d", index)
+		return "", fmt.Errorf("invalid stream index: %d", index)
 	}
 
-	sourceURL := links[index]
-	rm.logger.Info("Relaying audio stream from", slog.String("url", sourceURL))
+	return links[index], nil
+}
 
-	// Create request to source
-	req, createSourceRequestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, sourceURL, nil)
-	if createSourceRequestErr != nil {
-		return fmt.Errorf("failed to create request: %w", createSourceRequestErr)
+// createSourceRequest создает запрос к источнику на основе исходного запроса.
+func (rm *Manager) createSourceRequest(r *http.Request, sourceURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Copy essential headers from the original request
+	// Копируем важные заголовки из исходного запроса.
 	req.Header.Set("User-Agent", r.Header.Get("User-Agent"))
 	req.Header.Set("Accept", r.Header.Get("Accept"))
 	req.Header.Set("Range", r.Header.Get("Range"))
 
-	// Execute the request to the source
-	client := &http.Client{}
-	resp, fetchSourceErr := client.Do(req)
-	if fetchSourceErr != nil {
-		return fmt.Errorf("failed to fetch from source: %w", fetchSourceErr)
-	}
-	defer resp.Body.Close()
+	return req, nil
+}
 
-	// Copy headers from source response to client response
+// executeSourceRequest выполняет запрос к источнику.
+func (rm *Manager) executeSourceRequest(req *http.Request) (*http.Response, error) {
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch from source: %w", err)
+	}
+	return resp, nil
+}
+
+// copyResponseHeaders копирует заголовки из ответа источника в ответ клиенту.
+func (rm *Manager) copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
+	// Копируем заголовки из ответа источника.
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 
-	// Ensure content type header is set
+	// Убеждаемся, что заголовок типа контента установлен.
 	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	} else {
-		w.Header().Set("Content-Type", "audio/mpeg") // Default to mp3 if not specified
+		w.Header().Set("Content-Type", "audio/mpeg") // По умолчанию mp3, если не указано
 	}
 
-	// Set cache control headers
+	// Устанавливаем заголовки управления кешированием.
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+}
 
-	// Set status code from source response
-	w.WriteHeader(resp.StatusCode)
-
-	// Stream the content from source to client
-	buf := make([]byte, relayBufferSize) // 4KB buffer
+// streamFromSourceToClient стримит контент от источника к клиенту.
+func (rm *Manager) streamFromSourceToClient(w http.ResponseWriter, resp *http.Response) error {
+	buf := make([]byte, relayBufferSize) // 4KB буфер
 	for {
-		n, readSourceStreamErr := resp.Body.Read(buf)
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, writeToClientErr := w.Write(buf[:n]); writeToClientErr != nil {
-				if !isConnectionClosedError(writeToClientErr) {
-					rm.logger.Error("Error writing to client", slog.String("error", writeToClientErr.Error()))
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				if !isConnectionClosedError(writeErr) {
+					rm.logger.Error("Error writing to client", slog.String("error", writeErr.Error()))
 				}
-				return nil // Client disconnected
+				return nil // Клиент отключился
 			}
-			if f, flusherOk := w.(http.Flusher); flusherOk {
+			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
 		}
-		if readSourceStreamErr != nil {
-			if readSourceStreamErr == io.EOF {
-				return nil // End of stream
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil // Конец потока
 			}
-			return fmt.Errorf("error reading from source: %w", readSourceStreamErr)
+			return fmt.Errorf("error reading from source: %w", readErr)
 		}
 	}
 }

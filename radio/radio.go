@@ -8,14 +8,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/getsentry/sentry-go"
+	sentry "github.com/getsentry/sentry-go"
 )
 
 const (
-	shortDelayMs           = 50
-	emptyTrackWaitSec      = 5
-	longWaitSec            = 30
-	loopPauseMs            = 100
+	shortDelayMs            = 50
+	emptyTrackWaitSec       = 5
+	longWaitSec             = 30
+	loopPauseMs             = 100
 	trackInterruptTimeoutMs = 500
 )
 
@@ -66,7 +66,7 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 func (rs *Station) Start() {
 	rs.logger.Info("DIAGNOSTICS: Starting radio station...", slog.String("route", rs.route))
 
-	// Create new stop channel
+	// Create new stop channel.
 	rs.mutex.Lock()
 	rs.stop = make(chan struct{})
 	rs.restart = make(chan struct{}, 1) // Buffered channel to avoid blocking when sending
@@ -74,7 +74,7 @@ func (rs *Station) Start() {
 
 	rs.waitGroup.Add(1)
 
-	// Start main playback loop in a separate goroutine
+	// Start main playback loop in a separate goroutine.
 	go func() {
 		rs.logger.Info("DIAGNOSTICS: Starting streamLoop for station...", slog.String("route", rs.route))
 		rs.streamLoop()
@@ -99,35 +99,38 @@ func (rs *Station) RestartPlayback() {
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
 
-	// Immediately stop the streamer (interrupts current playback)
+	// Immediately stop the streamer (interrupts current playback).
 	rs.streamer.StopCurrentTrack()
 
-	// Add a short delay to complete streamer operations
+	// Add a short delay to complete streamer operations.
 	time.Sleep(shortDelayMs * time.Millisecond)
 
-	// Interrupt current playback if it's ongoing
+	// Interrupt current playback if it's ongoing.
 	select {
 	case <-rs.currentTrack: // Channel already closed
-		// Create new channel for next track
+		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
 	default:
-		// Close channel to interrupt current playback
+		// Close channel to interrupt current playback.
 		close(rs.currentTrack)
-		// Create new channel for next track
+		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
 	}
 
-	// Explicitly update the current track in the playlist to ensure it appears in the now-playing
-	// This is critically important for the proper functioning of track switching tests
+	// Explicitly update the current track in the playlist to ensure it appears in the now-playing.
+	// This is critically important for the proper functioning of track switching tests.
 	_ = rs.playlist.GetCurrentTrack() // Get the current track but don't save it to a variable
-	rs.logger.Info("DIAGNOSTICS: Current track after manual switching for station obtained", slog.String("route", rs.route))
+	rs.logger.Info(
+		"DIAGNOSTICS: Current track after manual switching for station obtained",
+		slog.String("route", rs.route),
+	)
 
-	// Send restart signal to playback loop
+	// Send restart signal to playback loop.
 	select {
 	case rs.restart <- struct{}{}: // Send signal if channel is not full
 		rs.logger.Info("DIAGNOSTICS: Restart signal sent for station", slog.String("route", rs.route))
 	default:
-		// Channel already contains signal, no need to send another
+		// Channel already contains signal, no need to send another.
 		rs.logger.Info("DIAGNOSTICS: Restart signal already queued for station", slog.String("route", rs.route))
 	}
 }
@@ -143,122 +146,232 @@ func (rs *Station) streamLoop() {
 	var isRestartRequested bool
 
 	for {
-		// Check stop and restart signals before starting new cycle
-		select {
-		case <-rs.stop:
-			rs.logger.Info("Stopping radio station", slog.String("route", rs.route))
+		// Check stop and restart signals before starting new cycle.
+		if rs.checkStopSignal() {
 			return
-		case <-rs.restart:
-			rs.logger.Info("DIAGNOSTICS: Restart signal processed for station", slog.String("route", rs.route))
-			isRestartRequested = true
-		default:
-			// No signals, continue normal execution
 		}
 
-		// Get current track
+		isRestartRequested = rs.checkRestartSignal(isRestartRequested)
+
+		// Get current track.
 		rs.logger.Info("DIAGNOSTICS: Getting current track for station...", slog.String("route", rs.route))
 		track := rs.playlist.GetCurrentTrack()
 
 		if track == nil {
-			consecutiveEmptyTracks++
-			rs.logger.Info("DIAGNOSTICS: No track for station", slog.String("route", rs.route), slog.Int("attempt", consecutiveEmptyTracks), slog.Int("maxAttempts", maxEmptyAttempts))
-			if consecutiveEmptyTracks <= maxEmptyAttempts {
-				rs.logger.Info("No tracks in playlist for", slog.String("route", rs.route), slog.Int("attempt", consecutiveEmptyTracks), slog.Int("maxAttempts", maxEmptyAttempts), slog.Int("waitSeconds", emptyTrackWaitSec))
-				// Don't send to Sentry - this is an informational message
-
-				// Wait and try again
-				time.Sleep(emptyTrackWaitSec * time.Second)
-				continue
-			}
-			
-			// If after several attempts playlist is still empty, switch to long wait mode
-			rs.logger.Info("Playlist is empty. Switching to wait mode...", slog.String("route", rs.route))
-			// Don't send to Sentry - this is an informational message
-
-			// Wait longer between checks to save resources
-			time.Sleep(longWaitSec * time.Second)
-
-			// Reset counter for new series of checks
-			consecutiveEmptyTracks = 0
+			// Обрабатываем случай с отсутствием трека.
+			consecutiveEmptyTracks = rs.handleNoTrack(consecutiveEmptyTracks, maxEmptyAttempts)
 			continue
 		}
 
-		// Reset empty attempt counter if track is found
+		// Reset empty attempt counter if track is found.
 		consecutiveEmptyTracks = 0
-		rs.logger.Info("DIAGNOSTICS: Track found for station", slog.String("route", rs.route))
 
-		// Streaming current track
-		trackPath := getTrackPath(track)
-		rs.logger.Info("DIAGNOSTICS: Track path obtained for station", slog.String("route", rs.route), slog.String("trackPath", trackPath))
-
+		// Получаем трек и проверяем его валидность.
+		trackPath := rs.validateTrack(track)
 		if trackPath == "" {
-			rs.logger.Error("Unable to get track path for station", slog.String("route", rs.route))
-			sentry.CaptureMessage(fmt.Sprintf("Unable to get track path for station %s", rs.route)) // This is an error, send to Sentry
-			rs.playlist.NextTrack()
 			continue
 		}
 
-		// Create local copy of channel for current track
-		rs.mutex.Lock()
-		currentTrackCh := rs.currentTrack
-		rs.mutex.Unlock()
+		// Проигрываем трек и обрабатываем результат.
+		isRestartRequested = rs.playAndProcessTrack(trackPath, isRestartRequested)
 
-		// Start track playback in separate goroutine,
-		// to be able to interrupt it when receiving a signal
-		trackFinished := make(chan error, 1)
-		go func() {
-			rs.logger.Info("DIAGNOSTICS: Starting playback of track", slog.String("trackPath", trackPath), slog.String("route", rs.route))
-			err := rs.streamer.StreamTrack(trackPath)
-			trackFinished <- err
-		}()
-
-		// Wait for either track completion or interrupt signal
-		select {
-		case <-rs.stop:
-			// Station stopped, exit loop
-			rs.logger.Info("Stopping radio station during playback", slog.String("route", rs.route))
-			return
-
-		case <-currentTrackCh:
-			// Track interrupted by RestartPlayback signal
-			rs.logger.Info("DIAGNOSTICS: Playback of track manually interrupted", slog.String("trackPath", trackPath), slog.String("route", rs.route))
-			// Wait to make sure playback goroutine has finished
-			select {
-			case <-trackFinished:
-				rs.logger.Info("DIAGNOSTICS: Track playback goroutine successfully completed after interruption", slog.String("trackPath", trackPath))
-			case <-time.After(trackInterruptTimeoutMs * time.Millisecond):
-				rs.logger.Info("DIAGNOSTICS: Timeout waiting for track playback goroutine to complete", slog.String("trackPath", trackPath))
-			}
-
-			// Check if restart was requested
-			if isRestartRequested {
-				rs.logger.Info("DIAGNOSTICS: Restart request detected for station, resetting flag", slog.String("route", rs.route))
-				isRestartRequested = false
-			}
-
-		case err := <-trackFinished:
-			// Track completed naturally or an error occurred
-			if err != nil {
-				rs.logger.Error("Error playing track", slog.String("trackPath", trackPath), slog.String("error", err.Error()))
-				sentry.CaptureException(fmt.Errorf("error playing track %s: %w", trackPath, err))
-				// On error, skip track and move to next
-				rs.playlist.NextTrack()
-			} else {
-				rs.logger.Info("DIAGNOSTICS: Completed playback of track", slog.String("trackPath", trackPath), slog.String("route", rs.route))
-				// Move to next track only if no restart request
-				if !isRestartRequested {
-					rs.logger.Info("DIAGNOSTICS: Moving to next track for station", slog.String("route", rs.route))
-					rs.playlist.NextTrack()
-				} else {
-					rs.logger.Info("DIAGNOSTICS: Restart request detected for station, resetting flag", slog.String("route", rs.route))
-					isRestartRequested = false
-				}
-			}
-		}
-
-		// Small pause before next iteration to prevent CPU racing
+		// Small pause before next iteration to prevent CPU racing.
 		time.Sleep(loopPauseMs * time.Millisecond)
 	}
+}
+
+// checkStopSignal проверяет сигнал остановки.
+func (rs *Station) checkStopSignal() bool {
+	select {
+	case <-rs.stop:
+		rs.logger.Info("Stopping radio station", slog.String("route", rs.route))
+		return true
+	default:
+		return false
+	}
+}
+
+// checkRestartSignal проверяет сигнал рестарта.
+func (rs *Station) checkRestartSignal(currentState bool) bool {
+	select {
+	case <-rs.restart:
+		rs.logger.Info("DIAGNOSTICS: Restart signal processed for station", slog.String("route", rs.route))
+		return true
+	default:
+		return currentState
+	}
+}
+
+// handleNoTrack обрабатывает ситуацию с отсутствием трека.
+func (rs *Station) handleNoTrack(consecutiveEmptyTracks, maxEmptyAttempts int) int {
+	consecutiveEmptyTracks++
+	rs.logger.Info(
+		"DIAGNOSTICS: No track for station",
+		slog.String("route", rs.route),
+		slog.String("action", "waiting"),
+	)
+
+	if consecutiveEmptyTracks <= maxEmptyAttempts {
+		rs.logger.Info(
+			"No tracks in playlist for",
+			slog.String("route", rs.route),
+			slog.Int("attempt", consecutiveEmptyTracks),
+			slog.Int("maxAttempts", maxEmptyAttempts),
+			slog.Int("waitSeconds", emptyTrackWaitSec),
+		)
+		// Wait and try again.
+		time.Sleep(emptyTrackWaitSec * time.Second)
+		return consecutiveEmptyTracks
+	}
+
+	// If after several attempts playlist is still empty, switch to long wait mode.
+	rs.logger.Info("Playlist is empty. Switching to wait mode...", slog.String("route", rs.route))
+
+	// Wait longer between checks to save resources.
+	time.Sleep(longWaitSec * time.Second)
+
+	// Reset counter for new series of checks.
+	return 0
+}
+
+// validateTrack проверяет трек на валидность.
+func (rs *Station) validateTrack(track interface{}) string {
+	rs.logger.Info("DIAGNOSTICS: Track found for station", slog.String("route", rs.route))
+
+	// Streaming current track.
+	trackPath := getTrackPath(track)
+	rs.logger.Info(
+		"DIAGNOSTICS: Track path obtained for station",
+		slog.String("route", rs.route),
+		slog.String("trackPath", trackPath),
+	)
+
+	if trackPath == "" {
+		rs.logger.Error("Unable to get track path for station", slog.String("route", rs.route))
+		sentry.CaptureMessage(
+			fmt.Sprintf("Unable to get track path for station %s", rs.route),
+		)
+		rs.playlist.NextTrack()
+		return ""
+	}
+
+	return trackPath
+}
+
+// playAndProcessTrack запускает проигрывание трека и обрабатывает его результат.
+func (rs *Station) playAndProcessTrack(trackPath string, isRestartRequested bool) bool {
+	// Create local copy of channel for current track.
+	rs.mutex.Lock()
+	currentTrackCh := rs.currentTrack
+	rs.mutex.Unlock()
+
+	// Start track playback in separate goroutine.
+	trackFinished := make(chan error, 1)
+	go rs.startTrackPlayback(trackPath, trackFinished)
+
+	// Wait for either track completion or interrupt signal.
+	return rs.waitForPlaybackResult(currentTrackCh, trackFinished, trackPath, isRestartRequested)
+}
+
+// startTrackPlayback запускает проигрывание трека.
+func (rs *Station) startTrackPlayback(trackPath string, resultCh chan<- error) {
+	rs.logger.Info(
+		"DIAGNOSTICS: Starting playback of track",
+		slog.String("trackPath", trackPath),
+		slog.String("route", rs.route),
+	)
+	err := rs.streamer.StreamTrack(trackPath)
+	resultCh <- err
+}
+
+// waitForPlaybackResult ожидает результата проигрывания трека.
+func (rs *Station) waitForPlaybackResult(
+	currentTrackCh chan struct{},
+	trackFinished chan error,
+	trackPath string,
+	isRestartRequested bool,
+) bool {
+	select {
+	case <-rs.stop:
+		// Station stopped, exit loop.
+		rs.logger.Info("Stopping radio station during playback", slog.String("route", rs.route))
+		return isRestartRequested // Возвращаем текущее значение, хотя оно не будет использовано
+
+	case <-currentTrackCh:
+		// Track interrupted by RestartPlayback signal.
+		return rs.handleTrackInterruption(trackFinished, trackPath, isRestartRequested)
+
+	case err := <-trackFinished:
+		// Track completed naturally or an error occurred.
+		return rs.handleTrackCompletion(err, trackPath, isRestartRequested)
+	}
+}
+
+// handleTrackInterruption обрабатывает прерывание трека.
+func (rs *Station) handleTrackInterruption(trackFinished chan error, trackPath string, isRestartRequested bool) bool {
+	rs.logger.Info(
+		"DIAGNOSTICS: Playback of track manually interrupted",
+		slog.String("trackPath", trackPath),
+		slog.String("route", rs.route),
+	)
+
+	// Wait to make sure playback goroutine has finished.
+	select {
+	case <-trackFinished:
+		rs.logger.Info(
+			"DIAGNOSTICS: Track playback goroutine successfully completed after interruption",
+			slog.String("trackPath", trackPath),
+		)
+	case <-time.After(trackInterruptTimeoutMs * time.Millisecond):
+		rs.logger.Info(
+			"DIAGNOSTICS: Timeout waiting for track playback goroutine to complete",
+			slog.String("trackPath", trackPath),
+		)
+	}
+
+	// Check if restart was requested.
+	if isRestartRequested {
+		rs.logger.Info(
+			"DIAGNOSTICS: Restart request detected for station, resetting flag",
+			slog.String("route", rs.route),
+		)
+		return false // Сбрасываем флаг
+	}
+
+	return isRestartRequested
+}
+
+// handleTrackCompletion обрабатывает завершение проигрывания трека.
+func (rs *Station) handleTrackCompletion(err error, trackPath string, isRestartRequested bool) bool {
+	if err != nil {
+		rs.logger.Error(
+			"Error playing track",
+			slog.String("trackPath", trackPath),
+			slog.String("error", err.Error()),
+		)
+		sentry.CaptureException(fmt.Errorf("error playing track %s: %w", trackPath, err))
+		// On error, skip track and move to next.
+		rs.playlist.NextTrack()
+	} else {
+		rs.logger.Info(
+			"DIAGNOSTICS: Completed playback of track",
+			slog.String("trackPath", trackPath),
+			slog.String("route", rs.route),
+		)
+		// Move to next track only if no restart request.
+		if !isRestartRequested {
+			rs.logger.Info("DIAGNOSTICS: Moving to next track for station", slog.String("route", rs.route))
+			rs.playlist.NextTrack()
+		} else {
+			rs.logger.Info(
+				"DIAGNOSTICS: Restart request detected for station, resetting flag",
+				slog.String("route", rs.route),
+			)
+			return false // Сбрасываем флаг
+		}
+	}
+
+	return isRestartRequested
 }
 
 // StationManager manages multiple radio stations.
@@ -287,18 +400,18 @@ func (rm *StationManager) AddStation(route string, streamer AudioStreamer, playl
 	rm.logger.Info("DIAGNOSTICS: Starting to add radio station to manager...", slog.String("route", route))
 
 	if _, exists := rm.stations[route]; exists {
-		// If station already exists, stop it before replacing
+		// If station already exists, stop it before replacing.
 		rm.logger.Info("Radio station already exists, stopping it before replacement", slog.String("route", route))
 		rm.stations[route].Stop()
 		rm.logger.Info("Existing radio station stopped", slog.String("route", route))
 	}
 
-	// Create new station
+	// Create new station.
 	rm.logger.Info("DIAGNOSTICS: Creating new radio station...", slog.String("route", route))
 	station := NewRadioStation(route, streamer, playlist, rm.logger)
 	rm.stations[route] = station
 
-	// Launch station asynchronously to avoid blocking main thread
+	// Launch station asynchronously to avoid blocking main thread.
 	rm.logger.Info("DIAGNOSTICS: Starting radio station in separate goroutine...", slog.String("route", route))
 	go func() {
 		rm.logger.Info("DIAGNOSTICS: Beginning to start station inside goroutine", slog.String("route", route))
@@ -358,8 +471,8 @@ func (rm *StationManager) RestartPlayback(route string) bool {
 
 // getTrackPath extracts track path from interface.
 func getTrackPath(track interface{}) string {
-	// Interface unpacking depends on specific Track implementation
-	// Here it's assumed that track has a Path field
+	// Interface unpacking depends on specific Track implementation.
+	// Here it's assumed that track has a Path field.
 	if t, ok := track.(interface{ GetPath() string }); ok {
 		return t.GetPath()
 	}
@@ -370,7 +483,7 @@ func getTrackPath(track interface{}) string {
 		return t.Path
 	}
 
-	// If unpacking failed, try to convert to string
+	// If unpacking failed, try to convert to string.
 	if s, ok := track.(string); ok {
 		return s
 	}

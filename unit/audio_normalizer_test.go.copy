@@ -218,7 +218,7 @@ func TestCalculateRMSAndTruePeak(t *testing.T) {
 
 	// Generate sine wave at -18 dBFS (0.125 amplitude).
 	amplitude := 0.125
-	for i := range samples {
+	for i := 0; i < len(samples); i++ {
 		// Phase calculation for 440 Hz at 44100 Hz sample rate.
 		phase := float64(i) * 2 * math.Pi * 440 / 44100
 		value := amplitude * math.Sin(phase)
@@ -353,7 +353,7 @@ func createTestMP3(t *testing.T, filePath string, rms float64) {
 	const numSamples = 8000               // 44100 samples/sec * 200ms for analysis
 	pcmData := make([]byte, numSamples*4) // 4 bytes per sample (2 channels * 2 bytes/channel)
 
-	for i := range numSamples {
+	for i := 0; i < numSamples; i++ {
 		// Generate sine wave at 440 Hz.
 		phase := float64(i) * 2 * math.Pi * 440 / 44100
 		value := amplitude * math.Sin(phase)
@@ -712,11 +712,8 @@ func TestAnalysisWithSilenceThenSpeech(t *testing.T) {
 
 	// Verify that multi-window produces a more reasonable gain.
 	if singleGain <= multiGain {
-		t.Errorf(
-			"Expected single-window gain (%.4f) to be higher than multi-window gain (%.4f) "+
-				"for silence-then-speech pattern",
-			singleGain, multiGain,
-		)
+		t.Errorf("Expected single-window gain (%.4f) to be higher than multi-window gain (%.4f) for silence-then-speech pattern",
+			singleGain, multiGain)
 	}
 
 	// Reset test configuration.
@@ -967,7 +964,7 @@ func createSmoothFadeTestFile(t *testing.T, filePath string) {
 	endAmp := math.Pow(10, (endLUFS+10)/20) * 0.7071
 
 	// Now generate smooth amplitude transition.
-	for i := range numSamples {
+	for i := 0; i < numSamples; i++ {
 		// Calculate position within the file (0.0 to 1.0).
 		position := float64(i) / float64(numSamples)
 

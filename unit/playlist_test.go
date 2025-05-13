@@ -11,8 +11,8 @@ import (
 	"github.com/user/stream-audio-to-web/unit/testdata"
 )
 
-// Creating different audio file types for testing
-func createTestAudioFiles(dir string) error {
+// Creating different audio file types for testing.
+func createTestFiles(_ *testing.T, dir string) error {
 	files := []struct {
 		name string
 		data []byte
@@ -33,36 +33,53 @@ func createTestAudioFiles(dir string) error {
 	return nil
 }
 
+// checkTrackPaths проверяет, что пути двух треков различны.
+func checkTrackPaths(t *testing.T, track1 interface{}, track2 interface{}) {
+	t1, ok1 := track1.(interface{ GetPath() string })
+	t2, ok2 := track2.(interface{ GetPath() string })
+
+	if !ok1 || !ok2 {
+		t.Fatalf("One or both tracks do not implement GetPath() method")
+	}
+
+	path1 := t1.GetPath()
+	path2 := t2.GetPath()
+
+	if path1 == path2 {
+		t.Fatalf("Both tracks have the same path: %s", path1)
+	}
+}
+
 func TestPlaylist_GetCurrentTrack(t *testing.T) {
-	// Create a temporary directory for tests
+	// Create a temporary directory for tests.
 	tmpDir := t.TempDir()
 
-	// Create various audio files for testing
-	if err := createTestAudioFiles(tmpDir); err != nil {
+	// Create various audio files for testing.
+	if err := createTestFiles(t, tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Initialize playlist
+	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Allow time for playlist initialization
+	// Allow time for playlist initialization.
 	time.Sleep(200 * time.Millisecond)
 
-	// Check that the current track is not empty
+	// Check that the current track is not empty.
 	track := pl.GetCurrentTrack()
 	if track == nil {
 		t.Fatalf("Expected current track to not be nil")
 	}
 
-	// Check that the track has a path
+	// Check that the track has a path.
 	if track, ok := track.(interface{ GetPath() string }); !ok || track.GetPath() == "" {
 		t.Fatalf("Expected track to have a valid path")
 	}
 
-	// Check that history starts with the current track
+	// Check that history starts with the current track.
 	history := pl.GetHistory()
 	if len(history) == 0 {
 		t.Fatalf("Expected history to contain at least one item")
@@ -73,91 +90,85 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 }
 
 func TestPlaylist_NextTrack(t *testing.T) {
-	// Create a temporary directory for tests
+	// Create a temporary directory for tests.
 	tmpDir := t.TempDir()
 
-	// Create various audio files for testing
-	if err := createTestAudioFiles(tmpDir); err != nil {
+	// Create various audio files for testing.
+	if err := createTestFiles(t, tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Initialize playlist
+	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Allow time for playlist initialization
+	// Allow time for playlist initialization.
 	time.Sleep(200 * time.Millisecond)
 
-	// Get current track
+	// Get current track.
 	currentTrack := pl.GetCurrentTrack()
 	if currentTrack == nil {
 		t.Fatalf("Expected current track to not be nil before switching")
 	}
 
-	// Log current state for debugging
+	// Log current state for debugging.
 	t.Logf("Initial track: %v", currentTrack)
 	t.Logf("Initial history: %v", pl.GetHistory())
 
-	// Move to next track
+	// Move to next track.
 	nextTrack := pl.NextTrack()
 
-	// Allow time for history to update
+	// Allow time for history to update.
 	time.Sleep(200 * time.Millisecond)
 
-	// Check that the next track is not empty
+	// Check that the next track is not empty.
 	if nextTrack == nil {
 		t.Fatalf("Expected next track to not be nil")
 	}
 
-	// Check that the track has a path
+	// Check that the track has a path.
 	if track, okNext := nextTrack.(interface{ GetPath() string }); !okNext || track.GetPath() == "" {
 		t.Fatalf("Expected next track to have a valid path")
 	}
 
-	// Check that the next track is different from the current track
+	// Check that the next track is different from the current track.
 	if nextTrack == currentTrack {
-		if currentTrackPath, okCurrent := currentTrack.(interface{ GetPath() string }); okCurrent {
-			if nextTrackPath, okNext := nextTrack.(interface{ GetPath() string }); okNext {
-				if currentTrackPath.GetPath() == nextTrackPath.GetPath() {
-					t.Fatalf("Expected next track to be different from current track. Both have path: %s", currentTrackPath.GetPath())
-				}
-			}
-		}
+		checkTrackPaths(t, nextTrack, currentTrack)
 	}
 
-	// Check that history has been updated
+	// Check that history has been updated.
 	history := pl.GetHistory()
 	if len(history) < 2 {
 		t.Fatalf("Expected history to contain at least two items, but got %d", len(history))
 	}
 
-	// Log results for debugging
+	// Log results for debugging.
 	t.Logf("After next track operation:")
 	t.Logf("Next track: %v", nextTrack)
 	t.Logf("Updated history: %v", history)
 }
 
 func TestPlaylist_PreviousTrack(t *testing.T) {
-	// Create a temporary directory for tests
+	// Create a temporary directory for tests.
 	tmpDir := t.TempDir()
 
-	// Create various audio files for testing
-	if err := createTestAudioFiles(tmpDir); err != nil {
+	// Create various audio files for testing.
+	if err := createTestFiles(t, tmpDir); err != nil {
 		t.Fatalf("Failed to create test audio files: %v", err)
 	}
 
-	// Initialize playlist
+	// Initialize playlist.
 	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
 
-	// Allow time for playlist initialization
+	// Allow time for playlist initialization.
 	time.Sleep(200 * time.Millisecond)
 
-	// Remember current track
+	// Remember current track.
 	currentTrack := pl.GetCurrentTrack()
 	currentTrackPath := ""
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
@@ -165,13 +176,13 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 		t.Logf("Initial track path: %s", currentTrackPath)
 	}
 
-	// Move to next track
+	// Move to next track.
 	pl.NextTrack()
 
-	// Allow time for playlist to update
+	// Allow time for playlist to update.
 	time.Sleep(200 * time.Millisecond)
 
-	// Check that the track has changed
+	// Check that the track has changed.
 	midTrack := pl.GetCurrentTrack()
 	var midTrackPath string
 	if track, ok := midTrack.(interface{ GetPath() string }); ok {
@@ -179,39 +190,58 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 		t.Logf("Middle track path (after next): %s", midTrackPath)
 	}
 
-	// Move back to previous track
+	// Move back to previous track.
 	previousTrack := pl.PreviousTrack()
 
-	// Allow time for playlist to update
+	// Allow time for playlist to update.
 	time.Sleep(200 * time.Millisecond)
 
-	// Check that the previous track is not empty
+	// Check that the previous track is not empty.
 	if previousTrack == nil {
 		t.Fatalf("Expected previous track to not be nil")
 	}
 
-	// Get previous track path
+	// Get previous track path.
 	previousTrackPath := ""
 	if track, ok := previousTrack.(interface{ GetPath() string }); ok {
 		previousTrackPath = track.GetPath()
 		t.Logf("Previous track path (after prev): %s", previousTrackPath)
 	}
 
-	// Check that the previous track matches the original track
+	// Check that the previous track matches the original track.
 	if previousTrackPath != currentTrackPath {
 		t.Fatalf("Expected previous track path (%s) to be the same as original track path (%s)",
 			previousTrackPath, currentTrackPath)
 	}
 
-	// Log history state
+	// Log history state.
 	t.Logf("Final history: %v", pl.GetHistory())
 }
 
 func TestPlaylist_ShuffleMode(t *testing.T) {
-	// Create a temporary directory for tests
+	// Создаем временную директорию и тестовые файлы.
+	tmpDir := setupShuffleTestFiles(t)
+
+	// Получаем треки из обычного плейлиста (без перемешивания).
+	_, regularTracks := getRegularPlaylistTracks(t, tmpDir)
+
+	// Получаем треки из перемешанного плейлиста.
+	shuffleTracks := getShuffledPlaylistTracks(t, tmpDir)
+
+	// Логируем порядок треков для отладки.
+	t.Logf("Regular playlist tracks order: %v", regularTracks)
+	t.Logf("Shuffled playlist tracks order: %v", shuffleTracks)
+
+	// Проверяем результаты.
+	validateShuffleResults(t, regularTracks, shuffleTracks)
+}
+
+// setupShuffleTestFiles создает временную директорию и тестовые файлы для тестирования функции перемешивания.
+func setupShuffleTestFiles(t *testing.T) string {
+	// Создаем временную директорию для тестов.
 	tmpDir := t.TempDir()
 
-	// Create more audio files for better shuffle testing
+	// Создаем больше аудиофайлов для лучшего тестирования перемешивания.
 	files := []struct {
 		name string
 		data []byte
@@ -228,7 +258,7 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		{"10_track.mp3", testdata.GetMinimumMP3Data()},
 	}
 
-	// Create files
+	// Создаем файлы.
 	for _, file := range files {
 		filePath := filepath.Join(tmpDir, file.name)
 		if err := os.WriteFile(filePath, file.data, 0644); err != nil {
@@ -236,87 +266,103 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		}
 	}
 
-	// Initialize playlist without shuffling to preserve original order
+	return tmpDir
+}
+
+// getRegularPlaylistTracks получает треки из обычного плейлиста (без перемешивания).
+func getRegularPlaylistTracks(t *testing.T, tmpDir string) (*playlist.Playlist, []string) {
+	// Инициализируем плейлист без перемешивания, чтобы сохранить исходный порядок.
 	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create regular playlist: %v", err)
 	}
 
-	// Allow time for initialization
+	// Даем время для инициализации.
 	time.Sleep(200 * time.Millisecond)
 
-	// Get tracks from regular playlist (should be in alphabetical order)
-	var regularTracks []string
-	currentTrack := regularPl.GetCurrentTrack()
-	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
-		regularTracks = append(regularTracks, filepath.Base(track.GetPath()))
-	}
+	// Получаем треки из обычного плейлиста (должны быть в алфавитном порядке).
+	regularTracks := collectPlaylistTracks(t, regularPl)
 
-	// Iterate through tracks in sequence
-	for range regularTracks {
-		nextTrack := regularPl.NextTrack()
-		time.Sleep(50 * time.Millisecond)
-		if track, ok := nextTrack.(interface{ GetPath() string }); ok {
-			regularTracks = append(regularTracks, filepath.Base(track.GetPath()))
-		}
-	}
+	return regularPl, regularTracks
+}
 
-	// Manually create playlist with shuffle instead of using the constructor with shuffle=true
+// getShuffledPlaylistTracks получает треки из перемешанного плейлиста.
+func getShuffledPlaylistTracks(t *testing.T, tmpDir string) []string {
+	// Вручную создаем плейлист с перемешиванием вместо использования конструктора с shuffle=true.
 	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
 	if err != nil {
 		t.Fatalf("Failed to create shuffle playlist: %v", err)
 	}
 
-	// Allow time for initialization
+	// Даем время для инициализации.
 	time.Sleep(200 * time.Millisecond)
 
-	// Manually shuffle with timeout to identify potential deadlocks
+	// Вручную перемешиваем с таймаутом, чтобы выявить потенциальные дедлоки.
 	t.Log("Starting manual shuffle operation...")
+	performShuffleWithTimeout(t, shufflePl)
 
-	// Create a channel to signal completion
+	// Получаем треки из перемешанного плейлиста.
+	shuffleTracks := collectPlaylistTracks(t, shufflePl)
+
+	return shuffleTracks
+}
+
+// performShuffleWithTimeout выполняет перемешивание плейлиста с таймаутом.
+func performShuffleWithTimeout(t *testing.T, pl *playlist.Playlist) {
+	// Создаем канал для сигнала о завершении.
 	done := make(chan bool)
 
-	// Start goroutine to execute shuffle
+	// Запускаем горутину для выполнения перемешивания.
 	go func() {
-		shufflePl.Shuffle()
+		pl.Shuffle()
 		done <- true
 	}()
 
-	// Wait for shuffle to complete with timeout
+	// Ждем завершения перемешивания с таймаутом.
 	select {
 	case <-done:
 		t.Log("Shuffle operation completed successfully")
 	case <-time.After(10 * time.Second):
 		t.Fatalf("Shuffle operation timed out after 10 seconds")
 	}
+}
 
-	// Get tracks from shuffled playlist
-	var shuffleTracks []string
-	currentTrack = shufflePl.GetCurrentTrack()
+// collectPlaylistTracks собирает треки из плейлиста.
+func collectPlaylistTracks(_ *testing.T, pl *playlist.Playlist) []string {
+	var tracks []string
+
+	// Получаем первый трек.
+	currentTrack := pl.GetCurrentTrack()
 	if track, ok := currentTrack.(interface{ GetPath() string }); ok {
-		shuffleTracks = append(shuffleTracks, filepath.Base(track.GetPath()))
+		tracks = append(tracks, filepath.Base(track.GetPath()))
 	}
 
-	// Iterate through tracks in sequence
-	for range shuffleTracks {
-		nextTrack := shufflePl.NextTrack()
+	// Итерируем через треки по порядку.
+	for range [10]struct{}{} { // Ограничиваем количество итераций для безопасности
+		nextTrack := pl.NextTrack()
 		time.Sleep(50 * time.Millisecond)
 		if track, ok := nextTrack.(interface{ GetPath() string }); ok {
-			shuffleTracks = append(shuffleTracks, filepath.Base(track.GetPath()))
+			trackName := filepath.Base(track.GetPath())
+			// Проверяем, не вернулись ли мы к началу.
+			if len(tracks) > 0 && trackName == tracks[0] {
+				break
+			}
+			tracks = append(tracks, trackName)
 		}
 	}
 
-	// Log track order for debugging
-	t.Logf("Regular playlist tracks order: %v", regularTracks)
-	t.Logf("Shuffled playlist tracks order: %v", shuffleTracks)
+	return tracks
+}
 
-	// Check that both playlists have the same number of tracks
+// validateShuffleResults проверяет результаты перемешивания.
+func validateShuffleResults(t *testing.T, regularTracks, shuffleTracks []string) {
+	// Проверяем, что оба плейлиста имеют одинаковое количество треков.
 	if len(regularTracks) != len(shuffleTracks) {
 		t.Fatalf("Expected both playlists to have the same number of tracks, but got %d and %d",
 			len(regularTracks), len(shuffleTracks))
 	}
 
-	// Check that the track order is different in SHUFFLE mode
+	// Проверяем, что порядок треков отличается в режиме SHUFFLE.
 	different := false
 	for i, track := range regularTracks {
 		if i < len(shuffleTracks) && track != shuffleTracks[i] {
@@ -329,7 +375,12 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		t.Errorf("Expected shuffled playlist to have different order than regular playlist, but they appear identical")
 	}
 
-	// Check that all files are present in both playlists
+	// Проверяем, что все файлы присутствуют в обоих плейлистах.
+	verifyAllTracksPresent(t, regularTracks, shuffleTracks)
+}
+
+// verifyAllTracksPresent проверяет, что все треки присутствуют в обоих плейлистах.
+func verifyAllTracksPresent(t *testing.T, regularTracks, shuffleTracks []string) {
 	regularMap := make(map[string]bool)
 	shuffleMap := make(map[string]bool)
 
@@ -341,14 +392,14 @@ func TestPlaylist_ShuffleMode(t *testing.T) {
 		shuffleMap[track] = true
 	}
 
-	// All files from regular playlist should be in shuffled playlist
+	// Все файлы из обычного плейлиста должны быть в перемешанном плейлисте.
 	for track := range regularMap {
 		if !shuffleMap[track] {
 			t.Errorf("Track %s is missing in shuffled playlist", track)
 		}
 	}
 
-	// All files from shuffled playlist should be in regular playlist
+	// Все файлы из перемешанного плейлиста должны быть в обычном плейлисте.
 	for track := range shuffleMap {
 		if !regularMap[track] {
 			t.Errorf("Track %s is missing in regular playlist", track)

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// getEnvOrDefault returns the value of environment variable or the default value
+// getEnvOrDefault returns the value of environment variable or the default value.
 func getEnvOrDefault(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -19,22 +19,22 @@ func getEnvOrDefault(key, defaultValue string) string {
 }
 
 func TestHealthzEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value
+	// Get base URL from environment variable or use default value.
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 
-	// Send GET request to /healthz
+	// Send GET request to /healthz.
 	resp, getHealthzRespErr := http.Get(fmt.Sprintf("%s/healthz", baseURL))
 	if getHealthzRespErr != nil {
 		t.Fatalf("Failed to send request to /healthz: %v", getHealthzRespErr)
 	}
 	defer resp.Body.Close()
 
-	// Check response code
+	// Check response code.
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	// Check response body
+	// Check response body.
 	body, readHealthzBodyErr := io.ReadAll(resp.Body)
 	if readHealthzBodyErr != nil {
 		t.Fatalf("Failed to read response body: %v", readHealthzBodyErr)
@@ -46,22 +46,22 @@ func TestHealthzEndpoint(t *testing.T) {
 }
 
 func TestReadyzEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value
+	// Get base URL from environment variable or use default value.
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 
-	// Send GET request to /readyz
+	// Send GET request to /readyz.
 	resp, getReadyzRespErr := http.Get(fmt.Sprintf("%s/readyz", baseURL))
 	if getReadyzRespErr != nil {
 		t.Fatalf("Failed to send request to /readyz: %v", getReadyzRespErr)
 	}
 	defer resp.Body.Close()
 
-	// Check response code
+	// Check response code.
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	// Check that response body contains "Ready"
+	// Check that response body contains "Ready".
 	body, readReadyzBodyErr := io.ReadAll(resp.Body)
 	if readReadyzBodyErr != nil {
 		t.Fatalf("Failed to read response body: %v", readReadyzBodyErr)
@@ -73,22 +73,22 @@ func TestReadyzEndpoint(t *testing.T) {
 }
 
 func TestStreamsEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value
+	// Get base URL from environment variable or use default value.
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 
-	// Send GET request to /streams
+	// Send GET request to /streams.
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /streams: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Check response code
+	// Check response code.
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	// Check that response body is not empty and contains "streams"
+	// Check that response body is not empty and contains "streams".
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read response body: %v", err)
@@ -104,10 +104,10 @@ func TestStreamsEndpoint(t *testing.T) {
 }
 
 func TestAudioStreamEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value
+	// Get base URL from environment variable or use default value.
 	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
 
-	// Get list of routes from /streams
+	// Get list of routes from /streams.
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
 	if err != nil {
 		t.Fatalf("Failed to send request to /streams: %v", err)
@@ -119,14 +119,14 @@ func TestAudioStreamEndpoint(t *testing.T) {
 		t.Fatalf("Failed to read response body: %v", err)
 	}
 
-	// Simple check - if routes couldn't be obtained from /streams,
-	// use default route
+	// Simple check - if routes couldn't be obtained from /streams,.
+	// use default route.
 	testRoute := "/humor"
 	if strings.Contains(string(body), "/science") {
 		testRoute = "/science"
 	}
 
-	// Send HEAD request to audio stream
+	// Send HEAD request to audio stream.
 	req, err := http.NewRequest(http.MethodHead, fmt.Sprintf("%s%s", baseURL, testRoute), nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
@@ -142,12 +142,12 @@ func TestAudioStreamEndpoint(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Check response code
+	// Check response code.
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d for %s, got %d", http.StatusOK, testRoute, resp.StatusCode)
 	}
 
-	// Check Content-Type header
+	// Check Content-Type header.
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "audio/") {
 		t.Errorf("Expected Content-Type to contain 'audio/', got '%s'", contentType)

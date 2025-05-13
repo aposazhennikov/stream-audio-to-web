@@ -370,15 +370,15 @@
     {{end}}
 
     <script>
-        // Theme toggle functionality
+        // Theme toggle functionality.
         document.addEventListener('DOMContentLoaded', () => {
             const themeToggle = document.getElementById('theme-toggle');
             
-            // Check if user preference is stored in localStorage
+            // Check if user preference is stored in localStorage.
             const currentTheme = localStorage.getItem('theme') || 'light';
             document.documentElement.setAttribute('data-theme', currentTheme);
             
-            // Toggle theme on click
+            // Toggle theme on click.
             themeToggle.addEventListener('click', () => {
                 const currentTheme = document.documentElement.getAttribute('data-theme');
                 const newTheme = currentTheme === 'light' ? 'dark' : 'light';
@@ -393,43 +393,43 @@
             const isVisible = trackList.style.display === 'block';
             trackList.style.display = isVisible ? 'none' : 'block';
             
-            // Change button text
+            // Change button text.
             const buttons = trackList.previousElementSibling.querySelectorAll('button');
             const historyButton = buttons[buttons.length - 1];
             historyButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
         }
 
-        // Function for automatic player updating when track changes
+        // Function for automatic player updating when track changes.
         const audioPlayers = {};
         const currentTracks = {};
 
-        // Function to get the current track for each route
+        // Function to get the current track for each route.
         function checkCurrentTracks() {
             fetch('/now-playing')
                 .then(response => response.json())
                 .then(tracks => {
                     Object.keys(tracks).forEach(route => {
-                        // If track changed, reload player
+                        // If track changed, reload player.
                         if (currentTracks[route] !== tracks[route]) {
                             console.log('Track changed on route ' + route + ': ' + tracks[route]);
                             currentTracks[route] = tracks[route];
                             
-                            // If this route is open, reload player
+                            // If this route is open, reload player.
                             if (window.location.pathname === route) {
                                 console.log('Reloading audio player for ' + route);
                                 const audio = document.querySelector('audio');
                                 if (audio) {
-                                    // Save current volume
+                                    // Save current volume.
                                     const volume = audio.volume;
-                                    // Save URL for later use
+                                    // Save URL for later use.
                                     const originalSrc = audio.src;
-                                    // Stop current player
+                                    // Stop current player.
                                     audio.pause();
-                                    // Reload source with new timestamp parameter to bypass caching
+                                    // Reload source with new timestamp parameter to bypass caching.
                                     audio.src = originalSrc + '?t=' + new Date().getTime();
-                                    // Restore volume
+                                    // Restore volume.
                                     audio.volume = volume;
-                                    // Start playback
+                                    // Start playback.
                                     audio.play().catch(e => console.error('Playback error:', e));
                                 }
                             }
@@ -439,12 +439,12 @@
                 .catch(error => console.error('Error checking current track:', error));
         }
 
-        // Check current track every 2 seconds
+        // Check current track every 2 seconds.
         setInterval(checkCurrentTracks, 2000);
         
-        // Initialization on page load
+        // Initialization on page load.
         window.addEventListener('DOMContentLoaded', () => {
-            // Initial track information loading
+            // Initial track information loading.
             checkCurrentTracks();
         });
     </script>

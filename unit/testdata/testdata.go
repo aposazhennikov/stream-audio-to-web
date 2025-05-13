@@ -1,7 +1,7 @@
-// Package testdata предоставляет общие тестовые данные для всех тестов
+// Package testdata предоставляет общие тестовые данные для всех тестов.
 package testdata
 
-// GetMinimumMP3Data возвращает минимальный набор байтов для MP3 файла
+// GetMinimumMP3Data возвращает минимальный набор байтов для MP3 файла.
 func GetMinimumMP3Data() []byte {
 	return []byte{
 		0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
@@ -12,14 +12,14 @@ func GetMinimumMP3Data() []byte {
 	}
 }
 
-// GetMinimumWAVData возвращает минимальный корректный WAV файл
+// GetMinimumWAVData возвращает минимальный корректный WAV файл.
 func GetMinimumWAVData() []byte {
 	return []byte{
-		// RIFF header
+		// RIFF header.
 		0x52, 0x49, 0x46, 0x46, // "RIFF"
 		0x24, 0x00, 0x00, 0x00, // Chunk size (36 + data size)
 		0x57, 0x41, 0x56, 0x45, // "WAVE"
-		// fmt subchunk
+		// fmt subchunk.
 		0x66, 0x6D, 0x74, 0x20, // "fmt "
 		0x10, 0x00, 0x00, 0x00, // Subchunk size (16 bytes)
 		0x01, 0x00, // Audio format (1 = PCM)
@@ -28,18 +28,18 @@ func GetMinimumWAVData() []byte {
 		0x88, 0x58, 0x01, 0x00, // Byte rate (44100 * 1 * 16/8)
 		0x02, 0x00, // Block align (channels * bits/sample / 8)
 		0x10, 0x00, // Bits per sample (16 bits)
-		// data subchunk
+		// data subchunk.
 		0x64, 0x61, 0x74, 0x61, // "data"
 		0x00, 0x00, 0x00, 0x00, // Data size (0 bytes)
-		// Minimal data (1 sample)
+		// Minimal data (1 sample).
 		0x00, 0x00,
 	}
 }
 
-// GetMinimumOGGData возвращает минимальный корректный OGG файл
+// GetMinimumOGGData возвращает минимальный корректный OGG файл.
 func GetMinimumOGGData() []byte {
 	return []byte{
-		// OGG header
+		// OGG header.
 		0x4F, 0x67, 0x67, 0x53, // "OggS"
 		0x00,                                           // Version
 		0x02,                                           // Header type
@@ -49,7 +49,7 @@ func GetMinimumOGGData() []byte {
 		0x01, 0x00, 0x00, 0x00, // CRC checksum
 		0x01, // Number of segments
 		0x1E, // Segment size (30 bytes)
-		// Vorbis header (simplified)
+		// Vorbis header (simplified).
 		0x01, 0x76, 0x6F, 0x72, 0x62, 0x69, 0x73, // "\x01vorbis"
 		0x00, 0x00, 0x00, 0x00, // Vorbis version
 		0x01,                   // Channels (1)
@@ -59,4 +59,4 @@ func GetMinimumOGGData() []byte {
 		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
 		0x00, // Blocksize
 	}
-} 
+}

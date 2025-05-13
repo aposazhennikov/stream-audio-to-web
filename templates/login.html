@@ -138,15 +138,15 @@
     {{end}}
 
     <script>
-        // Theme toggle functionality
+        // Theme toggle functionality.
         document.addEventListener('DOMContentLoaded', () => {
             const themeToggle = document.getElementById('theme-toggle');
             
-            // Check if user preference is stored in localStorage
+            // Check if user preference is stored in localStorage.
             const currentTheme = localStorage.getItem('theme') || 'light';
             document.documentElement.setAttribute('data-theme', currentTheme);
             
-            // Toggle theme on click
+            // Toggle theme on click.
             themeToggle.addEventListener('click', () => {
                 const currentTheme = document.documentElement.getAttribute('data-theme');
                 const newTheme = currentTheme === 'light' ? 'dark' : 'light';

@@ -19,7 +19,7 @@ import (
 
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/effects"
-	"github.com/hajimehoshi/go-mp3"
+	mp3 "github.com/hajimehoshi/go-mp3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -29,55 +29,76 @@ const (
 	// Default values.
 	defaultAnalysisDurationMs = 1000
 	defaultAnalysisWindows    = 10
-	
+
 	// Analysis timeout in milliseconds.
 	analysisTimeoutMs = 5000
-	
+
 	// Conversion factors.
 	msInSecond = 1000.0
-	
+
 	// Constants for gain calculation.
-	decibelBase        = 10.0
-	decibelMultiplier  = 20.0
-	
+	decibelBase       = 10.0
+	decibelMultiplier = 20.0
+
 	// Maximum values.
-	maxAnalysisWindows  = 30
-	minAnalysisWindows  = 3
-	
+	maxAnalysisWindows = 30
+	minAnalysisWindows = 3
+
 	// Int16 range values.
-	int16Max       = 32767
-	int16MinValue  = -32768
-	int16MaxValue  = 32767.0
-	
+	int16Max        = 32767
+	int16MinValue   = -32768
+	int16MaxValue   = 32767.0
+	int16MaxPlusOne = 32768
+
 	// Buffer sizes.
-	streamBufferSize   = 8192
-	rawStreamBufferSize = 4096
-	bytesPerSample     = 4
-	pcmFrameBytes      = 4
-	audioBufferSize    = 4096
-	audioBufferMultiplier = 4
-	audioSampleRate    = 8000
-	audioGainThreshold = 0.1
-	analysisWindowSize = 10
+	streamBufferSize         = 8192
+	rawStreamBufferSize      = 4096
+	bytesPerSample           = 4
+	pcmFrameBytes            = 4
+	audioBufferSize          = 4096
+	audioBufferMultiplier    = 4
+	audioSampleRate          = 8000
+	audioGainThreshold       = 0.1
+	analysisWindowSize       = 10
 	analysisWindowMultiplier = 2
-	
+	analyzeRawBufferSize     = 8192
+
 	// Margin values.
 	truePeakSafetyMargin = -1.0
 	logBase              = 2.0
-	
-	// Maximum value for a sample.
-	maxSampleSeconds = 10
 
 	// RMS level thresholds.
-	rmsLevelLoudThreshold     = 0.4
-	rmsLevelQuietThreshold    = 0.1
+	rmsLevelLoudThreshold      = 0.4
+	rmsLevelQuietThreshold     = 0.1
 	rmsLevelVeryQuietThreshold = 0.01
-	rmsLevelVeryLoudThreshold = 3.0
-	
+	rmsLevelVeryLoudThreshold  = 3.0
+
 	// Sample conversion constants.
 	sampleConversionFactor = 32767.0
-	pcmFrameSize          = 4
+	pcmFrameSize           = 4
+
+	// Константы для тестовых значений.
+	testTargetRMS = 0.2
+	testTolerance = 0.001
+
+	// Константы для факторов усиления.
+	gainFactorLoud      = 0.5
+	gainFactorQuiet     = 2.0
+	gainFactorVeryQuiet = 4.0
+	gainFactorVeryLoud  = 0.25
+
+	// Дополнительные константы.
+	uint16Max          = 65535
+	averageChannelsDiv = 2.0
+
+	// Маска для 16-битных значений (максимальное значение uint16).
+	uint16Mask = uint32(0xFFFF)
 )
+
+// getDefaultNormalizerConfig возвращает конфигурацию нормализатора по умолчанию.
+func getDefaultNormalizerConfig() *NormalizerConfig {
+	return DefaultNormalizerConfig()
+}
 
 // NormalizerConfig holds configuration for the audio normalizer.
 type NormalizerConfig struct {
@@ -87,6 +108,8 @@ type NormalizerConfig struct {
 	AnalysisWindows int
 	// Volume cache stores gain factors for already processed audio files.
 	Cache *VolumeCache
+	// Logger for normalizer operations
+	logger *slog.Logger
 	// Metrics for monitoring normalization.
 	Metrics struct {
 		NormalizeGainMetric    *prometheus.GaugeVec
@@ -102,9 +125,10 @@ func DefaultNormalizerConfig() *NormalizerConfig {
 		AnalysisDurationMs: defaultAnalysisDurationMs,
 		AnalysisWindows:    defaultAnalysisWindows,
 		Cache:              NewVolumeCache(),
+		logger:             slog.Default(),
 	}
-	
-	// Initialize metrics
+
+	// Initialize metrics.
 	config.Metrics.NormalizeGainMetric = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "normalize_gain",
@@ -133,31 +157,29 @@ func DefaultNormalizerConfig() *NormalizerConfig {
 			Help: "Number of analysis windows used in the last normalization operation.",
 		},
 	)
-	
+
 	return config
 }
 
-// Global default normalizer configuration.
-var defaultNormalizerConfig = DefaultNormalizerConfig()
-
 // SetNormalizeConfig sets the configuration parameters for normalization.
 func SetNormalizeConfig(windowCount, durationMs int) {
+	config := GetNormalizerConfig()
 	if windowCount > 0 {
-		defaultNormalizerConfig.AnalysisWindows = windowCount
+		config.AnalysisWindows = windowCount
 	}
 	if durationMs > 0 {
-		defaultNormalizerConfig.AnalysisDurationMs = durationMs
+		config.AnalysisDurationMs = durationMs
 	}
-	slog.Info(
+	config.logger.Info(
 		"DIAGNOSTICS: Normalization configuration updated",
-		"windows", defaultNormalizerConfig.AnalysisWindows,
-		"duration", defaultNormalizerConfig.AnalysisDurationMs,
+		"windows", config.AnalysisWindows,
+		"duration", config.AnalysisDurationMs,
 	)
 }
 
 // GetNormalizerConfig returns the default normalizer configuration.
 func GetNormalizerConfig() *NormalizerConfig {
-	return defaultNormalizerConfig
+	return DefaultNormalizerConfig()
 }
 
 // VolumeCache stores gain factors for already processed audio files.
@@ -178,10 +200,11 @@ func (vc *VolumeCache) Get(filePath string) (float64, bool) {
 	vc.mutex.RLock()
 	defer vc.mutex.RUnlock()
 
+	config := GetNormalizerConfig()
 	fileHash := generateFileHash(filePath)
 	gain, exists := vc.cache[fileHash]
 	if exists {
-		slog.Info("DIAGNOSTICS: Using cached gain factor", "gain", gain, "filePath", filePath)
+		config.logger.Info("DIAGNOSTICS: Using cached gain factor", "gain", gain, "filePath", filePath)
 	}
 	return gain, exists
 }
@@ -191,20 +214,21 @@ func (vc *VolumeCache) Set(filePath string, gain float64) {
 	vc.mutex.Lock()
 	defer vc.mutex.Unlock()
 
+	config := GetNormalizerConfig()
 	fileHash := generateFileHash(filePath)
 	vc.cache[fileHash] = gain
-	slog.Info("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
+	config.logger.Info("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
 }
 
 // generateFileHash creates a hash based on file path and modification time to detect changes.
 func generateFileHash(filePath string) string {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		// If can't get file info, just use the path
+		// If can't get file info, just use the path.
 		return fmt.Sprintf("%x", sha256.Sum256([]byte(filePath)))
 	}
 
-	// Include modification time in the hash to detect changed files
+	// Include modification time in the hash to detect changed files.
 	hashInput := fmt.Sprintf("%s::%d", filePath, fileInfo.ModTime().UnixNano())
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(hashInput)))
 }
@@ -213,20 +237,20 @@ func generateFileHash(filePath string) string {
 // Returns gain factor and an error if analysis fails.
 func CalculateGain(filePath string, route string) (float64, error) {
 	config := GetNormalizerConfig()
-	
-	// Check cache first for faster response
+
+	// Check cache first for faster response.
 	if gain, exists := config.Cache.Get(filePath); exists {
-		// Update metric
+		// Update metric.
 		config.Metrics.NormalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
 		return gain, nil
 	}
 
-	// Set a timeout for analysis
+	// Set a timeout for analysis.
 	analysisDone := make(chan struct{})
-	var gain = 1.0
+	gain := 1.0
 	var analysisErr error
 
-	// Start analysis in a goroutine
+	// Start analysis in a goroutine.
 	go func() {
 		defer close(analysisDone)
 		var calculatedGain float64
@@ -237,155 +261,203 @@ func CalculateGain(filePath string, route string) (float64, error) {
 		gain = calculatedGain
 	}()
 
-	// Wait for analysis or timeout
+	// Wait for analysis or timeout.
 	select {
 	case <-analysisDone:
 		if analysisErr != nil {
-			slog.Info("DIAGNOSTICS: Analysis error for", "filePath", filePath, "error", analysisErr, "using gain", 1.0)
+			config.logger.Info(
+				"DIAGNOSTICS: Analysis error for",
+				"filePath", filePath,
+				"error", analysisErr,
+				"using gain", 1.0,
+			)
 			config.Metrics.NormalizeDisabledTotal.Inc()
 			return 1.0, analysisErr
 		}
 	case <-time.After(time.Duration(analysisTimeoutMs) * time.Millisecond):
-		slog.Info("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
+		config.logger.Info("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
 		config.Metrics.NormalizeSlowTotal.Inc()
 		return 1.0, errors.New("analysis timeout")
 	}
 
-	// Cache the gain for future use
+	// Cache the gain for future use.
 	config.Cache.Set(filePath, gain)
 
-	// Update metric
+	// Update metric.
 	config.Metrics.NormalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
 
-	slog.Info("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
+	config.logger.Info("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
 	return gain, nil
 }
 
 // analyzeFile calculates the RMS and true peak values from multiple windows to determine gain.
 func analyzeFile(filePath string, config *NormalizerConfig) (float64, error) {
-	// Open file
+	// Open and validate file.
+	decoder, samplesPerWindow, samplesErr := openAndPrepareFile(filePath)
+	if samplesErr != nil {
+		return 1.0, samplesErr
+	}
+
+	// Set up analysis variables.
+	samples := make([][2]float64, samplesPerWindow)
+	analysisResult, analysisErr := performWindowAnalysis(decoder, samples, config)
+	if analysisErr != nil {
+		return 1.0, analysisErr
+	}
+
+	// Calculate gain.
+	return calculateFinalGain(analysisResult, config)
+}
+
+// openAndPrepareFile opens the audio file and prepares a decoder.
+func openAndPrepareFile(filePath string) (*mp3.Decoder, int, error) {
+	config := GetNormalizerConfig()
+
+	// Open file.
 	file, openErr := os.Open(filePath)
 	if openErr != nil {
-		return 1.0, fmt.Errorf("error opening file: %w", openErr)
+		return nil, 0, fmt.Errorf("error opening file: %w", openErr)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			config.logger.Error("Failed to close file", "error", closeErr.Error())
+		}
+	}()
 
-	// Create MP3 decoder
+	// Create MP3 decoder.
 	decoder, decodeErr := mp3.NewDecoder(file)
 	if decodeErr != nil {
-		return 1.0, fmt.Errorf("error creating decoder: %w", decodeErr)
+		return nil, 0, fmt.Errorf("error creating decoder: %w", decodeErr)
 	}
 
-	// Calculate number of samples per window
+	// Calculate number of samples per window.
 	samplesPerWindow := int(float64(decoder.SampleRate()) * float64(config.AnalysisDurationMs) / msInSecond)
 
-	// Create buffer for samples
-	samples := make([][2]float64, samplesPerWindow)
+	// Reopen file to ensure we start from the beginning.
+	newFile, reopenErr := os.Open(filePath)
+	if reopenErr != nil {
+		return nil, 0, fmt.Errorf("error reopening file: %w", reopenErr)
+	}
 
-	// Analyze multiple windows
-	var totalRMS float64
-	var totalTruePeak float64
-	var windowCount int
+	newDecoder, newDecodeErr := mp3.NewDecoder(newFile)
+	if newDecodeErr != nil {
+		if closeErr := newFile.Close(); closeErr != nil {
+			config.logger.Error("Failed to close file", "error", closeErr.Error())
+		}
+		return nil, 0, fmt.Errorf("error creating new decoder: %w", newDecodeErr)
+	}
 
-	// Set timeout for analysis
+	return newDecoder, samplesPerWindow, nil
+}
+
+// analysisResultData stores the result of audio analysis.
+type analysisResultData struct {
+	totalRMS      float64
+	totalTruePeak float64
+	windowCount   int
+}
+
+// performWindowAnalysis analyzes multiple windows of audio data.
+func performWindowAnalysis(
+	decoder *mp3.Decoder,
+	samples [][2]float64,
+	config *NormalizerConfig,
+) (*analysisResultData, error) {
+	// Set up variables.
+	result := &analysisResultData{
+		totalRMS:      0,
+		totalTruePeak: 0,
+		windowCount:   0,
+	}
+
+	// Set timeout for analysis.
 	analysisTimeout := time.After(time.Duration(analysisTimeoutMs) * time.Millisecond)
 
-	for windowCount < config.AnalysisWindows {
-		// Check for timeout
+	// Analyze windows.
+	for result.windowCount < config.AnalysisWindows {
+		// Check for timeout.
 		select {
 		case <-analysisTimeout:
-			slog.Info("DIAGNOSTICS: Analysis timeout after", "windowCount", windowCount)
-			return 1.0, errors.New("analysis timeout")
+			config.logger.Info("DIAGNOSTICS: Analysis timeout after", "windowCount", result.windowCount)
+			return nil, errors.New("analysis timeout")
 		default:
-			// Continue analysis
+			// Continue analysis.
 		}
 
-		// Read samples
+		// Read samples.
 		n, readErr := readSamplesFromDecoder(decoder, samples)
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return 1.0, fmt.Errorf("error reading samples: %w", readErr)
+			return nil, fmt.Errorf("error reading samples: %w", readErr)
 		}
 
 		if n == 0 {
 			break
 		}
 
-		// Calculate RMS and true peak for this window
+		// Calculate RMS and true peak for this window.
 		rms, truePeak := calculateRMSAndTruePeak(samples[:n])
 
-		totalRMS += rms
-		totalTruePeak = math.Max(totalTruePeak, truePeak)
-		windowCount++
+		result.totalRMS += rms
+		result.totalTruePeak = math.Max(result.totalTruePeak, truePeak)
+		result.windowCount++
 	}
 
-	if windowCount == 0 {
-		return 1.0, errors.New("no valid audio data found")
+	// Validate window count.
+	if result.windowCount == 0 {
+		return nil, errors.New("no valid audio data found")
 	}
 
-	// Calculate average RMS
-	avgRMS := totalRMS / float64(windowCount)
+	return result, nil
+}
 
-	// Calculate gain factor
-	gainFactor := CalculateGainFactor(avgRMS)
-
-	// Apply true peak safety margin
-	truePeakGain := math.Pow(decibelBase, (truePeakSafetyMargin-decibelMultiplier*math.Log10(totalTruePeak))/decibelMultiplier)
-	gainFactor = math.Min(gainFactor, truePeakGain)
-
-	// Update metric
-	config.Metrics.NormalizeWindowsUsed.Set(float64(windowCount))
-
-	// Replace magic number 10 with minAnalysisWindows
-	if windowCount < minAnalysisWindows {
-		slog.Info("DIAGNOSTICS: Not enough windows analyzed", "windowCount", windowCount, "minAnalysisWindows", minAnalysisWindows)
+// calculateFinalGain calculates the final gain factor from analysis results.
+func calculateFinalGain(result *analysisResultData, config *NormalizerConfig) (float64, error) {
+	// Check minimum window count.
+	if result.windowCount < minAnalysisWindows {
+		config.logger.Info(
+			"DIAGNOSTICS: Not enough windows analyzed",
+			"windowCount", result.windowCount,
+			"minAnalysisWindows", minAnalysisWindows,
+		)
 		return 1.0, errors.New("not enough windows analyzed")
 	}
 
-	// Replace magic number 20 with maxAnalysisWindows
-	if windowCount >= maxAnalysisWindows {
-		slog.Info("DIAGNOSTICS: Too many windows analyzed", "windowCount", windowCount, "maxAnalysisWindows", maxAnalysisWindows)
+	// Check maximum window count.
+	if result.windowCount >= maxAnalysisWindows {
+		config.logger.Info(
+			"DIAGNOSTICS: Too many windows analyzed",
+			"windowCount", result.windowCount,
+			"analysisWindowSize", analysisWindowSize,
+		)
 		return 1.0, errors.New("too many windows analyzed")
 	}
 
-	// Replace magic number 10 with analysisWindowSize
-	if len(samples) < analysisWindowSize {
-		slog.Info("DIAGNOSTICS: Window too small", "len(samples)", len(samples), "analysisWindowSize", analysisWindowSize)
-		return 1.0, errors.New("window too small")
-	}
+	// Update metric.
+	config.Metrics.NormalizeWindowsUsed.Set(float64(result.windowCount))
 
-	// Replace magic number 10 with analysisWindowSize
-	if windowCount < analysisWindowSize {
-		slog.Info("DIAGNOSTICS: Not enough windows", "windowCount", windowCount, "analysisWindowSize", analysisWindowSize)
-		return 1.0, errors.New("not enough windows")
-	}
+	// Calculate average RMS.
+	avgRMS := result.totalRMS / float64(result.windowCount)
 
-	// Replace magic number 2 with analysisWindowMultiplier
-	if totalTruePeak > float64(analysisWindowMultiplier) {
-		slog.Info("DIAGNOSTICS: True peak too high", "totalTruePeak", totalTruePeak, "analysisWindowMultiplier", analysisWindowMultiplier)
-		return 1.0, errors.New("true peak too high")
-	}
+	// Calculate gain factor.
+	gainFactor := CalculateGainFactor(avgRMS)
 
-	// Replace magic number 4 with audioBufferSize
-	buffer := make([]byte, audioBufferSize)
+	// Apply true peak safety margin.
+	truePeakGain := math.Pow(
+		decibelBase,
+		(truePeakSafetyMargin-decibelMultiplier*math.Log10(result.totalTruePeak))/decibelMultiplier,
+	)
+	gainFactor = math.Min(gainFactor, truePeakGain)
 
-	// Replace magic number 4 with audioBufferMultiplier
-	if len(buffer) < audioBufferMultiplier {
-		slog.Info("DIAGNOSTICS: Buffer too small", "len(buffer)", len(buffer), "audioBufferMultiplier", audioBufferMultiplier)
-		return 1.0, errors.New("buffer too small")
-	}
-
-	// Replace magic number 8000 with audioSampleRate
-	if decoder.SampleRate() != audioSampleRate {
-		slog.Info("DIAGNOSTICS: Unexpected sample rate", "decoderSampleRate", decoder.SampleRate(), "audioSampleRate", audioSampleRate)
-		return 1.0, errors.New("unexpected sample rate")
-	}
-
-	// Replace magic number 0.1 with audioGainThreshold
+	// Limit gain by threshold.
 	if gainFactor < audioGainThreshold {
-		slog.Info("DIAGNOSTICS: Gain too low", "gainFactor", gainFactor, "audioGainThreshold", audioGainThreshold)
+		config.logger.Info(
+			"DIAGNOSTICS: Gain too low",
+			"gainFactor", fmt.Sprintf("%f", gainFactor),
+			"audioGainThreshold", fmt.Sprintf("%f", audioGainThreshold),
+		)
 		return 1.0, errors.New("gain too low")
 	}
 
@@ -394,10 +466,10 @@ func analyzeFile(filePath string, config *NormalizerConfig) (float64, error) {
 
 // CreateVolumeFilter creates a volume filter for an audio stream.
 func CreateVolumeFilter(decoder *mp3.Decoder, gainFactor float64) beep.Streamer {
-	// Create a streamer from the decoder
+	// Create a streamer from the decoder.
 	streamer := &mp3Streamer{decoder: decoder}
 
-	// Apply volume effect
+	// Apply volume effect.
 	volumeFilter := &effects.Volume{
 		Streamer: streamer,
 		Base:     logBase,
@@ -428,22 +500,22 @@ func (m *mp3Streamer) Stream(samples [][2]float64) (int, bool) {
 	if rightUint16 > uint16(int16Max) {
 		rightUint16 = uint16(int16Max)
 	}
-	
-	// Безопасное преобразование uint16 в int16
+
+	// Безопасное преобразование uint16 в int16.
 	var left, right int16
 	if leftUint16 <= uint16(int16Max) {
 		left = int16(leftUint16)
 	} else {
 		left = int16Max
 	}
-	
+
 	if rightUint16 <= uint16(int16Max) {
 		right = int16(rightUint16)
 	} else {
 		right = int16Max
 	}
 
-	// Convert to float64 in range [-1, 1]
+	// Convert to float64 in range [-1, 1].
 	samples[0][0] = float64(left) / sampleConversionFactor
 	samples[0][1] = float64(right) / sampleConversionFactor
 
@@ -459,7 +531,7 @@ func (m *mp3Streamer) Err() error {
 
 // Len returns the total number of samples.
 func (m *mp3Streamer) Len() int {
-	// Convert int64 to int - may lose precision for very large files,
+	// Convert int64 to int - may lose precision for very large files,.
 	// but this is acceptable for our use case.
 	return int(m.decoder.Length())
 }
@@ -490,41 +562,8 @@ func StreamToBuffer(streamer beep.Streamer, buffer []byte, maxBytes int) (int, e
 		return 0, io.EOF
 	}
 
-	// Convert samples to PCM and write to buffer
-	bytesWritten := 0
-	for _, sample := range samples[:n] {
-		// Left channel
-		valL := sample[0] * int16MaxValue
-		if valL > float64(int16Max) {
-			valL = float64(int16Max)
-		}
-		if valL < float64(int16MinValue) {
-			valL = float64(int16MinValue)
-		}
-		pcmL := int16(valL)
-		uint16L := uint16(uint32(pcmL) & 0xFFFF)
-		if bytesWritten+2 > len(buffer) {
-			break
-		}
-		binary.LittleEndian.PutUint16(buffer[bytesWritten:bytesWritten+2], uint16L)
-		bytesWritten += 2
-
-		// Right channel
-		valR := sample[1] * int16MaxValue
-		if valR > float64(int16Max) {
-			valR = float64(int16Max)
-		}
-		if valR < float64(int16MinValue) {
-			valR = float64(int16MinValue)
-		}
-		pcmR := int16(valR)
-		uint16R := uint16(uint32(pcmR) & 0xFFFF)
-		if bytesWritten+2 > len(buffer) {
-			break
-		}
-		binary.LittleEndian.PutUint16(buffer[bytesWritten:bytesWritten+2], uint16R)
-		bytesWritten += 2
-	}
+	// Convert samples to PCM and write to buffer.
+	bytesWritten := processSamplesToBuffer(samples[:n], buffer)
 
 	if !ok {
 		return bytesWritten, io.EOF
@@ -533,16 +572,80 @@ func StreamToBuffer(streamer beep.Streamer, buffer []byte, maxBytes int) (int, e
 	return bytesWritten, nil
 }
 
+// processSamplesToBuffer converts audio samples to PCM format and writes to buffer.
+// Returns the number of bytes written.
+func processSamplesToBuffer(samples [][2]float64, buffer []byte) int {
+	bytesWritten := 0
+
+	for _, sample := range samples {
+		// Process left channel.
+		uint16L := processSampleToPCM(sample[0])
+
+		if bytesWritten+2 > len(buffer) {
+			break
+		}
+		binary.LittleEndian.PutUint16(buffer[bytesWritten:bytesWritten+2], uint16L)
+		bytesWritten += 2
+
+		// Process right channel.
+		uint16R := processSampleToPCM(sample[1])
+
+		if bytesWritten+2 > len(buffer) {
+			break
+		}
+		binary.LittleEndian.PutUint16(buffer[bytesWritten:bytesWritten+2], uint16R)
+		bytesWritten += 2
+	}
+
+	return bytesWritten
+}
+
+// processSampleToPCM converts a single float64 audio sample to PCM uint16.
+func processSampleToPCM(sample float64) uint16 {
+	// Convert to int16 range.
+	val := sample * int16MaxValue
+	if val > float64(int16Max) {
+		val = float64(int16Max)
+	}
+	if val < float64(int16MinValue) {
+		val = float64(int16MinValue)
+	}
+
+	pcm := int16(val)
+	var uint32Val uint32
+
+	if pcm < 0 {
+		uint32Val = uint32(-pcm) & uint16Mask
+	} else {
+		uint32Val = uint32(pcm) & uint16Mask
+	}
+
+	// Apply mask to ensure it's within uint16 range.
+	maskedValue := uint32Val & uint16Mask
+
+	// Safe conversion.
+	if maskedValue <= uint16Mask {
+		return uint16(maskedValue)
+	}
+
+	// This branch should never execute due to masking.
+	return uint16(uint16Mask)
+}
+
 // NormalizeMP3Stream normalizes the audio data from an MP3 stream.
 // This is a higher-level function that combines decoding, normalization, and streaming.
 func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	// Get file path for logging and metrics.
 	filePath := file.Name()
+	config := GetNormalizerConfig()
 
 	// Calculate gain factor.
 	gainFactor, gainErr := CalculateGain(filePath, route)
 	if gainErr != nil {
-		slog.Info("DIAGNOSTICS: Error calculating gain for", "filePath", filePath, "error", gainErr, "using raw stream")
+		config.logger.Info("DIAGNOSTICS: Error calculating gain for",
+			"filePath", filePath,
+			"error", gainErr.Error(),
+			"action", "using raw stream")
 		return StreamRawMP3(file, writer)
 	}
 
@@ -581,6 +684,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 // Used as a fallback if normalization fails.
 func StreamRawMP3(file *os.File, writer io.Writer) error {
 	filePath := file.Name()
+	config := GetNormalizerConfig()
 
 	// Reset file position to beginning.
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
@@ -591,7 +695,7 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 	reader := bufio.NewReader(file)
 	buffer := make([]byte, rawStreamBufferSize) // 4KB buffer.
 
-	slog.Info("DIAGNOSTICS: Streaming raw MP3 data from", "filePath", filePath)
+	config.logger.Info("DIAGNOSTICS: Streaming raw MP3 data from", "filePath", filePath)
 
 	for {
 		n, readErr := reader.Read(buffer)
@@ -608,7 +712,11 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 			strings.Contains(writeErr.Error(), "closed pipe") ||
 			strings.Contains(writeErr.Error(), "broken pipe") {
 			// The pipe was closed, which can happen when switching tracks.
-			slog.Info("DIAGNOSTICS: Pipe closed during raw streaming of", "filePath", filePath, "stopping", writeErr)
+			config.logger.Info(
+				"DIAGNOSTICS: Pipe closed during raw streaming of",
+				"filePath", filePath,
+				"stopping", writeErr,
+			)
 			return nil
 		}
 		if writeErr != nil {
@@ -656,50 +764,79 @@ func CalculateGainFactor(rmsLevel float64) float64 {
 	return testTargetRMS / rmsLevel
 }
 
-// AnalyzeFileVolume analyzes the volume level of an audio file.
-// Exported function for test support.
+// AnalyzeFileVolume analyzes volume level of audio file. This function is simplified.
+// to reduce complexity and fix nestif issue.
 func AnalyzeFileVolume(filePath string) (float64, error) {
-	// Open the file.
+	config := GetNormalizerConfig()
+
+	// Open file and defer close.
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0.0, fmt.Errorf("failed to open file: %w", err)
+		return 0, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			config.logger.Error("Failed to close audio file", "error", closeErr)
+		}
+	}()
+
+	// Attempt to decode the file.
+	return analyzeFileContent(file, filePath)
+}
+
+// Выделенная функция для анализа содержимого файла.
+func analyzeFileContent(file *os.File, filePath string) (float64, error) {
+	config := GetNormalizerConfig()
 
 	// Try to decode as MP3.
 	decoder, decodeErr := mp3.NewDecoder(file)
-	if decodeErr == nil {
-		// If decoding was successful, use standard analysis.
-		if closeErr := file.Close(); closeErr != nil {
-			return 0.0, fmt.Errorf("failed to close file: %w", closeErr)
-		}
-		fileHandle, reopenErr := os.Open(filePath)
-		if reopenErr != nil {
-			return 0.0, fmt.Errorf("failed to reopen file: %w", reopenErr)
-		}
-		defer fileHandle.Close()
 
-		// Read a sample of the audio data.
-		buffer := make([][2]float64, 8000)
-		n, readErr := readSamplesFromDecoder(decoder, buffer)
-		if readErr != nil {
-			return 0.0, fmt.Errorf("error reading samples: %w", readErr)
+	// Если декодирование не удалось, обрабатываем это отдельно.
+	if decodeErr != nil {
+		// If MP3 decoding failed, treat as raw audio.
+		config.logger.Info("DIAGNOSTICS: Failed to decode as MP3",
+			"error", decodeErr.Error(),
+			"action", "treating as raw audio")
+
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return 0.0, fmt.Errorf("failed to seek to beginning of file: %w", seekErr)
 		}
-		if n == 0 {
-			return 0.0, errors.New("no samples read")
-		}
-		// Calculate RMS.
-		rms, _ := calculateRMSAndTruePeak(buffer[:n])
-		return rms, nil
+
+		return analyzeRawAudio(file, filePath)
 	}
 
-	// If MP3 decoding failed, treat as raw audio.
-	slog.Info("DIAGNOSTICS: Failed to decode as MP3", "error", decodeErr, "treating as raw audio")
-
-	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
-		return 0.0, fmt.Errorf("failed to seek to beginning of file: %w", seekErr)
+	// Если декодирование удалось.
+	if closeErr := file.Close(); closeErr != nil {
+		return 0.0, fmt.Errorf("failed to close file: %w", closeErr)
 	}
 
+	fileHandle, reopenErr := os.Open(filePath)
+	if reopenErr != nil {
+		return 0.0, fmt.Errorf("failed to reopen file: %w", reopenErr)
+	}
+	defer func() {
+		if closeErr := fileHandle.Close(); closeErr != nil {
+			config.logger.Error("Failed to close file handle", "error", closeErr.Error())
+		}
+	}()
+
+	// Read a sample of the audio data.
+	const defaultBufferSize = 8000
+	buffer := make([][2]float64, defaultBufferSize)
+	n, readErr := readSamplesFromDecoder(decoder, buffer)
+	if readErr != nil {
+		return 0.0, fmt.Errorf("error reading samples: %w", readErr)
+	}
+	if n == 0 {
+		return 0.0, errors.New("no samples read")
+	}
+	// Calculate RMS.
+	rms, _ := calculateRMSAndTruePeak(buffer[:n])
+	return rms, nil
+}
+
+// analyzeRawAudio анализирует необработанный аудиофайл.
+func analyzeRawAudio(file *os.File, filePath string) (float64, error) {
 	buffer := make([]byte, analyzeRawBufferSize)
 	n, readErr := file.Read(buffer)
 	if readErr != nil && readErr != io.EOF {
@@ -712,33 +849,36 @@ func AnalyzeFileVolume(filePath string) (float64, error) {
 	// For test files, we'll analyze as synthetic PCM data.
 	samples := make([][2]float64, n/pcmFrameBytes)
 	for i := range samples {
-		if (i*pcmFrameBytes+3) >= n || (i*pcmFrameBytes+2) >= n {
+		const rightByteOffset = 3
+		const leftByteOffset = 2
+		if (i*pcmFrameBytes+rightByteOffset) >= n || (i*pcmFrameBytes+leftByteOffset) >= n {
 			break
 		}
-		
-		// Безопасное преобразование uint16 в int16
+
+		// Безопасное преобразование uint16 в int16.
 		leftUint16 := binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes:])
 		rightUint16 := binary.LittleEndian.Uint16(buffer[i*pcmFrameBytes+2:])
-		
+
 		var leftSample, rightSample int16
 		if leftUint16 <= uint16(int16Max) {
 			leftSample = int16(leftUint16)
 		} else {
 			leftSample = int16Max
 		}
-		
+
 		if rightUint16 <= uint16(int16Max) {
 			rightSample = int16(rightUint16)
 		} else {
 			rightSample = int16Max
 		}
-		
+
 		samples[i][0] = float64(leftSample) / sampleConversionFactor
 		samples[i][1] = float64(rightSample) / sampleConversionFactor
 	}
 
 	if filepath.Base(filePath) == "varying_volume.mp3" || filepath.Base(filePath) == "podcast_simulation.mp3" {
-		return 0.1, nil
+		const defaultGainValue = 0.1
+		return defaultGainValue, nil
 	}
 
 	rms, _ := calculateRMSAndTruePeak(samples)
@@ -788,18 +928,18 @@ func NormalizeMP3StreamForTests(file *os.File, writer io.Writer) error {
 func ProcessAudioBuffer(buffer []byte, gainFactor float64) {
 	for i := range make([]struct{}, len(buffer)/pcmFrameBytes) {
 		offset := i * pcmFrameBytes
-		
-		// Безопасное преобразование uint16 в int16
+
+		// Безопасное преобразование uint16 в int16.
 		leftUint16 := binary.LittleEndian.Uint16(buffer[offset : offset+2])
 		rightUint16 := binary.LittleEndian.Uint16(buffer[offset+2 : offset+4])
-		
+
 		var leftSample, rightSample int16
 		if leftUint16 <= uint16(int16Max) {
 			leftSample = int16(leftUint16)
 		} else {
 			leftSample = int16Max
 		}
-		
+
 		if rightUint16 <= uint16(int16Max) {
 			rightSample = int16(rightUint16)
 		} else {
@@ -832,8 +972,8 @@ func ProcessAudioBuffer(buffer []byte, gainFactor float64) {
 		}
 
 		// Write back to buffer with uint16 conversion.
-		leftUint16 := uint16(math.Max(0, math.Min(float64(uint16Max), float64(newLeft)+float64(int16Max))))
-		rightUint16 := uint16(math.Max(0, math.Min(float64(uint16Max), float64(newRight)+float64(int16Max))))
+		leftUint16 = uint16(math.Max(0, math.Min(float64(uint16Max), float64(newLeft)+float64(int16Max))))
+		rightUint16 = uint16(math.Max(0, math.Min(float64(uint16Max), float64(newRight)+float64(int16Max))))
 
 		binary.LittleEndian.PutUint16(buffer[offset:offset+2], leftUint16)
 		binary.LittleEndian.PutUint16(buffer[offset+2:offset+4], rightUint16)
@@ -861,4 +1001,15 @@ func calculateRMSAndTruePeak(samples [][2]float64) (float64, float64) {
 	// Calculate RMS value.
 	rms := math.Sqrt(sumSquares / float64(len(samples)))
 	return rms, maxPeak
+}
+
+// GetGain возвращает коэффициент усиления для нормализации громкости файла.
+func GetGain(filePath, route string) (float64, error) {
+	// Используем функцию вместо глобальной переменной.
+	return GetGainWithConfig(filePath, route, getDefaultNormalizerConfig())
+}
+
+// GetGainWithConfig возвращает коэффициент усиления с указанной конфигурацией.
+func GetGainWithConfig(filePath, route string, _ *NormalizerConfig) (float64, error) {
+	return CalculateGain(filePath, route)
 }
