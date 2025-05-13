@@ -777,22 +777,23 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		logger.Info("Обнаружен JSON формат в DIRECTORY_ROUTES")
 
 		// Перебираем маршруты из JSON
-		for route, path := range jsonRoutes {
+		for routeName, path := range jsonRoutes {
 			// Нормализуем маршрут (добавляем слэш в начало, если его нет)
-			if !strings.HasPrefix(route, "/") {
-				logger.Info("Normalized route", slog.String("from", route), slog.String("to", "/"+route))
-				route = "/" + route
+			routePath := routeName
+			if !strings.HasPrefix(routePath, "/") {
+				logger.Info("Normalized route", slog.String("from", routePath), slog.String("to", "/"+routePath))
+				routePath = "/" + routePath
 			}
 
 			// Проверяем существование директории
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", route))
+				logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", routePath))
 				continue
 			}
 
-			// Добавляем в конфигурацию
-			config.DirectoryRoutes[path] = route
-			logger.Info("Added directory route from JSON", slog.String("path", path), slog.String("route", route))
+			// В config.DirectoryRoutes ключи должны быть путями, а значения - маршрутами
+			config.DirectoryRoutes[path] = routePath
+			logger.Info("Added directory route from JSON", slog.String("path", path), slog.String("route", routePath))
 		}
 
 		logger.Info("Directory routes configured from JSON", slog.Int("count", len(config.DirectoryRoutes)))
