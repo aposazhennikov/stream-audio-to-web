@@ -201,34 +201,45 @@ func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
 
 // logConfiguration logs the application configuration.
 func logConfiguration(logger *slog.Logger, config *Config) {
-	logger.Info("========== APPLICATION CONFIGURATION ==========")
-	logger.Info("Port", slog.Int("value", config.Port))
-	logger.Info("Default audio directory", slog.String("value", config.AudioDir))
-	logger.Info("Stream format", slog.String("value", config.StreamFormat))
-	logger.Info("Bitrate", slog.Int("value", config.Bitrate))
-	logger.Info("Max clients", slog.Int("value", config.MaxClients))
-	logger.Info("Buffer size", slog.Int("value", config.BufferSize))
-	logger.Info("Global shuffle setting", slog.Bool("value", config.Shuffle))
-	logger.Info("Volume normalization", slog.Bool("value", config.NormalizeVolume))
-	logger.Info("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
-	logger.Info("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
-	logger.Info("Normalization sample duration", slog.String("value", fmt.Sprintf("%d ms", config.NormalizeSampleMs)))
-	logger.Info("Relay functionality enabled", slog.Bool("value", config.EnableRelay))
-	logger.Info("Relay configuration file", slog.String("value", config.RelayConfigFile))
+	// Создаем временный логгер с уровнем INFO для вывода конфигурации независимо от LOG_LEVEL
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo, // Всегда используем INFO для конфигурации
+	}
+	configHandler := slog.NewJSONHandler(os.Stdout, opts)
+	configLogger := slog.New(configHandler)
+
+	configLogger.Info("========== APPLICATION CONFIGURATION ==========")
+	configLogger.Info("Port", slog.Int("value", config.Port))
+	configLogger.Info("Default audio directory", slog.String("value", config.AudioDir))
+	configLogger.Info("Stream format", slog.String("value", config.StreamFormat))
+	configLogger.Info("Bitrate", slog.Int("value", config.Bitrate))
+	configLogger.Info("Max clients", slog.Int("value", config.MaxClients))
+	configLogger.Info("Buffer size", slog.Int("value", config.BufferSize))
+	configLogger.Info("Global shuffle setting", slog.Bool("value", config.Shuffle))
+	configLogger.Info("Volume normalization", slog.Bool("value", config.NormalizeVolume))
+	configLogger.Info("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
+	configLogger.Info("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
+	configLogger.Info("Normalization sample duration",
+		slog.String("value", fmt.Sprintf("%d ms", config.NormalizeSampleMs)))
+	configLogger.Info("Relay functionality enabled", slog.Bool("value", config.EnableRelay))
+	configLogger.Info("Relay configuration file", slog.String("value", config.RelayConfigFile))
 
 	// Log per-stream shuffle settings.
-	logger.Info("Per-stream shuffle settings:")
+	configLogger.Info("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
-		logger.Info("Per-stream shuffle", slog.String("route", route), slog.Bool("value", shuffle))
+		configLogger.Info("Per-stream shuffle", slog.String("route", route), slog.Bool("value", shuffle))
 	}
 
 	// Log additional directory routes.
-	logger.Info("Additional directory routes:")
+	configLogger.Info("Additional directory routes:")
 	for path, route := range config.DirectoryRoutes {
-		logger.Info("Additional route", slog.String("path", path), slog.String("route", route))
+		configLogger.Info("Additional route", slog.String("path", path), slog.String("route", route))
 	}
 
-	logger.Info("=============================================")
+	configLogger.Info("=============================================")
+
+	// Возвращаемся к обычному логированию с заданным уровнем
+	logger.Info("Configuration logged with INFO level regardless of LOG_LEVEL setting")
 }
 
 // initializeComponents creates and initializes all application components.

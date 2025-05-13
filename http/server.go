@@ -4,7 +4,6 @@ package http
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -493,20 +492,32 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Query().Get("route")
 
-	s.trackMutex.RLock()
-	defer s.trackMutex.RUnlock()
-
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	// Проверка на пустой маршрут.
 	if route == "" {
-		errorMsg := "Route parameter is required"
-		s.logger.Error("ERROR: Empty route parameter")
-		// Обработка ошибки используя логирование при отсутствии маршрута.
-		s.logNormalizationError(errors.New("empty route parameter"), "nowPlayingHandler")
-		http.Error(w, errorMsg, http.StatusBadRequest)
+		// Для отсутствующего параметра route возвращаем информацию по всем маршрутам
+		// вместо ошибки, и используем уровень DEBUG для логов
+		s.logger.Debug("No route parameter provided, returning all tracks info")
+
+		// Подготовим карту со всеми текущими треками
+		s.trackMutex.RLock()
+		allTracks := make(map[string]string)
+		for r, track := range s.currentTracks {
+			allTracks[r] = track
+		}
+		s.trackMutex.RUnlock()
+
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"tracks": allTracks,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode all tracks info", slog.String("error", encodeErr.Error()))
+		}
 		return
 	}
+
+	s.trackMutex.RLock()
+	defer s.trackMutex.RUnlock()
 
 	track, exists := s.currentTracks[route]
 	if !exists {
