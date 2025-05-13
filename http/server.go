@@ -1310,13 +1310,32 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		http.Redirect(w, r, "/status", http.StatusFound)
+		http.Redirect(w, r, "/status", http.StatusSeeOther)
 		return
 	}
 
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
 	mode := vars["mode"]
+
+	// Validate mode value
+	if mode != "on" && mode != "off" {
+		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		if isAjax {
+			w.Header().Set("Content-Type", "application/json")
+			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Invalid mode value, must be 'on' or 'off'",
+			}); encodeErr != nil {
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				return
+			}
+			return
+		}
+		http.Error(w, "Invalid mode value, must be 'on' or 'off'", http.StatusBadRequest)
+		return
+	}
 
 	s.mutex.RLock()
 	_, exists := s.playlists[route]
@@ -1357,7 +1376,7 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		http.Redirect(w, r, "/status-page", http.StatusFound)
+		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
 	}
 }
 

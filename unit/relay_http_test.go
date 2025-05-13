@@ -222,12 +222,16 @@ func setupRelayTest(t *testing.T) (*relay.Manager, *mockHTTPServer, *http.Cookie
 
 // createRequest создает HTTP запрос с необходимыми параметрами для тестов.
 func createRequest(t *testing.T, method, path string, formData url.Values, authCookie *http.Cookie) *http.Request {
-	var body *strings.Reader
+	var req *http.Request
+	var err error
+
 	if formData != nil {
-		body = strings.NewReader(formData.Encode())
+		body := strings.NewReader(formData.Encode())
+		req, err = http.NewRequest(method, path, body)
+	} else {
+		req, err = http.NewRequest(method, path, nil)
 	}
 
-	req, err := http.NewRequest(method, path, body)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
