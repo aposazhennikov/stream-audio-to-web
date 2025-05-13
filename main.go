@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -163,28 +164,30 @@ func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
 // logConfiguration logs the application configuration.
 func logConfiguration(logger *slog.Logger, config *Config) {
 	logger.Info("========== APPLICATION CONFIGURATION ==========")
-	logger.Info("Port", "value", config.Port)
-	logger.Info("Default audio directory", "value", config.AudioDir)
-	logger.Info("Stream format", "value", config.StreamFormat)
-	logger.Info("Bitrate", "value", config.Bitrate)
-	logger.Info("Max clients", "value", config.MaxClients)
-	logger.Info("Buffer size", "value", config.BufferSize)
-	logger.Info("Global shuffle setting", "value", config.Shuffle)
-	logger.Info("Volume normalization", "value", config.NormalizeVolume)
-	logger.Info("Runtime normalization mode", "value", config.NormalizeRuntime)
-	logger.Info("Normalization sample windows", "value", config.NormalizeSampleWindows)
-	logger.Info("Normalization sample duration", "value", fmt.Sprintf("%d ms", config.NormalizeSampleMs))
-	logger.Info("Relay functionality enabled", "value", config.RelayEnabled)
-	logger.Info("Relay configuration file", "value", config.RelayConfigFile)
+	logger.Info("Port", slog.Int("value", config.Port))
+	logger.Info("Default audio directory", slog.String("value", config.AudioDir))
+	logger.Info("Stream format", slog.String("value", config.StreamFormat))
+	logger.Info("Bitrate", slog.Int("value", config.Bitrate))
+	logger.Info("Max clients", slog.Int("value", config.MaxClients))
+	logger.Info("Buffer size", slog.Int("value", config.BufferSize))
+	logger.Info("Global shuffle setting", slog.Bool("value", config.Shuffle))
+	logger.Info("Volume normalization", slog.Bool("value", config.NormalizeVolume))
+	logger.Info("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
+	logger.Info("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
+	logger.Info("Normalization sample duration", slog.String("value", fmt.Sprintf("%d ms", config.NormalizeSampleMs)))
+	logger.Info("Relay functionality enabled", slog.Bool("value", config.RelayEnabled))
+	logger.Info("Relay configuration file", slog.String("value", config.RelayConfigFile))
 
+	// Log per-stream shuffle settings.
 	logger.Info("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
-		logger.Info("Stream shuffle setting", "route", route, "shuffle", shuffle)
+		logger.Info("Per-stream shuffle", slog.String("route", route), slog.Bool("value", shuffle))
 	}
 
+	// Log additional directory routes.
 	logger.Info("Additional directory routes:")
 	for route, dir := range config.DirectoryRoutes {
-		logger.Info("Additional route", "route", route, "directory", dir)
+		logger.Info("Additional route", slog.String("route", route), slog.String("directory", dir))
 	}
 
 	logger.Info("=============================================")
@@ -568,6 +571,16 @@ func createStreamer(logger *slog.Logger, config *Config, route string) *audio.St
 // Load configuration from command line flags and environment variables.
 func loadConfig() *Config {
 	// Parse command line flags.
+	config := parseCommandLineFlags()
+
+	// Load configuration from environment variables.
+	loadConfigFromEnv(config)
+
+	return config
+}
+
+// parseCommandLineFlags парсит флаги командной строки и возвращает начальную конфигурацию.
+func parseCommandLineFlags() *Config {
 	port := flag.Int("port", defaultPort, "HTTP server port")
 	audioDir := flag.String("audio-dir", defaultAudioDir, "Directory with audio files")
 	streamFormat := flag.String("format", defaultStreamFormat, "Stream format (mp3, ogg, aac)")
@@ -586,7 +599,7 @@ func loadConfig() *Config {
 	flag.Parse()
 
 	// Create configuration.
-	config := &Config{
+	return &Config{
 		Port:                   *port,
 		AudioDir:               *audioDir,
 		DirectoryRoutes:        make(map[string]string),
@@ -604,33 +617,76 @@ func loadConfig() *Config {
 		RelayEnabled:           *relayEnabled,
 		RelayConfigFile:        *relayConfigFile,
 	}
+}
 
+// loadConfigFromEnv загружает конфигурацию из переменных окружения.
+func loadConfigFromEnv(config *Config) {
 	// Load directory routes from environment.
-	dirRoutes := getEnvOrDefault("DIRECTORY_ROUTES", "")
-	if dirRoutes != "" {
-		// Parse directory routes.
-		routes := strings.Split(dirRoutes, ",")
-		for _, route := range routes {
-			parts := strings.SplitN(route, ":", maxSplitParts)
-			if len(parts) == maxSplitParts {
-				routePath := strings.TrimSpace(parts[0])
-				dirPath := strings.TrimSpace(parts[1])
-
-				// Ensure route starts with slash.
-				if routePath[0] != '/' {
-					routePath = "/" + routePath
-				}
-
-				config.DirectoryRoutes[routePath] = dirPath
-			}
-		}
-	}
+	loadDirectoryRoutesFromEnv(config)
 
 	// Load per-stream shuffle settings from environment.
+	loadShuffleSettingsFromEnv(config)
+}
+
+// loadDirectoryRoutesFromEnv загружает маршруты директорий из переменных окружения.
+func loadDirectoryRoutesFromEnv(config *Config) {
+	logger := slog.Default()
+	dirRoutes := getEnvOrDefault("DIRECTORY_ROUTES", "")
+	if dirRoutes == "" {
+		return
+	}
+
+	// Try to parse as JSON first
+	var directoryRoutes map[string]string
+	err := json.Unmarshal([]byte(dirRoutes), &directoryRoutes)
+	if err == nil {
+		// JSON parsing succeeded
+		logger.Info("Successfully parsed DIRECTORY_ROUTES as JSON", "directoryRoutes", directoryRoutes)
+		addRoutesToConfig(config, directoryRoutes)
+		return
+	}
+
+	// Log the error for debugging
+	logger.Info("Error parsing DIRECTORY_ROUTES as JSON", "error", err, "fallback", "Using comma-separated format")
+
+	// Fallback to old comma-separated format
+	parseCommaSeparatedRoutes(config, dirRoutes)
+}
+
+// addRoutesToConfig добавляет маршруты в конфигурацию, обеспечивая правильный формат.
+func addRoutesToConfig(config *Config, routes map[string]string) {
+	for route, dir := range routes {
+		// Ensure route starts with slash
+		if len(route) > 0 && route[0] != '/' {
+			route = "/" + route
+		}
+		config.DirectoryRoutes[route] = dir
+	}
+}
+
+// parseCommaSeparatedRoutes парсит маршруты в формате через запятую.
+func parseCommaSeparatedRoutes(config *Config, dirRoutes string) {
+	routes := strings.Split(dirRoutes, ",")
+	for _, route := range routes {
+		parts := strings.SplitN(route, ":", maxSplitParts)
+		if len(parts) == maxSplitParts {
+			routePath := strings.TrimSpace(parts[0])
+			dirPath := strings.TrimSpace(parts[1])
+
+			// Ensure route starts with slash.
+			if routePath[0] != '/' {
+				routePath = "/" + routePath
+			}
+
+			config.DirectoryRoutes[routePath] = dirPath
+		}
+	}
+}
+
+// loadShuffleSettingsFromEnv загружает настройки перемешивания из переменных окружения.
+func loadShuffleSettingsFromEnv(config *Config) {
 	shuffleSettings := getEnvOrDefault("SHUFFLE_SETTINGS", "")
 	parseShuffleSettings(config, shuffleSettings)
-
-	return config
 }
 
 func parseShuffleSettings(config *Config, shuffleSettings string) {
