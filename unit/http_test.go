@@ -11,7 +11,6 @@ import (
 )
 
 // Синглтон для тестового HTTP сервера.
-//
 //nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна
 var (
 	serverInstance *httpServer.Server
