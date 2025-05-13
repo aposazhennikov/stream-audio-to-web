@@ -333,8 +333,18 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 func (s *Streamer) runNormalization(file *os.File, writer *io.PipeWriter, route string) {
 	defer writer.Close()
 	if normErr := NormalizeMP3Stream(file, writer, route); normErr != nil {
-		s.logger.Info("DIAGNOSTICS: ERROR during audio normalization", "error", normErr.Error())
-		sentry.CaptureException(normErr)
+		// Проверяем, содержит ли ошибка строку "EOF", которая обычно не является критической.
+		if strings.Contains(normErr.Error(), "EOF") {
+			// Для EOF-ошибок только логируем без отправки в Sentry.
+			s.logger.Info("DIAGNOSTICS: Non-critical normalization error",
+				"error", normErr.Error(),
+				"route", route)
+		} else {
+			// Для более серьезных ошибок и логируем, и отправляем в Sentry.
+			s.logger.Info("DIAGNOSTICS: ERROR during audio normalization",
+				"error", normErr.Error())
+			sentry.CaptureException(normErr)
+		}
 	}
 }
 

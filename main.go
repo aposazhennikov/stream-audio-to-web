@@ -636,27 +636,27 @@ func loadDirectoryRoutesFromEnv(config *Config) {
 		return
 	}
 
-	// Try to parse as JSON first
+	// Try to parse as JSON first.
 	var directoryRoutes map[string]string
 	err := json.Unmarshal([]byte(dirRoutes), &directoryRoutes)
 	if err == nil {
-		// JSON parsing succeeded
+		// JSON parsing succeeded.
 		logger.Info("Successfully parsed DIRECTORY_ROUTES as JSON", "directoryRoutes", directoryRoutes)
 		addRoutesToConfig(config, directoryRoutes)
 		return
 	}
 
-	// Log the error for debugging
+	// Log the error for debugging.
 	logger.Info("Error parsing DIRECTORY_ROUTES as JSON", "error", err, "fallback", "Using comma-separated format")
 
-	// Fallback to old comma-separated format
+	// Fallback to old comma-separated format.
 	parseCommaSeparatedRoutes(config, dirRoutes)
 }
 
 // addRoutesToConfig добавляет маршруты в конфигурацию, обеспечивая правильный формат.
 func addRoutesToConfig(config *Config, routes map[string]string) {
 	for route, dir := range routes {
-		// Ensure route starts with slash
+		// Ensure route starts with slash.
 		if len(route) > 0 && route[0] != '/' {
 			route = "/" + route
 		}

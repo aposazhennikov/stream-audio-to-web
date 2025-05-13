@@ -31,7 +31,7 @@
             document.getElementById('cookieInfo').textContent = 
                 JSON.stringify(cookieObj, null, 2) || 'Нет куки';
             
-            // Проверяем есть ли status_auth
+            // Проверяем есть ли status_auth.
             if (cookieObj['status_auth']) {
                 document.getElementById('cookieInfo').textContent += 
                     '\n\nКука status_auth найдена! Значение: ' + cookieObj['status_auth'];
@@ -45,7 +45,7 @@
             const password = prompt('Введите пароль для установки куки:');
             if (!password) return;
             
-            // Установить куку на 1 день
+            // Установить куку на 1 день.
             document.cookie = `status_auth=${password}; path=/; max-age=86400`;
             checkAuthCookie();
         }
@@ -55,7 +55,7 @@
             checkAuthCookie();
         }
         
-        // Проверить куки при загрузке
+        // Проверить куки при загрузке.
         window.onload = checkAuthCookie;
     </script>
 </body>

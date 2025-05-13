@@ -4,6 +4,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -15,14 +16,14 @@ import (
 	"sync"
 	"time"
 
-	html "html"
-
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/user/stream-audio-to-web/audio"
 	"github.com/user/stream-audio-to-web/relay"
+
+	html "html"
 )
 
 // StreamHandler interface for handling audio stream.
@@ -268,6 +269,7 @@ func (s *Server) setupRoutes() {
 	// Add handlers for track switching.
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")
 	s.router.HandleFunc("/prev-track/{route}", s.prevTrackHandler).Methods("POST")
+	s.router.HandleFunc("/track/{route}", s.trackHandler).Methods("GET")
 
 	// Endpoint to shuffle playlist manually.
 	s.router.HandleFunc("/shuffle-playlist/{route}", s.handleShufflePlaylist).Methods("POST")
@@ -496,6 +498,16 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
+	// Проверка на пустой маршрут.
+	if route == "" {
+		errorMsg := "Route parameter is required"
+		s.logger.Error("ERROR: Empty route parameter")
+		// Обработка ошибки используя логирование при отсутствии маршрута
+		s.logNormalizationError(errors.New("empty route parameter"), "nowPlayingHandler")
+		http.Error(w, errorMsg, http.StatusBadRequest)
+		return
+	}
+
 	track, exists := s.currentTracks[route]
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
@@ -504,6 +516,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return
 	}
+
 	s.logger.Info("Track information request", slog.String("route", route), slog.String("track", track))
 	s.mutex.RLock()
 	playlist, playlistExists := s.playlists[route]
@@ -525,6 +538,8 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if encodeErr := json.NewEncoder(w).Encode(currentTrackInfo); encodeErr != nil {
 		s.logger.Error("Failed to encode track info", slog.String("error", encodeErr.Error()))
+		// Обработка ошибки JSON используя логирование
+		s.logNormalizationError(encodeErr, fmt.Sprintf("json encode for route %s", route))
 	}
 }
 
@@ -993,7 +1008,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		return streams[i].Route < streams[j].Route
 	})
 
-	// Загружаем шаблон с правильными путями
+	// Загружаем шаблон с правильными путями.
 	tmpl, tmplErr := template.ParseFiles(
 		"templates/status.html",
 		"templates/partials/head.html",
@@ -1004,10 +1019,10 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Устанавливаем тип контента перед выполнением шаблона
+	// Устанавливаем тип контента перед выполнением шаблона.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	// Передаем данные в шаблон и обрабатываем ошибки
+	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
 		"Streams":      streams,
 		"Title":        "Audio Streams Status",
@@ -1254,7 +1269,7 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 		slog.String("cookie", fmt.Sprintf("%v", r.Cookies())),
 	)
 
-	// Проверим куки для диагностики
+	// Проверим куки для диагностики.
 	cookie, cookieErr := r.Cookie("status_auth")
 	if cookieErr != nil {
 		s.logger.Info("Auth cookie not found", slog.String("error", cookieErr.Error()))
@@ -1550,4 +1565,94 @@ func (s *Server) SwitchTrack(route string, direction string) error {
 	}
 
 	return nil
+}
+
+// ERROR during audio normalization error="error streaming to buffer: EOF".
+func (s *Server) logNormalizationError(err error, filePath string) {
+	// Обрабатываем только критические ошибки для Sentry.
+	if err != nil {
+		// Проверяем, содержит ли ошибка строку "EOF", которая обычно не является критической.
+		if strings.Contains(err.Error(), "EOF") {
+			// Для EOF-ошибок только логируем без отправки в Sentry.
+			s.logger.Info("DIAGNOSTICS: Non-critical normalization error",
+				slog.String("error", err.Error()),
+				slog.String("filePath", filePath))
+		} else {
+			// Для более серьезных ошибок и логируем, и отправляем в Sentry.
+			errMsg := fmt.Sprintf("ERROR during audio normalization error=%q", err.Error())
+			s.logger.Error(errMsg)
+			sentry.CaptureMessage(errMsg)
+		}
+	}
+}
+
+// trackHandler returns information about the current track for a specific route.
+func (s *Server) trackHandler(w http.ResponseWriter, r *http.Request) {
+	route, routeExists := mux.Vars(r)["route"]
+
+	// Проверка на пустой маршрут.
+	if !routeExists || route == "" {
+		errorMsg := "Route parameter is required"
+		s.logger.Error("ERROR: Empty route parameter in trackHandler")
+		http.Error(w, errorMsg, http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve current track from the playlist.
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+
+	if !exists {
+		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
+		http.Error(w, fmt.Sprintf("Stream %s not found", route), http.StatusNotFound)
+		return
+	}
+
+	// Try to get current track with retries.
+	const (
+		maxAttempts = 3
+		retryDelay  = 50 * time.Millisecond
+	)
+
+	var currentTrack interface{}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		currentTrack = playlist.GetCurrentTrack()
+		if currentTrack != nil {
+			break
+		}
+		s.logger.Warn("WARNING: GetCurrentTrack timed out",
+			slog.Int("attempt", attempt),
+			slog.Int("maxAttempts", maxAttempts))
+		time.Sleep(retryDelay)
+	}
+
+	if currentTrack == nil {
+		s.logger.Warn("WARNING: All GetCurrentTrack attempts timed out, returning nil")
+		http.Error(w, "Current track information not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Handle different types of tracks.
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	switch track := currentTrack.(type) {
+	case string:
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"track": track,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
+		}
+	case interface{ GetNormalizedPath() string }:
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"track": track.GetNormalizedPath(),
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
+		}
+	default:
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"track": fmt.Sprintf("%v", track),
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
+		}
+	}
 }
