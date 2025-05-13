@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,17 +11,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	sentry "github.com/getsentry/sentry-go"
-	"github.com/gorilla/mux"
 	"github.com/user/stream-audio-to-web/audio"
 	httpServer "github.com/user/stream-audio-to-web/http"
 	"github.com/user/stream-audio-to-web/playlist"
 	"github.com/user/stream-audio-to-web/radio"
 	"github.com/user/stream-audio-to-web/relay"
+
+	sentry "github.com/getsentry/sentry-go"
+	"github.com/gorilla/mux"
 )
 
 // Default configuration.
@@ -42,7 +43,9 @@ const (
 	idleTimeoutSec         = 60
 	shutdownTimeoutSec     = 10
 	defaultRoute           = "/humor"
-	maxSplitParts          = 2 // Maximum number of parts when splitting configuration strings
+	maxSplitParts          = 2      // Maximum number of parts when splitting configuration strings
+	strTrue                = "true" // Строковое значение "true" для проверки
+	partsCount             = 2      // Ожидаемое количество частей при разделении строки
 )
 
 // Config describes the application configuration parameters.
@@ -61,21 +64,22 @@ type Config struct {
 	NormalizeRuntime       string          // Runtime normalization mode: "auto", "on", "off"
 	NormalizeSampleWindows int             // Number of analysis windows for normalization
 	NormalizeSampleMs      int             // Duration of each analysis window in milliseconds
-	RelayEnabled           bool            // Enable relay functionality
+	EnableRelay            bool            // Enable relay functionality
 	RelayConfigFile        string          // Path to relay configuration file
+	SentryDSN              string          // DSN для Sentry
 }
 
 func main() {
-	// Load configuration first to get log level.
-	config := loadConfig()
+	// Настраиваем логгер перед началом работы
+	logger := setupLogger()
 
-	// Initialize logger with proper log level.
-	logger := setupLogger(config.LogLevel)
+	// Загружаем конфигурацию
+	config := loadConfig()
 
 	// Initialize Sentry.
 	initSentry(logger)
 
-	// Print configuration.
+	// Log application configuration.
 	logConfiguration(logger, config)
 
 	// Create and initialize components.
@@ -107,28 +111,37 @@ func main() {
 }
 
 // setupLogger creates and configures a logger with the specified log level.
-func setupLogger(logLevel string) *slog.Logger {
+func setupLogger() *slog.Logger {
 	var level slog.Level
-	switch strings.ToLower(logLevel) {
-	case "debug":
+
+	// Получаем уровень логирования из переменной окружения
+	logLevelEnv := strings.ToUpper(os.Getenv("LOG_LEVEL"))
+
+	switch logLevelEnv {
+	case "DEBUG":
 		level = slog.LevelDebug
-	case "info":
+	case "INFO":
 		level = slog.LevelInfo
-	case "warn", "warning":
+	case "WARN", "WARNING":
 		level = slog.LevelWarn
-	case "error":
+	case "ERROR":
 		level = slog.LevelError
 	default:
-		level = slog.LevelInfo
+		// По умолчанию используем WARNING для предотвращения излишнего спама в логах
+		level = slog.LevelWarn
 	}
 
-	// Create handler with the specified level.
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	// Создаем JSON handler с указанным уровнем логирования
+	opts := &slog.HandlerOptions{
 		Level: level,
-	})
+	}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
 
-	// Create and return the logger.
-	return slog.New(handler)
+	// Создаем и устанавливаем логгер
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
+	return logger
 }
 
 // initSentry initializes Sentry for error tracking.
@@ -200,7 +213,7 @@ func logConfiguration(logger *slog.Logger, config *Config) {
 	logger.Info("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
 	logger.Info("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
 	logger.Info("Normalization sample duration", slog.String("value", fmt.Sprintf("%d ms", config.NormalizeSampleMs)))
-	logger.Info("Relay functionality enabled", slog.Bool("value", config.RelayEnabled))
+	logger.Info("Relay functionality enabled", slog.Bool("value", config.EnableRelay))
 	logger.Info("Relay configuration file", slog.String("value", config.RelayConfigFile))
 
 	// Log per-stream shuffle settings.
@@ -211,8 +224,8 @@ func logConfiguration(logger *slog.Logger, config *Config) {
 
 	// Log additional directory routes.
 	logger.Info("Additional directory routes:")
-	for route, dir := range config.DirectoryRoutes {
-		logger.Info("Additional route", slog.String("route", route), slog.String("directory", dir))
+	for path, route := range config.DirectoryRoutes {
+		logger.Info("Additional route", slog.String("path", path), slog.String("route", route))
 	}
 
 	logger.Info("=============================================")
@@ -237,7 +250,7 @@ func initializeComponents(
 
 	// Create relay manager if needed.
 	var relayManager *relay.Manager
-	if config.RelayEnabled {
+	if config.EnableRelay {
 		relayManager = initializeRelayManager(logger, config, server)
 	} else {
 		logger.Info("Relay functionality is disabled")
@@ -620,6 +633,7 @@ func parseCommandLineFlags() *Config {
 	normalizeSampleMs := flag.Int("normalize-ms", 1000, "Duration of each analysis window in milliseconds")
 	relayEnabled := flag.Bool("relay", defaultRelayEnabled, "Enable relay functionality")
 	relayConfigFile := flag.String("relay-config", defaultRelayConfigFile, "Path to relay configuration file")
+	sentryDSN := flag.String("sentry-dsn", "", "DSN for Sentry error tracking")
 
 	flag.Parse()
 
@@ -639,73 +653,140 @@ func parseCommandLineFlags() *Config {
 		NormalizeRuntime:       *normalizeRuntime,
 		NormalizeSampleWindows: *normalizeSampleWindows,
 		NormalizeSampleMs:      *normalizeSampleMs,
-		RelayEnabled:           *relayEnabled,
+		EnableRelay:            *relayEnabled,
 		RelayConfigFile:        *relayConfigFile,
+		SentryDSN:              *sentryDSN,
 	}
 }
 
 // loadConfigFromEnv загружает конфигурацию из переменных окружения.
 func loadConfigFromEnv(config *Config) {
+	// Разделим функцию на более простые части
+	loadGenericConfig(config)
+	loadNormalizationConfig(config)
+	loadRelayConfig(config)
+	loadStreamConfig(config)
+
 	// Load directory routes from environment.
-	loadDirectoryRoutesFromEnv(config)
+	loadDirectoryRoutesFromEnv(config, slog.Default())
 
 	// Load per-stream shuffle settings from environment.
 	loadShuffleSettingsFromEnv(config)
 }
 
+// loadGenericConfig загружает общие параметры конфигурации из переменных окружения.
+func loadGenericConfig(config *Config) {
+	// Override config with environment variables if provided
+	if portStr := os.Getenv("PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			config.Port = port
+		}
+	}
+
+	if bufferSizeStr := os.Getenv("BUFFER_SIZE"); bufferSizeStr != "" {
+		if bufferSize, err := strconv.Atoi(bufferSizeStr); err == nil {
+			config.BufferSize = bufferSize
+		}
+	}
+
+	if shuffleStr := os.Getenv("SHUFFLE"); shuffleStr != "" {
+		config.Shuffle = strings.ToLower(shuffleStr) == strTrue
+	}
+
+	if sentryDSN := os.Getenv("SENTRY_DSN"); sentryDSN != "" {
+		config.SentryDSN = sentryDSN
+	}
+}
+
+// loadNormalizationConfig загружает параметры нормализации из переменных окружения.
+func loadNormalizationConfig(config *Config) {
+	if normalizeVolumeStr := os.Getenv("NORMALIZE_VOLUME"); normalizeVolumeStr != "" {
+		config.NormalizeVolume = strings.ToLower(normalizeVolumeStr) == strTrue
+	}
+
+	if normalizeRuntime := os.Getenv("NORMALIZE_RUNTIME"); normalizeRuntime != "" {
+		config.NormalizeRuntime = normalizeRuntime
+	}
+
+	if normalizeSampleWindowsStr := os.Getenv("NORMALIZE_SAMPLE_WINDOWS"); normalizeSampleWindowsStr != "" {
+		if normalizeSampleWindows, err := strconv.Atoi(normalizeSampleWindowsStr); err == nil {
+			config.NormalizeSampleWindows = normalizeSampleWindows
+		}
+	}
+
+	if normalizeSampleMsStr := os.Getenv("NORMALIZE_SAMPLE_MS"); normalizeSampleMsStr != "" {
+		if normalizeSampleMs, err := strconv.Atoi(normalizeSampleMsStr); err == nil {
+			config.NormalizeSampleMs = normalizeSampleMs
+		}
+	}
+}
+
+// loadRelayConfig загружает параметры реле из переменных окружения.
+func loadRelayConfig(config *Config) {
+	if relayEnabledStr := os.Getenv("RELAY"); relayEnabledStr != "" {
+		config.EnableRelay = strings.ToLower(relayEnabledStr) == strTrue
+	}
+
+	if relayConfigFile := os.Getenv("RELAY_CONFIG_FILE"); relayConfigFile != "" {
+		config.RelayConfigFile = relayConfigFile
+	}
+}
+
+// loadStreamConfig загружает параметры потока из переменных окружения.
+func loadStreamConfig(config *Config) {
+	if format := os.Getenv("STREAM_FORMAT"); format != "" {
+		config.StreamFormat = format
+	}
+
+	if bitrateStr := os.Getenv("BITRATE"); bitrateStr != "" {
+		if bitrate, err := strconv.Atoi(bitrateStr); err == nil {
+			config.Bitrate = bitrate
+		}
+	}
+
+	if maxClientsStr := os.Getenv("MAX_CLIENTS"); maxClientsStr != "" {
+		if maxClients, err := strconv.Atoi(maxClientsStr); err == nil {
+			config.MaxClients = maxClients
+		}
+	}
+}
+
 // loadDirectoryRoutesFromEnv загружает маршруты директорий из переменных окружения.
-func loadDirectoryRoutesFromEnv(config *Config) {
-	logger := setupLogger(config.LogLevel)
+func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 	dirRoutes := getEnvOrDefault("DIRECTORY_ROUTES", "")
 	if dirRoutes == "" {
+		// No directory routes specified.
 		return
 	}
 
-	// Try to parse as JSON first.
-	var directoryRoutes map[string]string
-	err := json.Unmarshal([]byte(dirRoutes), &directoryRoutes)
-	if err == nil {
-		// JSON parsing succeeded.
-		logger.Debug("Successfully parsed DIRECTORY_ROUTES as JSON", "directoryRoutes", directoryRoutes)
-		addRoutesToConfig(config, directoryRoutes)
-		return
-	}
-
-	// Log the error for debugging.
-	logger.Debug("Error parsing DIRECTORY_ROUTES as JSON", "error", err, "fallback", "Using comma-separated format")
-
-	// Fallback to old comma-separated format.
-	parseCommaSeparatedRoutes(config, dirRoutes)
-}
-
-// addRoutesToConfig добавляет маршруты в конфигурацию, обеспечивая правильный формат.
-func addRoutesToConfig(config *Config, routes map[string]string) {
-	for route, dir := range routes {
-		// Ensure route starts with slash.
-		if len(route) > 0 && route[0] != '/' {
-			route = "/" + route
-		}
-		config.DirectoryRoutes[route] = dir
-	}
-}
-
-// parseCommaSeparatedRoutes парсит маршруты в формате через запятую.
-func parseCommaSeparatedRoutes(config *Config, dirRoutes string) {
-	routes := strings.Split(dirRoutes, ",")
+	// Process each directory route.
+	routes := strings.Split(dirRoutes, ";")
 	for _, route := range routes {
-		parts := strings.SplitN(route, ":", maxSplitParts)
-		if len(parts) == maxSplitParts {
-			routePath := strings.TrimSpace(parts[0])
-			dirPath := strings.TrimSpace(parts[1])
-
-			// Ensure route starts with slash.
-			if routePath[0] != '/' {
-				routePath = "/" + routePath
-			}
-
-			config.DirectoryRoutes[routePath] = dirPath
+		parts := strings.Split(route, ":")
+		if len(parts) != partsCount {
+			logger.Warn("Invalid directory route format", slog.String("route", route))
+			continue
 		}
+
+		path := parts[0]
+		url := parts[1]
+		if !strings.HasPrefix(url, "/") {
+			url = "/" + url
+		}
+
+		// Check if directory exists.
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", url))
+			continue
+		}
+
+		// Add to configuration.
+		config.DirectoryRoutes[path] = url
+
+		logger.Info("Added directory route", slog.String("path", path), slog.String("url", url))
 	}
+
+	logger.Debug("Directory routes configured", slog.Int("count", len(config.DirectoryRoutes)))
 }
 
 // loadShuffleSettingsFromEnv загружает настройки перемешивания из переменных окружения.
@@ -730,7 +811,7 @@ func parseShuffleSettings(config *Config, shuffleSettings string) {
 			}
 			// Parse shuffle value.
 			switch shuffleValue {
-			case "true":
+			case strTrue:
 				config.PerStreamShuffle[routePath] = true
 			case "false":
 				config.PerStreamShuffle[routePath] = false

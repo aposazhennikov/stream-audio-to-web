@@ -1567,16 +1567,17 @@ func (s *Server) SwitchTrack(route string, direction string) error {
 	return nil
 }
 
-// ERROR during audio normalization error="error streaming to buffer: EOF".
+// logNormalizationError обрабатывает ошибки нормализации звука.
+// Использует DEBUG для обычных EOF ошибок, которые возникают при нормальной работе.
 func (s *Server) logNormalizationError(err error, filePath string) {
 	// Обрабатываем только критические ошибки для Sentry.
 	if err != nil {
 		// Проверяем, содержит ли ошибка строку "EOF", которая обычно не является критической.
 		if strings.Contains(err.Error(), "EOF") {
-			// Для EOF-ошибок только логируем без отправки в Sentry.
-			s.logger.Info("DIAGNOSTICS: Non-critical normalization error",
+			// Для EOF-ошибок используем уровень DEBUG, чтобы не спамить логи
+			s.logger.Debug("Non-critical normalization error",
 				slog.String("error", err.Error()),
-				slog.String("filePath", filePath))
+				slog.String("route", filepath.Base(filepath.Dir(filePath))))
 		} else {
 			// Для более серьезных ошибок и логируем, и отправляем в Sentry.
 			errMsg := fmt.Sprintf("ERROR during audio normalization error=%q", err.Error())
