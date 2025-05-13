@@ -95,6 +95,14 @@ const (
 	uint16Mask = uint32(0xFFFF)
 )
 
+// defaultNormalizerConfigInstance хранит единственный экземпляр конфигурации нормализатора.
+//
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна
+var defaultNormalizerConfigInstance *NormalizerConfig
+
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна с потокобезопасной инициализацией
+var normalizerConfigOnce sync.Once
+
 // getDefaultNormalizerConfig возвращает конфигурацию нормализатора по умолчанию.
 func getDefaultNormalizerConfig() *NormalizerConfig {
 	return DefaultNormalizerConfig()
@@ -108,7 +116,7 @@ type NormalizerConfig struct {
 	AnalysisWindows int
 	// Volume cache stores gain factors for already processed audio files.
 	Cache *VolumeCache
-	// Logger for normalizer operations
+	// Logger for normalizer operations.
 	logger *slog.Logger
 	// Metrics for monitoring normalization.
 	Metrics struct {
@@ -121,44 +129,46 @@ type NormalizerConfig struct {
 
 // DefaultNormalizerConfig creates a default configuration for the normalizer.
 func DefaultNormalizerConfig() *NormalizerConfig {
-	config := &NormalizerConfig{
-		AnalysisDurationMs: defaultAnalysisDurationMs,
-		AnalysisWindows:    defaultAnalysisWindows,
-		Cache:              NewVolumeCache(),
-		logger:             slog.Default(),
-	}
+	normalizerConfigOnce.Do(func() {
+		defaultNormalizerConfigInstance = &NormalizerConfig{
+			AnalysisDurationMs: defaultAnalysisDurationMs,
+			AnalysisWindows:    defaultAnalysisWindows,
+			Cache:              NewVolumeCache(),
+			logger:             slog.Default(),
+		}
 
-	// Initialize metrics.
-	config.Metrics.NormalizeGainMetric = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "normalize_gain",
-			Help: "Gain factor applied to audio files.",
-		},
-		[]string{"route", "file"},
-	)
+		// Initialize metrics.
+		defaultNormalizerConfigInstance.Metrics.NormalizeGainMetric = promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "normalize_gain",
+				Help: "Gain factor applied to audio files.",
+			},
+			[]string{"route", "file"},
+		)
 
-	config.Metrics.NormalizeSlowTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "normalize_slow_total",
-			Help: "Total count of slow normalization operations.",
-		},
-	)
+		defaultNormalizerConfigInstance.Metrics.NormalizeSlowTotal = promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "normalize_slow_total",
+				Help: "Total count of slow normalization operations.",
+			},
+		)
 
-	config.Metrics.NormalizeDisabledTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Name: "normalize_disabled_total",
-			Help: "Total count of disabled normalizations due to errors.",
-		},
-	)
+		defaultNormalizerConfigInstance.Metrics.NormalizeDisabledTotal = promauto.NewCounter(
+			prometheus.CounterOpts{
+				Name: "normalize_disabled_total",
+				Help: "Total count of disabled normalizations due to errors.",
+			},
+		)
 
-	config.Metrics.NormalizeWindowsUsed = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "normalize_windows_used",
-			Help: "Number of analysis windows used in the last normalization operation.",
-		},
-	)
+		defaultNormalizerConfigInstance.Metrics.NormalizeWindowsUsed = promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "normalize_windows_used",
+				Help: "Number of analysis windows used in the last normalization operation.",
+			},
+		)
+	})
 
-	return config
+	return defaultNormalizerConfigInstance
 }
 
 // SetNormalizeConfig sets the configuration parameters for normalization.
@@ -708,18 +718,30 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 
 		// Write data to output writer.
 		_, writeErr := writer.Write(buffer[:n])
-		if errors.Is(writeErr, io.ErrClosedPipe) ||
-			strings.Contains(writeErr.Error(), "closed pipe") ||
-			strings.Contains(writeErr.Error(), "broken pipe") {
-			// The pipe was closed, which can happen when switching tracks.
-			config.logger.Info(
-				"DIAGNOSTICS: Pipe closed during raw streaming of",
-				"filePath", filePath,
-				"stopping", writeErr,
-			)
-			return nil
-		}
 		if writeErr != nil {
+			// Проверяем на io.ErrClosedPipe.
+			if errors.Is(writeErr, io.ErrClosedPipe) {
+				config.logger.Info(
+					"DIAGNOSTICS: Pipe closed during raw streaming of",
+					"filePath", filePath,
+					"stopping", "closed pipe",
+				)
+				return nil
+			}
+
+			// Проверяем на наличие "closed pipe" или "broken pipe" в сообщении об ошибке.
+			// только если writeErr не nil и у него есть метод Error().
+			errStr := writeErr.Error()
+			if strings.Contains(errStr, "closed pipe") || strings.Contains(errStr, "broken pipe") {
+				config.logger.Info(
+					"DIAGNOSTICS: Pipe closed during raw streaming of",
+					"filePath", filePath,
+					"stopping", errStr,
+				)
+				return nil
+			}
+
+			// Другие ошибки записи.
 			return fmt.Errorf("error writing raw data: %w", writeErr)
 		}
 	}

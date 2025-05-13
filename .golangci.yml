@@ -10,7 +10,7 @@
 
 # Based on https://gist.github.com/maratori/47a4d00457a92aa426dbd48a18776322
 
-version: "2"
+version: 2
 
 issues:
   # Maximum count of issues with the same text.

@@ -3,11 +3,28 @@ package unit_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	httpServer "github.com/user/stream-audio-to-web/http"
 )
+
+// Синглтон для тестового HTTP сервера.
+//
+//nolint:gochecknoglobals // Необходим для реализации Singleton-паттерна
+var (
+	serverInstance *httpServer.Server
+	serverOnce     sync.Once
+)
+
+// getTestServer возвращает единственный экземпляр HTTP сервера для тестов.
+func getTestServer() *httpServer.Server {
+	serverOnce.Do(func() {
+		serverInstance = httpServer.NewServer("mp3", 10)
+	})
+	return serverInstance
+}
 
 // Mock implementation for StreamHandler.
 type mockStreamHandler struct {
@@ -76,7 +93,7 @@ func (m *mockPlaylistManager) Shuffle() {
 
 func TestHealthzEndpoint(t *testing.T) {
 	// Create HTTP server.
-	server := httpServer.NewServer("mp3", 10)
+	server := getTestServer()
 
 	// Create test HTTP request.
 	req, err := http.NewRequest(http.MethodGet, "/healthz", nil)
@@ -106,7 +123,7 @@ func TestHealthzEndpoint(t *testing.T) {
 
 func TestReadyzEndpoint(t *testing.T) {
 	// Create HTTP server.
-	server := httpServer.NewServer("mp3", 10)
+	server := getTestServer()
 
 	// Create test HTTP request.
 	req, err := http.NewRequest(http.MethodGet, "/readyz", nil)
@@ -129,7 +146,7 @@ func TestReadyzEndpoint(t *testing.T) {
 
 func TestStreamRegistration(t *testing.T) {
 	// Create HTTP server.
-	server := httpServer.NewServer("mp3", 10)
+	server := getTestServer()
 
 	// Create mocks for stream and playlist.
 	mockStream := &mockStreamHandler{
@@ -152,14 +169,14 @@ func TestStreamRegistration(t *testing.T) {
 	}
 }
 
-// AddTestSetShuffleMode tests the SetShuffleMode handler.
+// TestSetShuffleMode tests the SetShuffleMode handler.
 func TestSetShuffleMode(t *testing.T) {
 	// Create HTTP server.
-	server := httpServer.NewServer("mp3", 10)
+	server := getTestServer()
 
-	// We cannot directly call SetStatusPassword,.
+	// We cannot directly call SetStatusPassword,
 	// so we will rely on the default password ("1234554321").
-	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword").
+	// server.(*httpServer.TestableServer).SetStatusPassword("testpassword")
 
 	// Create mocks for stream and playlist.
 	mockStream := &mockStreamHandler{

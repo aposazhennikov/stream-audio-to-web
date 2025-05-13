@@ -7,10 +7,19 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+// getEnvOrDefault returns the value of environment variable or the default value.
+func getEnvOrDefault(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
 
 func TestNowPlayingEndpoint(t *testing.T) {
 	// Get base URL from environment variable or use default value.
