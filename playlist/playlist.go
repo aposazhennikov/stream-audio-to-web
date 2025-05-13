@@ -5,7 +5,6 @@ package playlist
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -131,17 +130,25 @@ func (p *Playlist) Reload() error {
 		return err
 	}
 
-	// Обрабатываем случай с пустой директорией.
+	// Обрабатываем случай с пустой директорией, но продолжаем работу с пустым плейлистом
 	if len(files) == 0 {
-		return p.handleEmptyDirectory()
+		// Вызываем обработчик пустой директории без проверки ошибки,
+		// так как функция теперь не возвращает ошибку
+		p.handleEmptyDirectory()
+		// Не возвращаем ошибку, продолжаем работу с пустым плейлистом
+		return nil
 	}
 
 	// Создаем и обрабатываем новые треки.
 	tracks := p.createTracksFromFiles(files)
 
-	// Обрабатываем случай с отсутствием треков.
+	// Обрабатываем случай с отсутствием треков, но продолжаем работу с пустым плейлистом
 	if len(tracks) == 0 {
-		return p.handleNoTracks()
+		// Вызываем обработчик отсутствия треков без проверки ошибки,
+		// так как функция теперь не возвращает ошибку
+		p.handleNoTracks()
+		// Не возвращаем ошибку, продолжаем работу с пустым плейлистом
+		return nil
 	}
 
 	// Обновляем плейлист без использования GetCurrentTrack внутри блокировки
@@ -185,25 +192,35 @@ func (p *Playlist) loadDirectoryFiles() ([]os.FileInfo, error) {
 }
 
 // handleEmptyDirectory обрабатывает случай с пустой директорией.
-func (p *Playlist) handleEmptyDirectory() error {
-	p.logger.Error(
-		"ERROR: Directory is empty",
+func (p *Playlist) handleEmptyDirectory() {
+	// Изменяем уровень логирования на WARN вместо ERROR
+	p.logger.Warn(
+		"WARNING: Directory is empty",
 		slog.String("directory", p.directory),
 	)
 	p.tracks = make([]Track, 0)
 	p.current = 0
-	return errors.New("directory is empty")
+
+	// Отправляем в Sentry как сообщение, а не ошибку
+	sentry.CaptureMessage(
+		fmt.Sprintf("Directory is empty: %s, but playlist will be configured anyway", p.directory),
+	)
 }
 
 // handleNoTracks обрабатывает случай с отсутствием треков.
-func (p *Playlist) handleNoTracks() error {
-	p.logger.Error(
-		"ERROR: No audio files in directory",
+func (p *Playlist) handleNoTracks() {
+	// Изменяем уровень логирования на WARN вместо ERROR
+	p.logger.Warn(
+		"WARNING: No audio files in directory",
 		slog.String("directory", p.directory),
 	)
 	p.tracks = make([]Track, 0)
 	p.current = 0
-	return errors.New("no audio files in directory")
+
+	// Отправляем в Sentry как сообщение, а не ошибку
+	sentry.CaptureMessage(
+		fmt.Sprintf("No audio files in directory: %s, but playlist will be configured anyway", p.directory),
+	)
 }
 
 // createTracksFromFiles создает треки из файлов.

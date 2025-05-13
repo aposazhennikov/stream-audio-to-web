@@ -785,7 +785,13 @@ func loadNormalizationConfig(config *Config) {
 
 // loadRelayConfig загружает параметры реле из переменных окружения.
 func loadRelayConfig(config *Config) {
+	// Проверяем переменную RELAY для включения/выключения relay функциональности
 	if relayEnabledStr := os.Getenv("RELAY"); relayEnabledStr != "" {
+		config.EnableRelay = strings.ToLower(relayEnabledStr) == strTrue
+	}
+
+	// Для обратной совместимости также проверяем старое имя переменной RELAY_ENABLED
+	if relayEnabledStr := os.Getenv("RELAY_ENABLED"); relayEnabledStr != "" && os.Getenv("RELAY") == "" {
 		config.EnableRelay = strings.ToLower(relayEnabledStr) == strTrue
 	}
 

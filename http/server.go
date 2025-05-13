@@ -276,6 +276,9 @@ func (s *Server) setupRoutes() {
 	// Endpoint to set shuffle mode for specific stream.
 	s.router.HandleFunc("/set-shuffle/{route}/{mode}", s.handleSetShuffleMode).Methods("POST")
 
+	// Add relay routes if relay manager is available
+	s.setupRelayRoutes()
+
 	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
 

@@ -2,6 +2,7 @@
 <html lang="en">
 {{template "head" .}}
 <body>
+    {{define "content"}}
     <header class="header">
         <div class="theme-toggle-wrapper">
             <div class="theme-toggle" id="theme-toggle">
@@ -12,6 +13,9 @@
             </div>
         </div>
         <h1>Relay Stream Management</h1>
+        <div class="back-link">
+            <a href="/status-page" class="back-button">← Back to Status</a>
+        </div>
     </header>
     <div class="container">
         <div class="relay-status-container">
@@ -94,6 +98,7 @@
             </div>
         </div>
     </div>
+    {{end}}
 
     {{block "additional_styles" .}}
     <style>
@@ -103,6 +108,7 @@
             background-color: var(--color-surface);
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
             margin-bottom: 2rem;
+            position: relative;
         }
 
         h1 {
@@ -110,7 +116,7 @@
             font-size: 2.2rem;
             font-weight: 700;
             text-align: center;
-            margin: 0 0 2rem;
+            margin: 0 0 1rem;
             position: relative;
             padding-bottom: 1rem;
             display: inline-block;
@@ -126,6 +132,30 @@
             height: 4px;
             background: var(--color-primary);
             border-radius: 2px;
+        }
+
+        .back-link {
+            margin-top: 0.5rem;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .back-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background-color: var(--color-primary);
+            color: white;
         }
 
         h2 {
