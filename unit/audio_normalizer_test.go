@@ -391,7 +391,7 @@ func createTestMP3(t *testing.T, filePath string, rms float64) {
 	const numSamples = 8000               // 44100 samples/sec * 200ms for analysis
 	pcmData := make([]byte, numSamples*4) // 4 bytes per sample (2 channels * 2 bytes/channel)
 
-	for i := range numSamples {
+	for i := range make([]struct{}, numSamples) {
 		// Generate sine wave at 440 Hz.
 		phase := float64(i) * 2 * math.Pi * 440 / 44100
 		value := amplitude * math.Sin(phase)
@@ -588,7 +588,7 @@ func createSyntheticOutput(targetRMS float64, numSamples int) []byte {
 	// For a sine wave, amplitude = rms * sqrt(2).
 	amplitude := targetRMS * math.Sqrt(2)
 
-	for i := 0; i < numSamples; i++ {
+	for i := range make([]struct{}, numSamples) {
 		// Generate sine wave.
 		phase := float64(i) * 2 * math.Pi * 440 / 44100
 		value := amplitude * math.Sin(phase)
