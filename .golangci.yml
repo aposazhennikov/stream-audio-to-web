@@ -14,8 +14,7 @@ run:
   # default: 1m
   timeout: 5m
 
-# golangci-lint требует формат версии "v2", а не 2 или "2"
-version: 2
+version: "2"
 
 issues:
   # Maximum count of issues with the same text.
