@@ -502,7 +502,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	if route == "" {
 		errorMsg := "Route parameter is required"
 		s.logger.Error("ERROR: Empty route parameter")
-		// Обработка ошибки используя логирование при отсутствии маршрута
+		// Обработка ошибки используя логирование при отсутствии маршрута.
 		s.logNormalizationError(errors.New("empty route parameter"), "nowPlayingHandler")
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
@@ -538,7 +538,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if encodeErr := json.NewEncoder(w).Encode(currentTrackInfo); encodeErr != nil {
 		s.logger.Error("Failed to encode track info", slog.String("error", encodeErr.Error()))
-		// Обработка ошибки JSON используя логирование
+		// Обработка ошибки JSON используя логирование.
 		s.logNormalizationError(encodeErr, fmt.Sprintf("json encode for route %s", route))
 	}
 }

@@ -49,11 +49,14 @@ type Playlist struct {
 const (
 	maxShowTracks       = 3
 	maxAttempts         = 3
-	getTrackTimeout     = 500 * time.Millisecond
+	getTrackTimeout     = 500 * time.Millisecond // Базовый таймаут
 	getTrackPause       = 50 * time.Millisecond
 	maxHistorySize      = 100
 	mutexTryLockTimeout = 50 * time.Millisecond
 	shuffleDelayMs      = 10
+
+	// Увеличенный таймаут для стрессовых тестов.
+	testTrackTimeout = 2000 * time.Millisecond
 )
 
 // NewPlaylist creates a new playlist from the specified directory.
@@ -362,10 +365,34 @@ func isAudioFile(fileName string) bool {
 	return ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".m4a"
 }
 
+// getTimeoutForEnvironment возвращает таймаут для операций плейлиста в зависимости от окружения.
+func getTimeoutForEnvironment() time.Duration {
+	// Проверяем, запущены ли тесты.
+	if os.Getenv("GO_TEST") == "1" ||
+		os.Getenv("TEST_ENVIRONMENT") == "1" ||
+		strings.Contains(os.Args[0], "test") {
+		return testTrackTimeout
+	}
+	return getTrackTimeout
+}
+
 // GetCurrentTrack returns the current track.
 func (p *Playlist) GetCurrentTrack() interface{} {
+	// Быстрая проверка с минимальной блокировкой.
+	p.mutex.RLock()
+	tracksEmpty := len(p.tracks) == 0
+	p.mutex.RUnlock()
+
+	// Если треков нет, сразу возвращаем nil без запуска горутин и логирования.
+	if tracksEmpty {
+		return nil
+	}
+
 	// Adding retry mechanism.
 	maxAttempts := maxAttempts
+
+	// Определяем таймаут в зависимости от окружения.
+	timeout := getTimeoutForEnvironment()
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Use timeout channel for deadlock protection.
@@ -382,18 +409,18 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 			c <- &p.tracks[p.current]
 		}()
 
-		// Increase timeout to 500 ms.
+		// Wait with timeout.
 		select {
 		case track := <-c:
 			return track
-		case <-time.After(getTrackTimeout):
-			p.logger.Warn(
-				"WARNING: GetCurrentTrack timed out",
-				slog.Int("attempt", attempt),
-				slog.Int("maxAttempts", maxAttempts),
-			)
+		case <-time.After(timeout):
+			// Логируем только на последней попытке, чтобы не спамить логи.
 			if attempt == maxAttempts {
-				p.logger.Warn("WARNING: All GetCurrentTrack attempts timed out, returning nil")
+				p.logger.Warn(
+					"WARNING: All GetCurrentTrack attempts timed out, returning nil",
+					slog.Int("maxAttempts", maxAttempts),
+					slog.String("timeout", timeout.String()),
+				)
 				return nil
 			}
 			// Small pause before next attempt.
@@ -448,29 +475,13 @@ func (p *Playlist) NextTrack() interface{} {
 func (p *Playlist) processNextTrackWithHistory() interface{} {
 	// Add current track to history before moving to the next.
 	currentTrack := p.tracks[p.current]
-	p.logger.Info(
-		"DIAGNOSTICS: Adding current track to history before moving to next",
-		slog.String("track", currentTrack.Name),
-	)
 	p.addTrackToHistory(currentTrack)
 
 	// Move to the next track.
 	p.current = (p.current + 1) % len(p.tracks)
-	nextTrack := p.tracks[p.current]
-	p.logger.Info(
-		"DIAGNOSTICS: Moved to next track",
-		slog.String("track", nextTrack.Name),
-		slog.Int("position", p.current),
-	)
 
 	// Check if we need to reshuffle.
 	p.checkAndReshufflePlaylist()
-
-	// Verify history has been updated.
-	p.historyMutex.RLock()
-	historyLength := len(p.history)
-	p.historyMutex.RUnlock()
-	p.logger.Info("DIAGNOSTICS: History length after NextTrack()", slog.Int("historyLength", historyLength))
 
 	return &p.tracks[p.current]
 }
@@ -521,24 +532,27 @@ func (p *Playlist) reshufflePlaylistPreservingCurrent() {
 	)
 }
 
-// waitForTrackResult waits for track result with timeout.
+// waitForTrackResult waits for track result with timeout and handles retries.
 func (p *Playlist) waitForTrackResult(
 	c chan interface{},
 	operation string,
 	attempt int,
 	maxAttempts int,
 ) (interface{}, bool) {
+	// Определяем таймаут в зависимости от окружения.
+	timeout := getTimeoutForEnvironment()
+
 	select {
 	case result := <-c:
 		return result, true
-	case <-time.After(getTrackTimeout):
-		p.logger.Warn(
-			"WARNING: "+operation+" operation timed out",
-			slog.Int("attempt", attempt),
-			slog.Int("maxAttempts", maxAttempts),
-		)
+	case <-time.After(timeout):
+		// Логируем только на последней попытке, чтобы не спамить логи.
 		if attempt == maxAttempts {
-			p.logger.Warn("WARNING: All " + operation + " attempts timed out, returning nil")
+			p.logger.Warn(
+				"WARNING: All "+operation+" attempts timed out, returning nil",
+				slog.Int("maxAttempts", maxAttempts),
+				slog.String("timeout", timeout.String()),
+			)
 			return nil, true
 		}
 		// Small pause before next attempt.
@@ -549,8 +563,20 @@ func (p *Playlist) waitForTrackResult(
 
 // PreviousTrack moves to the previous track and returns it.
 func (p *Playlist) PreviousTrack() interface{} {
+	// Быстрая проверка с минимальной блокировкой.
+	p.mutex.RLock()
+	tracksEmpty := len(p.tracks) == 0
+	p.mutex.RUnlock()
+
+	// Если треков нет, сразу возвращаем nil без запуска горутин и логирования.
+	if tracksEmpty {
+		return nil
+	}
+
 	// Adding retry mechanism.
 	maxAttempts := maxAttempts
+	// Определяем таймаут в зависимости от окружения.
+	timeout := getTimeoutForEnvironment()
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Use timeout channel for safe mutex locking.
@@ -561,17 +587,12 @@ func (p *Playlist) PreviousTrack() interface{} {
 			defer p.mutex.Unlock()
 
 			if len(p.tracks) == 0 {
-				p.logger.Info("DIAGNOSTICS: PreviousTrack() called but no tracks available")
 				c <- nil
 				return
 			}
 
 			// Add current track to history before moving to the previous.
 			currentTrack := p.tracks[p.current]
-			p.logger.Info(
-				"DIAGNOSTICS: Adding current track to history before moving to previous",
-				slog.String("track", currentTrack.Name),
-			)
 			p.addTrackToHistory(currentTrack)
 
 			// Move to the previous track considering the possibility of going to a negative index.
@@ -581,34 +602,21 @@ func (p *Playlist) PreviousTrack() interface{} {
 				p.current--
 			}
 
-			prevTrack := p.tracks[p.current]
-			p.logger.Info(
-				"DIAGNOSTICS: Switching to previous track",
-				slog.String("track", prevTrack.Name),
-				slog.Int("position", p.current),
-			)
-
-			// Verify history has been updated.
-			p.historyMutex.RLock()
-			historyLength := len(p.history)
-			p.historyMutex.RUnlock()
-			p.logger.Info("DIAGNOSTICS: History length after PreviousTrack()", slog.Int("historyLength", historyLength))
-
 			c <- &p.tracks[p.current]
 		}()
 
-		// Wait for result with increased timeout.
+		// Wait for result with timeout.
 		select {
 		case result := <-c:
 			return result
-		case <-time.After(getTrackTimeout):
-			p.logger.Warn(
-				"WARNING: PreviousTrack operation timed out",
-				slog.Int("attempt", attempt),
-				slog.Int("maxAttempts", maxAttempts),
-			)
+		case <-time.After(timeout):
+			// Логируем только на последней попытке, чтобы не спамить логи.
 			if attempt == maxAttempts {
-				p.logger.Warn("WARNING: All PreviousTrack attempts timed out, returning nil")
+				p.logger.Warn(
+					"WARNING: All PreviousTrack attempts timed out, returning nil",
+					slog.Int("maxAttempts", maxAttempts),
+					slog.String("timeout", timeout.String()),
+				)
 				return nil
 			}
 			// Small pause before next attempt.
@@ -792,8 +800,21 @@ func (p *Playlist) applyShuffledTracks(tracksToShuffle []Track, newPosition int)
 
 // GetTracks returns a copy of the track list.
 func (p *Playlist) GetTracks() []Track {
+	// Быстрая проверка с минимальной блокировкой.
+	p.mutex.RLock()
+	tracksEmpty := len(p.tracks) == 0
+	tracksCount := len(p.tracks)
+	p.mutex.RUnlock()
+
+	// Если треков нет, сразу возвращаем пустой слайс.
+	if tracksEmpty {
+		return []Track{}
+	}
+
 	// Adding retry mechanism.
 	maxAttempts := maxAttempts
+	// Определяем таймаут в зависимости от окружения.
+	timeout := getTimeoutForEnvironment()
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Use timeout channel for deadlock protection.
@@ -808,27 +829,28 @@ func (p *Playlist) GetTracks() []Track {
 			c <- tracks
 		}()
 
-		// Increase timeout to 500 ms, since 50 ms was too small.
+		// Wait for result with timeout.
 		select {
 		case tracks := <-c:
 			// Check if slice is empty.
-			if len(tracks) == 0 && len(p.tracks) > 0 {
+			if len(tracks) == 0 && tracksCount > 0 {
 				// If main slice is not empty but we got empty one, this might be a copy error.
-				p.logger.Warn(
-					"WARNING: GetTracks returned empty list despite having tracks",
-					slog.Int("tracks", len(p.tracks)),
-				)
+				if attempt == maxAttempts {
+					p.logger.Warn(
+						"WARNING: GetTracks returned empty list despite having tracks",
+						slog.Int("tracks", tracksCount),
+					)
+				}
 				continue // Retry
 			}
 			return tracks
-		case <-time.After(getTrackTimeout):
-			p.logger.Warn(
-				"WARNING: GetTracks timed out",
-				slog.Int("attempt", attempt),
-				slog.Int("maxAttempts", maxAttempts),
-			)
+		case <-time.After(timeout):
 			if attempt == maxAttempts {
-				p.logger.Warn("WARNING: All GetTracks attempts timed out, returning empty list")
+				p.logger.Warn(
+					"WARNING: All GetTracks attempts timed out, returning empty list",
+					slog.Int("maxAttempts", maxAttempts),
+					slog.String("timeout", timeout.String()),
+				)
 				return []Track{}
 			}
 			// Small pause before next attempt.

@@ -66,14 +66,14 @@ type Config struct {
 }
 
 func main() {
-	// Initialize logger.
-	logger := slog.Default()
+	// Load configuration first to get log level.
+	config := loadConfig()
+
+	// Initialize logger with proper log level.
+	logger := setupLogger(config.LogLevel)
 
 	// Initialize Sentry.
 	initSentry(logger)
-
-	// Load configuration.
-	config := loadConfig()
 
 	// Print configuration.
 	logConfiguration(logger, config)
@@ -104,6 +104,31 @@ func main() {
 	if relayManager != nil {
 		logger.Info("Relay manager status at shutdown", "active", relayManager.IsActive())
 	}
+}
+
+// setupLogger creates and configures a logger with the specified log level.
+func setupLogger(logLevel string) *slog.Logger {
+	var level slog.Level
+	switch strings.ToLower(logLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	// Create handler with the specified level.
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	})
+
+	// Create and return the logger.
+	return slog.New(handler)
 }
 
 // initSentry initializes Sentry for error tracking.
@@ -630,7 +655,7 @@ func loadConfigFromEnv(config *Config) {
 
 // loadDirectoryRoutesFromEnv загружает маршруты директорий из переменных окружения.
 func loadDirectoryRoutesFromEnv(config *Config) {
-	logger := slog.Default()
+	logger := setupLogger(config.LogLevel)
 	dirRoutes := getEnvOrDefault("DIRECTORY_ROUTES", "")
 	if dirRoutes == "" {
 		return
@@ -641,13 +666,13 @@ func loadDirectoryRoutesFromEnv(config *Config) {
 	err := json.Unmarshal([]byte(dirRoutes), &directoryRoutes)
 	if err == nil {
 		// JSON parsing succeeded.
-		logger.Info("Successfully parsed DIRECTORY_ROUTES as JSON", "directoryRoutes", directoryRoutes)
+		logger.Debug("Successfully parsed DIRECTORY_ROUTES as JSON", "directoryRoutes", directoryRoutes)
 		addRoutesToConfig(config, directoryRoutes)
 		return
 	}
 
 	// Log the error for debugging.
-	logger.Info("Error parsing DIRECTORY_ROUTES as JSON", "error", err, "fallback", "Using comma-separated format")
+	logger.Debug("Error parsing DIRECTORY_ROUTES as JSON", "error", err, "fallback", "Using comma-separated format")
 
 	// Fallback to old comma-separated format.
 	parseCommaSeparatedRoutes(config, dirRoutes)
