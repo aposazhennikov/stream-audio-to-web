@@ -36,10 +36,14 @@ fi
 
 echo "Checking audio directories: $AUDIO_DIRS"
 
+# Выводим информацию о текущем пользователе
+echo "Current user: $(id -un) ($(id -u)), groups: $(id -gn) ($(id -g))"
+
 # Checking and fixing access permissions for directories and files
 for dir in $AUDIO_DIRS; do
     if [ -d "$dir" ]; then
         echo "Checking directory: $dir"
+        echo "Directory ownership and permissions: $(ls -ld "$dir")"
         
         # If the directory is not readable for the current user
         if [ ! -r "$dir" ]; then
@@ -53,6 +57,17 @@ for dir in $AUDIO_DIRS; do
                 echo "WARNING: Insufficient permissions to change access rights. Directory $dir may be unavailable."
             fi
         fi
+        
+        # Выводим список всех файлов в директории с правами доступа
+        echo "Files in $dir:"
+        ls -la "$dir"
+        
+        # Проверяем количество аудиофайлов по расширениям
+        echo "Audio files in $dir:"
+        MP3_COUNT=$(find "$dir" -type f -name "*.mp3" | wc -l)
+        OGG_COUNT=$(find "$dir" -type f -name "*.ogg" | wc -l)
+        AAC_COUNT=$(find "$dir" -type f -name "*.aac" | wc -l)
+        echo "MP3 files: $MP3_COUNT, OGG files: $OGG_COUNT, AAC files: $AAC_COUNT"
         
         # Checking read permissions for all files in the directory
         find "$dir" -type f -not -readable 2>/dev/null | while read -r file; do

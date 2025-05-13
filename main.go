@@ -565,7 +565,10 @@ func ensureDirectoryExists(logger *slog.Logger, dir, route string) bool {
 	return true
 }
 
-func checkAudioFiles(logger *slog.Logger, dir, _ string) bool {
+func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
+	logger.Info("DIAGNOSTICS: Checking audio files in directory",
+		slog.String("directory", dir), slog.String("route", route))
+
 	files, readErr := os.ReadDir(dir)
 	if readErr != nil {
 		logger.Error("ERROR: When reading directory",
@@ -575,19 +578,66 @@ func checkAudioFiles(logger *slog.Logger, dir, _ string) bool {
 		sentry.CaptureException(fmt.Errorf("error reading directory %s: %w", dir, readErr))
 		return false
 	}
+
+	// Выводим список всех файлов для диагностики
+	logger.Info("DIAGNOSTICS: List of files in directory", slog.String("directory", dir))
+	for i, file := range files {
+		logger.Info("DIAGNOSTICS: File found",
+			slog.Int("index", i),
+			slog.String("name", file.Name()),
+			slog.Bool("isDir", file.IsDir()),
+			slog.String("directory", dir))
+	}
+
 	audioFiles := 0
 	for _, file := range files {
-		if !file.IsDir() && (strings.HasSuffix(strings.ToLower(file.Name()), ".mp3") ||
-			strings.HasSuffix(strings.ToLower(file.Name()), ".ogg") ||
-			strings.HasSuffix(strings.ToLower(file.Name()), ".aac")) {
+		fileName := file.Name()
+		lowerFileName := strings.ToLower(fileName)
+
+		// Проверяем расширения файлов, учитывая возможные варианты регистра (.MP3, .Mp3 и т.д.)
+		isMP3 := strings.HasSuffix(lowerFileName, ".mp3")
+		isOGG := strings.HasSuffix(lowerFileName, ".ogg")
+		isAAC := strings.HasSuffix(lowerFileName, ".aac")
+		isWAV := strings.HasSuffix(lowerFileName, ".wav")   // Добавим поддержку WAV
+		isFLAC := strings.HasSuffix(lowerFileName, ".flac") // Добавим поддержку FLAC
+
+		// Проверка на наличие точки в начале имени файла (скрытый файл в Unix)
+		isHidden := strings.HasPrefix(fileName, ".")
+
+		// Детальное логирование проверки файла
+		logger.Info("DIAGNOSTICS: Checking file",
+			slog.String("fileName", fileName),
+			slog.String("lowerFileName", lowerFileName),
+			slog.Bool("isDir", file.IsDir()),
+			slog.Bool("isHidden", isHidden),
+			slog.Bool("isMP3", isMP3),
+			slog.Bool("isOGG", isOGG),
+			slog.Bool("isAAC", isAAC),
+			slog.Bool("isWAV", isWAV),
+			slog.Bool("isFLAC", isFLAC))
+
+		// Считаем аудиофайлы (не директории, не скрытые файлы, с поддержкой аудиоформатов)
+		if !file.IsDir() && !isHidden && (isMP3 || isOGG || isAAC || isWAV || isFLAC) {
 			audioFiles++
+			logger.Info("DIAGNOSTICS: Audio file counted",
+				slog.String("fileName", fileName),
+				slog.Int("totalSoFar", audioFiles))
 		}
 	}
+
 	logger.Info("Directory contains", slog.Int("audio_files", audioFiles), slog.String("directory", dir))
+
+	// Вместо ошибки только выводим предупреждение, если нет аудиофайлов, но разрешаем продолжить работу
 	if audioFiles == 0 {
-		logger.Error("CRITICAL ERROR: No audio files in directory", slog.String("directory", dir))
-		sentry.CaptureMessage(fmt.Sprintf("No audio files in directory %s", dir))
-		return false
+		logger.Warn("WARNING: No audio files in directory, stream will be empty until files are added",
+			slog.String("directory", dir),
+			slog.String("route", route))
+
+		// Только записываем сообщение в Sentry, но не считаем это ошибкой
+		sentry.CaptureMessage(fmt.Sprintf("No audio files in directory %s, but stream will be configured anyway", dir))
+
+		// Возвращаем true, чтобы разрешить конфигурацию маршрута даже без файлов
+		return true
 	}
 	return true
 }
