@@ -14,7 +14,8 @@ run:
   # default: 1m
   timeout: 5m
 
-# version: "2"
+# Версия конфигурации в формате строки в соответствии с документацией для v2
+version: "2"
 
 issues:
   # Maximum count of issues with the same text.
