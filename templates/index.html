@@ -4,6 +4,14 @@
 <body>
     <div class="container">
         <header class="header">
+            <div class="theme-toggle-wrapper">
+                <div class="theme-toggle" id="theme-toggle">
+                    <div class="toggle-ball">
+                        <span class="icon sun-icon">☀️</span>
+                        <span class="icon moon-icon">🌙</span>
+                    </div>
+                </div>
+            </div>
             <h1>Audio Streamer</h1>
         </header>
         <div id="streams" class="stream-list">
@@ -177,6 +185,70 @@
             to { transform: rotate(360deg); }
         }
 
+        .theme-toggle-wrapper {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+        }
+
+        .theme-toggle {
+            width: 60px;
+            height: 28px;
+            background-color: var(--color-surface-accent);
+            border-radius: 50px;
+            position: relative;
+            cursor: pointer;
+            box-shadow: var(--box-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 4px;
+            transition: var(--transition);
+        }
+
+        .toggle-ball {
+            width: 24px;
+            height: 24px;
+            background-color: var(--color-primary);
+            border-radius: 50%;
+            position: absolute;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        :root[data-theme="light"] .toggle-ball {
+            transform: translateX(0);
+        }
+
+        :root[data-theme="dark"] .toggle-ball {
+            transform: translateX(32px);
+        }
+
+        .icon {
+            font-size: 12px;
+            position: absolute;
+            transition: opacity 0.2s ease-in-out;
+        }
+
+        .sun-icon {
+            left: 4px;
+            opacity: 1;
+        }
+
+        .moon-icon {
+            right: 4px;
+            opacity: 0;
+        }
+
+        :root[data-theme="dark"] .sun-icon {
+            opacity: 0;
+        }
+
+        :root[data-theme="dark"] .moon-icon {
+            opacity: 1;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 0 15px;
@@ -197,6 +269,26 @@
         }
     </style>
     {{end}}
+
+    <script>
+        // Theme toggle functionality.
+        document.addEventListener('DOMContentLoaded', () => {
+            const themeToggle = document.getElementById('theme-toggle');
+
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+
+            if (themeToggle) {
+                themeToggle.addEventListener('click', () => {
+                    const currentTheme = document.documentElement.getAttribute('data-theme');
+                    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                });
+            }
+        });
+    </script>
 
     <script>
         // Function to load stream list.

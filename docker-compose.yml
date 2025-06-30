@@ -11,20 +11,22 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /home/politics:/app/politics
+      #- /home/politics:/app/politics
       - /home/humor:/app/humor
       - /home/science:/app/science
-      - /home/nature:/app/nature
+      #- /home/nature:/app/nature
       - /home/shaov:/app/shaov
-      - /home/troshin:/app/troshin
-      - /home/test_audio:/app/test_audio
+      #- /home/troshin:/app/troshin
+      #- /home/test_audio:/app/test_audio
       - ./relay_data:/app/relay_data
     environment:
       - STREAM_FORMAT=mp3
       - BITRATE=128
       - MAX_CLIENTS=10
       - LOG_LEVEL=error
-      - DIRECTORY_ROUTES={"test_audio":"/app/test_audio","humor":"/app/humor","science":"/app/science","politics":"/app/politics","nature":"/app/nature", "shaov":"/app/shaov", "troshin":"/app/troshin"}
+      #- DIRECTORY_ROUTES={"test_audio":"/app/test_audio","humor":"/app/humor","science":"/app/science","politics":"/app/politics","nature":"/app/nature", "shaov":"/app/shaov", "troshin":"/app/troshin"}
+      - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science","shaov":"/app/shaov"}
+
       - SHUFFLE=true
       # - ROUTES_SHUFFLE={"humor":"true","science":"false"}
       - NORMALIZE_VOLUME=false
@@ -36,6 +38,7 @@ services:
       # Relay configuration
       - RELAY=true
       - RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
+      
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s

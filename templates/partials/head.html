@@ -27,6 +27,28 @@
             --transition: all 0.2s ease-in-out;
         }
         
+        :root[data-theme="dark"] {
+            --color-background: #121212;
+            --color-text: #e0e0e0;
+            --color-text-secondary: #aaaaaa;
+            --color-primary: #4da6ff;
+            --color-primary-dark: #3182ce;
+            --color-primary-light: #1a365d;
+            --color-secondary: #7f9cf5;
+            --color-surface: #1e1e1e;
+            --color-surface-accent: #252525;
+            --color-border: #333333;
+            --color-toggle: #e67e22;
+            --color-input-bg: #252525;
+            --color-success: #2ecc71;
+            --color-success-dark: #27ae60;
+            --color-error: #f44336;
+            --color-error-dark: #d32f2f;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            --transition: all 0.2s ease-in-out;
+        }
+        
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--color-background);
@@ -34,6 +56,22 @@
             margin: 0;
             padding: 0;
             line-height: 1.6;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        
+        /* Allow selection for specific elements that contain user-copyable content. */
+        .status-info.current-track,
+        .track-list li,
+        .now-playing,
+        input,
+        textarea {
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+            user-select: text;
         }
         
         /* Theme toggle styling */
@@ -69,11 +107,11 @@
             justify-content: center;
         }
 
-        .theme-toggle[data-theme="light"] .toggle-ball {
+        html[data-theme="light"] .toggle-ball {
             transform: translateX(0);
         }
 
-        .theme-toggle[data-theme="dark"] .toggle-ball {
+        html[data-theme="dark"] .toggle-ball {
             transform: translateX(32px);
         }
 
@@ -81,6 +119,10 @@
             font-size: 12px;
             position: absolute;
             transition: opacity 0.2s ease-in-out;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
         }
 
         .sun-icon {
@@ -91,6 +133,14 @@
         .moon-icon {
             right: 4px;
             opacity: 0;
+        }
+
+        html[data-theme="dark"] .sun-icon {
+            opacity: 0;
+        }
+
+        html[data-theme="dark"] .moon-icon {
+            opacity: 1;
         }
     </style>
 </head>
