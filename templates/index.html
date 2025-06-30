@@ -108,6 +108,50 @@
             padding: 10px 14px;
             border-radius: var(--border-radius);
             border-left: 3px solid var(--color-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .copy-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.2rem 0.5rem;
+            border-radius: var(--border-radius);
+            margin-left: 1rem;
+            position: relative;
+            background-color: var(--color-surface);
+            transition: var(--transition);
+        }
+
+        .copy-button:hover {
+            background-color: var(--color-surface-accent);
+        }
+
+        .copy-icon {
+            font-size: 1rem;
+            color: var(--color-text-secondary);
+        }
+
+        .copy-feedback {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--color-success);
+            background-color: var(--color-surface);
+            padding: 0.2rem 0.6rem;
+            border-radius: var(--border-radius);
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        .copy-button.copied .copy-feedback {
+            opacity: 1;
         }
 
         audio {
@@ -185,70 +229,6 @@
             to { transform: rotate(360deg); }
         }
 
-        .theme-toggle-wrapper {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-        }
-
-        .theme-toggle {
-            width: 60px;
-            height: 28px;
-            background-color: var(--color-surface-accent);
-            border-radius: 50px;
-            position: relative;
-            cursor: pointer;
-            box-shadow: var(--box-shadow);
-            display: flex;
-            align-items: center;
-            padding: 0 4px;
-            transition: var(--transition);
-        }
-
-        .toggle-ball {
-            width: 24px;
-            height: 24px;
-            background-color: var(--color-primary);
-            border-radius: 50%;
-            position: absolute;
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        :root[data-theme="light"] .toggle-ball {
-            transform: translateX(0);
-        }
-
-        :root[data-theme="dark"] .toggle-ball {
-            transform: translateX(32px);
-        }
-
-        .icon {
-            font-size: 12px;
-            position: absolute;
-            transition: opacity 0.2s ease-in-out;
-        }
-
-        .sun-icon {
-            left: 4px;
-            opacity: 1;
-        }
-
-        .moon-icon {
-            right: 4px;
-            opacity: 0;
-        }
-
-        :root[data-theme="dark"] .sun-icon {
-            opacity: 0;
-        }
-
-        :root[data-theme="dark"] .moon-icon {
-            opacity: 1;
-        }
-
         @media (max-width: 768px) {
             .container {
                 padding: 0 15px;
@@ -291,261 +271,114 @@
     </script>
 
     <script>
-        // Function to load stream list.
+        let streamsData = [];
+
+        function copyToClipboard(text, button) {
+            navigator.clipboard.writeText(text).then(() => {
+                const feedback = button.querySelector('.copy-feedback');
+                feedback.textContent = 'Copied!';
+                button.classList.add('copied');
+
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                const feedback = button.querySelector('.copy-feedback');
+                feedback.textContent = 'Error';
+                button.classList.add('copied');
+                console.error('Failed to copy: ', err);
+
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                }, 2000);
+            });
+        }
+
+        function escapeHTML(str) {
+            const p = document.createElement('p');
+            p.appendChild(document.createTextNode(str));
+            return p.innerHTML;
+        }
+
+        function renderStreams() {
+            const streamsContainer = document.getElementById('streams');
+            if (streamsData.length === 0) {
+                streamsContainer.innerHTML = '<div class="error-message">No audio streams available</div>';
+                return;
+            }
+
+            const streamItems = streamsData.map(stream => {
+                const streamName = stream.route === '/' ? 'Main Stream' : 
+                    stream.route.replace('/', '').charAt(0).toUpperCase() + stream.route.replace('/', '').slice(1);
+
+                const nowPlayingHTML = stream.current_track 
+                    ? `<div class="now-playing">
+                            <span>${escapeHTML(stream.current_track)}</span>
+                            <button class="copy-button" onclick="copyToClipboard('${escapeHTML(stream.current_track)}', this)">
+                                <span class="copy-icon">📋</span>
+                                <span class="copy-feedback"></span>
+                            </button>
+                       </div>` 
+                    : '<div class="now-playing"><span>Stream offline or track name is not available.</span></div>';
+
+                return `
+                    <div class="stream-item" id="stream-${stream.route.replace('/', '')}">
+                        <div class="stream-title">${streamName}</div>
+                        ${nowPlayingHTML}
+                        <audio controls>
+                            <source src="${stream.route}" type="audio/mpeg">
+                            Your browser does not support the audio element.
+                        </audio>
+                        <div class="autoplay-message" style="display: none;">
+                            Autoplay has been blocked. Please click the Play button.
+                        </div>
+                        <div class="listeners">Listeners: ${stream.listeners}</div>
+                    </div>
+                `;
+            }).join('');
+            
+            streamsContainer.innerHTML = streamItems;
+
+            // Add play event listeners to handle autoplay message
+            document.querySelectorAll('.stream-item audio').forEach(audio => {
+                audio.play().catch(error => {
+                    const message = audio.parentElement.querySelector('.autoplay-message');
+                    if (message) {
+                        message.style.display = 'block';
+                    }
+                });
+                audio.addEventListener('play', () => {
+                    const message = audio.parentElement.querySelector('.autoplay-message');
+                    if (message) {
+                        message.style.display = 'none';
+                    }
+                });
+            });
+        }
+
         async function loadStreams() {
             try {
                 const response = await fetch('/streams');
                 if (!response.ok) {
-                    throw new Error('Error loading stream list');
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                
                 const data = await response.json();
-                const streamsContainer = document.getElementById('streams');
-                
-                // Clear container.
-                streamsContainer.innerHTML = '';
-                
-                if (data.streams && data.streams.length > 0) {
-                    // Sort streams - root stream (/) first, then alphabetically.
-                    data.streams.sort((a, b) => {
-                        if (a.route === '/') return -1;
-                        if (b.route === '/') return 1;
-                        return a.route.localeCompare(b.route);
-                    });
-                    
-                    // Create elements for each stream.
-                    data.streams.forEach(stream => {
-                        const streamItem = document.createElement('div');
-                        streamItem.className = 'stream-item';
-                        streamItem.dataset.route = stream.route;
-                        
-                        // Format stream name.
-                        let streamName = stream.route === '/' ? 'Main Stream' : 
-                            stream.route.replace('/', '').charAt(0).toUpperCase() + 
-                            stream.route.replace('/', '').slice(1);
-                        
-                        // Create element content.
-                        streamItem.innerHTML = `
-                            <div class="stream-title">${streamName}</div>
-                            <div class="now-playing" data-track="${stream.current_track || ''}">Now playing: ${stream.current_track || 'No data'}</div>
-                            <audio controls autoplay>
-                                <source src="${stream.route}" type="audio/mpeg">
-                                Your browser does not support the audio element.
-                            </audio>
-                            <div class="autoplay-message" style="display: none;">
-                                Autoplay has been blocked by the browser. Please click the Play button.
-                            </div>
-                            <div class="listeners">Listeners: ${stream.listeners}</div>
-                        `;
-                        
-                        // Add handler for autoplay.
-                        const audioElement = streamItem.querySelector('audio');
-                        const autoplayMessage = streamItem.querySelector('.autoplay-message');
-                        
-                        // Try to start playback.
-                        audioElement.play().catch(error => {
-                            console.log(`Autoplay blocked: ${error.message}`);
-                            // Show message about autoplay blocking.
-                            autoplayMessage.style.display = 'block';
-                            
-                            // Hide message after playback starts.
-                            audioElement.addEventListener('play', () => {
-                                autoplayMessage.style.display = 'none';
-                            });
-                        });
-                        
-                        streamsContainer.appendChild(streamItem);
-                    });
-                } else {
-                    streamsContainer.innerHTML = '<div class="error-message">No audio streams available</div>';
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                document.getElementById('streams').innerHTML = 
-                    `<div class="error-message">Error loading streams: ${error.message}</div>`;
-            }
-        }
-        
-        // Function to get the current track for each route.
-        async function checkCurrentTracks() {
-            try {
-                const response = await fetch('/now-playing?t=' + new Date().getTime());
-                if (!response.ok) {
-                    throw new Error('Error loading track information');
-                }
-                
-                const tracksData = await response.json();
-                const streamItems = document.querySelectorAll('.stream-item');
-                
-                streamItems.forEach(item => {
-                    const route = item.dataset.route;
-                    const currentTrackElement = item.querySelector('.now-playing');
-                    const audioElement = item.querySelector('audio');
-                    
-                    // If a new track is received and it differs from the current one.
-                    if (route && tracksData[route] && currentTrackElement.dataset.track !== tracksData[route]) {
-                        console.log(`Track changed on ${route}: ${tracksData[route]}`);
-                        
-                        // Update current track display.
-                        currentTrackElement.textContent = `Now playing: ${tracksData[route]}`;
-                        currentTrackElement.dataset.track = tracksData[route];
-                        
-                        // Forcibly replace the audio player completely.
-                        if (audioElement) {
-                            const streamItem = audioElement.closest('.stream-item');
-                            const volume = audioElement.volume || 0.5;
-                            
-                            // Create a new audio element.
-                            const newAudio = document.createElement('audio');
-                            newAudio.controls = true;
-                            newAudio.autoplay = true;
-                            newAudio.volume = volume;
-                            
-                            // Add timestamp to URL to bypass caching.
-                            const timestamp = new Date().getTime();
-                            const source = document.createElement('source');
-                            source.src = `${route}?t=${timestamp}`;
-                            source.type = 'audio/mpeg';
-                            
-                            newAudio.appendChild(source);
-                            newAudio.appendChild(document.createTextNode('Your browser does not support the audio element.'));
-                            
-                            // Stop the old player and replace it with the new one.
-                            audioElement.pause();
-                            audioElement.parentNode.replaceChild(newAudio, audioElement);
-                            
-                            // Add event handlers for the new player.
-                            newAudio.addEventListener('error', function(e) {
-                                console.error('Playback error:', e);
-                                // Try to reload after 1 second.
-                                setTimeout(() => reloadAudioPlayer(newAudio, route), 1000);
-                            });
-                            
-                            // Start playback.
-                            newAudio.play().catch(error => {
-                                console.error('Playback error:', error);
-                                // Show message about autoplay blocking.
-                                const autoplayMessage = streamItem.querySelector('.autoplay-message') || 
-                                    document.createElement('div');
-                                
-                                autoplayMessage.className = 'autoplay-message';
-                                autoplayMessage.textContent = 'Autoplay has been blocked. Please click the Play button.';
-                                
-                                if (!streamItem.querySelector('.autoplay-message')) {
-                                    newAudio.parentNode.insertBefore(autoplayMessage, newAudio.nextSibling);
-                                } else {
-                                    autoplayMessage.style.display = 'block';
-                                }
-                                
-                                // Hide message after playback starts.
-                                newAudio.addEventListener('play', () => {
-                                    autoplayMessage.style.display = 'none';
-                                });
-                            });
-                        }
-                    }
+                streamsData = (data.streams || []).sort((a, b) => {
+                    if (a.route === '/') return -1;
+                    if (b.route === '/') return 1;
+                    return a.route.localeCompare(b.route);
                 });
+                renderStreams();
             } catch (error) {
-                console.error('Error checking current tracks:', error);
+                console.error('Error loading streams:', error);
+                document.getElementById('streams').innerHTML = `<div class="error-message">Error loading streams: ${error.message}</div>`;
             }
         }
-        
-        // Load streams when the page loads.
+
         window.addEventListener('DOMContentLoaded', () => {
             loadStreams();
-            
-            // Update information about stream list every 30 seconds.
-            setInterval(loadStreams, 30000);
-            
-            // Check current track change every 500 ms.
-            setInterval(checkCurrentTracks, 500);
-            
-            // Add event handling for players.
-            setupAudioPlayerEvents();
+            setInterval(loadStreams, 30000); // Periodically refresh the stream list and statuses
         });
-        
-        // Function for setting up event handlers for audio players.
-        function setupAudioPlayerEvents() {
-            // Periodically check for players and add handlers.
-            setInterval(() => {
-                document.querySelectorAll('audio').forEach(audio => {
-                    if (!audio.dataset.eventsBound) {
-                        // Add error handler.
-                        audio.addEventListener('error', (e) => {
-                            console.log(`Audio error: ${e.target.error?.message || 'Unknown error'}`);
-                            const route = audio.closest('.stream-item')?.dataset.route;
-                            if (route) {
-                                // Automatically reload player with new timestamp parameter.
-                                setTimeout(() => {
-                                    reloadAudioPlayer(audio, route);
-                                }, 1000);
-                            }
-                        });
-                        
-                        // Add stalled playback handler.
-                        audio.addEventListener('stalled', () => {
-                            console.log('Playback stalled');
-                            const route = audio.closest('.stream-item')?.dataset.route;
-                            if (route) {
-                                // Try to restart after 2 seconds.
-                                setTimeout(() => {
-                                    reloadAudioPlayer(audio, route);
-                                }, 2000);
-                            }
-                        });
-                        
-                        // Mark that handlers are already added.
-                        audio.dataset.eventsBound = 'true';
-                    }
-                });
-            }, 1000);
-        }
-        
-        // Function to reload audio player.
-        function reloadAudioPlayer(audioElement, route) {
-            console.log(`Reloading player for ${route}`);
-            const streamItem = audioElement.closest('.stream-item');
-            const volume = audioElement.volume || 0.5;
-            
-            // Create a new audio element.
-            const newAudio = document.createElement('audio');
-            newAudio.controls = true;
-            newAudio.autoplay = true;
-            newAudio.volume = volume;
-            
-            // Add timestamp to URL to bypass caching.
-            const timestamp = new Date().getTime();
-            const source = document.createElement('source');
-            source.src = `${route}?t=${timestamp}`;
-            source.type = 'audio/mpeg';
-            
-            newAudio.appendChild(source);
-            newAudio.appendChild(document.createTextNode('Your browser does not support the audio element.'));
-            
-            // Replace the old element with a new one.
-            audioElement.parentNode.replaceChild(newAudio, audioElement);
-            
-            // Start playback.
-            newAudio.play().catch(error => {
-                console.error('Playback error:', error);
-                const autoplayMessage = streamItem.querySelector('.autoplay-message') || 
-                    document.createElement('div');
-                
-                autoplayMessage.className = 'autoplay-message';
-                autoplayMessage.textContent = 'Autoplay has been blocked. Please click the Play button.';
-                
-                if (!streamItem.querySelector('.autoplay-message')) {
-                    newAudio.parentNode.insertBefore(autoplayMessage, newAudio.nextSibling);
-                } else {
-                    autoplayMessage.style.display = 'block';
-                }
-                
-                // Hide message after playback starts.
-                newAudio.addEventListener('play', () => {
-                    autoplayMessage.style.display = 'none';
-                });
-            });
-        }
     </script>
 </body>
 </html> 

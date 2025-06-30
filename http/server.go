@@ -987,7 +987,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		StartTime    string
 		CurrentTrack string
 		Listeners    int
-		HistoryHTML  string
+		HistoryHTML  template.HTML
 	}
 
 	streams := make([]StreamInfo, 0, len(s.streams))
@@ -998,13 +998,18 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Get playlist history.
 		history := s.playlists[route].GetHistory()
-		historyHTML := ""
-		for i, item := range history {
-			if i > 0 {
-				historyHTML += "<br>"
-			}
-			historyHTML += html.EscapeString(fmt.Sprintf("%v", item))
+		var historyHTMLBuilder strings.Builder
+		historyHTMLBuilder.WriteString("<ul>")
+		for _, item := range history {
+			trackName := html.EscapeString(fmt.Sprintf("%v", item))
+			historyHTMLBuilder.WriteString(fmt.Sprintf(
+				`<li><span>%s</span><button class="copy-button" onclick="copyToClipboard('%s', this)"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
+				trackName,
+				trackName,
+			))
 		}
+		historyHTMLBuilder.WriteString("</ul>")
+		historyHTML := historyHTMLBuilder.String()
 
 		streams = append(streams, StreamInfo{
 			Route:        route,
@@ -1013,7 +1018,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			StartTime:    s.playlists[route].GetStartTime().Format("15:04:05"),
 			CurrentTrack: currentTrack,
 			Listeners:    stream.GetClientCount(),
-			HistoryHTML:  historyHTML,
+			HistoryHTML:  template.HTML(historyHTML),
 		})
 	}
 

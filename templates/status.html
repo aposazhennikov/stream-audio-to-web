@@ -27,7 +27,13 @@
         <div class="stream-container">
             <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
             <div class="status-info start-time">Started: {{.StartTime}}</div>
-            <div class="status-info current-track">{{.CurrentTrack}}</div>
+            <div class="status-info current-track">
+                <span>{{.CurrentTrack}}</span>
+                <button class="copy-button" onclick="copyToClipboard('{{.CurrentTrack}}', this)">
+                    <span class="copy-icon">📋</span>
+                    <span class="copy-feedback"></span>
+                </button>
+            </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
             <div class="button-group">
                 <form method="post" action="/prev-track/{{.RouteID}}" style="flex: 1;">
@@ -208,10 +214,14 @@
             border-radius: var(--border-radius);
             border-left: 3px solid var(--color-primary);
             margin: 1rem 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .status-info.current-track:before {
             content: '▶️';
+            margin-right: 0.5rem;
         }
 
         .status-info.listeners:before {
@@ -312,12 +322,17 @@
 
         .track-list ul {
             list-style-type: none;
+            padding: 0;
+            margin: 0;
         }
 
         .track-list li {
             padding: 0.5rem 0;
             border-bottom: 1px solid var(--color-border);
             position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             padding-left: 1.5rem;
         }
 
@@ -366,6 +381,47 @@
                 width: 100%;
             }
         }
+
+        .copy-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.2rem 0.5rem;
+            border-radius: var(--border-radius);
+            margin-left: 1rem;
+            position: relative;
+            background-color: var(--color-surface);
+            transition: var(--transition);
+        }
+
+        .copy-button:hover {
+            background-color: var(--color-surface-accent);
+        }
+
+        .copy-icon {
+            font-size: 1rem;
+            color: var(--color-text-secondary);
+        }
+
+        .copy-feedback {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--color-success);
+            background-color: var(--color-surface);
+            padding: 0.2rem 0.6rem;
+            border-radius: var(--border-radius);
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+
+        .copy-button.copied .copy-feedback {
+            opacity: 1;
+        }
     </style>
     {{end}}
 
@@ -398,6 +454,26 @@
             const buttons = trackList.previousElementSibling.querySelectorAll('button');
             const historyButton = buttons[buttons.length - 1];
             historyButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
+        }
+
+        function copyToClipboard(text, button) {
+            navigator.clipboard.writeText(text).then(() => {
+                const feedback = button.querySelector('.copy-feedback');
+                feedback.textContent = 'Copied!';
+                button.classList.add('copied');
+
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                const feedback = button.querySelector('.copy-feedback');
+                feedback.textContent = 'Error';
+                button.classList.add('copied');
+
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                }, 2000);
+            });
         }
 
         // Function for automatic player updating when track changes.
