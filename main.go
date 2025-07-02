@@ -71,35 +71,60 @@ type Config struct {
 }
 
 func main() {
+	// Настраиваем recovery от panic
+	defer func() {
+		if r := recover(); r != nil {
+			// Логируем panic в Sentry
+			sentry.CaptureException(fmt.Errorf("PANIC: %v", r))
+			sentry.Flush(time.Second * 5)
+			panic(r) // Re-panic после логирования
+		}
+	}()
+
 	// Настраиваем логгер перед началом работы
 	logger := setupLogger()
+	logger.Info("APPLICATION STARTUP: Logger initialized")
 
 	// Загружаем конфигурацию
+	logger.Info("APPLICATION STARTUP: Loading configuration...")
 	config := loadConfig()
+	logger.Info("APPLICATION STARTUP: Configuration loaded")
 
 	// Initialize Sentry.
+	logger.Info("APPLICATION STARTUP: Initializing Sentry...")
 	initSentry(logger)
+	logger.Info("APPLICATION STARTUP: Sentry initialized")
 
 	// Log application configuration.
 	logConfiguration(logger, config)
 
 	// Create and initialize components.
+	logger.Info("STEP 1: Starting component initialization...")
 	server, stationManager, relayManager := initializeComponents(logger, config)
+	logger.Info("STEP 2: Component initialization completed")
 
 	// Create and start HTTP server.
+	logger.Info("STEP 3: Starting HTTP server...")
 	httpSrv := startHTTPServer(logger, config.Port, server.Handler())
+	logger.Info("STEP 4: HTTP server started")
 
 	// Configure root route redirection.
+	logger.Info("STEP 5: Configuring root redirection...")
 	redirectTarget := configureRootRedirection(logger, config, server)
-	logger.Info("Root redirection configured", "redirectTarget", redirectTarget)
+	logger.Info("STEP 6: Root redirection configured", "redirectTarget", redirectTarget)
 
 	// Asynchronously configure audio routes.
+	logger.Info("STEP 7: Starting audio route configuration...")
 	configureAudioRoutes(logger, server, stationManager, config)
+	logger.Info("STEP 8: Audio route configuration initiated")
 
 	// Check stream status.
+	logger.Info("STEP 9: Checking stream status...")
 	checkStreamStatus(logger, server)
+	logger.Info("STEP 10: Stream status checked")
 
 	// Wait for shutdown signal.
+	logger.Info("STEP 11: Waiting for shutdown signal...")
 	sig := waitForShutdownSignal()
 
 	// Handle the signal.
@@ -249,28 +274,62 @@ func initializeComponents(
 	config *Config,
 ) (*httpServer.Server, *radio.StationManager, *relay.Manager) {
 	// Create HTTP server.
+	logger.Info("Creating HTTP server...")
 	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
+	logger.Info("HTTP server created")
 
-	// Configure normalization parameters.
-	audio.SetNormalizeConfig(config.NormalizeSampleWindows, config.NormalizeSampleMs)
+	// Configure normalization parameters with safe defaults.
+	normalizeWindows := config.NormalizeSampleWindows
+	normalizeMs := config.NormalizeSampleMs
+	
+	// CRITICAL: If normalization is disabled, use zero values
+	if !config.NormalizeVolume || config.NormalizeRuntime == "off" || normalizeWindows <= 0 || normalizeMs <= 0 {
+		normalizeWindows = 0
+		normalizeMs = 0
+		logger.Info("NORMALIZATION DISABLED - Using raw audio streaming only",
+			"normalizeVolume", config.NormalizeVolume,
+			"normalizeRuntime", config.NormalizeRuntime,
+			"configWindows", config.NormalizeSampleWindows,
+			"configMs", config.NormalizeSampleMs)
+	} else {
+		logger.Info("NORMALIZATION ENABLED - Using configured parameters",
+			"windows", normalizeWindows,
+			"durationMs", normalizeMs)
+	}
+	
+	audio.SetNormalizeConfig(normalizeWindows, normalizeMs)
+	logger.Info("Audio configuration completed",
+		"normalizationEnabled", normalizeWindows > 0 && normalizeMs > 0,
+		"windows", normalizeWindows,
+		"durationMs", normalizeMs)
 
 	// Create radio station manager.
+	logger.Info("Creating radio station manager...")
 	stationManager := radio.NewRadioStationManager(logger)
+	logger.Info("Radio station manager created")
 
 	// Set radio station manager for HTTP server.
+	logger.Info("Setting station manager for HTTP server...")
 	server.SetStationManager(stationManager)
+	logger.Info("Station manager set for HTTP server")
 
 	// Create relay manager if needed.
+	logger.Info("Checking relay configuration...")
 	var relayManager *relay.Manager
 	if config.EnableRelay {
+		logger.Info("Relay enabled, initializing relay manager...")
 		relayManager = initializeRelayManager(logger, config, server)
+		logger.Info("Relay manager initialized")
 	} else {
 		logger.Info("Relay functionality is disabled")
 	}
 
 	// Create minimal dummy streams for /healthz to immediately find at least one route.
+	logger.Info("Creating initial dummy streams...")
 	createInitialDummyStreams(logger, server)
+	logger.Info("Initial dummy streams created")
 
+	logger.Info("Component initialization completed successfully")
 	return server, stationManager, relayManager
 }
 
@@ -385,6 +444,37 @@ func configureAudioRoutes(
 	config *Config,
 ) {
 	logger.Info("Starting audio route configuration...")
+	logger.Info("Directory routes found", "count", len(config.DirectoryRoutes))
+	
+	// Log all routes for debugging
+	for route, dir := range config.DirectoryRoutes {
+		logger.Info("Found route", "route", route, "directory", dir)
+	}
+
+	if len(config.DirectoryRoutes) == 0 {
+		criticalErr := fmt.Errorf("CRITICAL: No directory routes configured")
+		logger.Error("CRITICAL: No directory routes configured! Check DIRECTORY_ROUTES environment variable.")
+		sentry.CaptureException(criticalErr)
+		return
+	}
+
+	// CRITICAL CHECK: Verify normalization configuration only if normalization is enabled
+	if config.NormalizeVolume && config.NormalizeRuntime != "off" && config.NormalizeSampleWindows <= 0 {
+		criticalErr := fmt.Errorf("CRITICAL: Invalid normalization sample windows: %d (normalization is enabled)", config.NormalizeSampleWindows)
+		logger.Error("CRITICAL: Invalid normalization sample windows configuration",
+			"windows", config.NormalizeSampleWindows,
+			"normalizeVolume", config.NormalizeVolume,
+			"normalizeRuntime", config.NormalizeRuntime,
+			"expected", "> 0")
+		sentry.CaptureException(criticalErr)
+		// This is a critical configuration error - don't start audio streams
+		return
+	}
+	
+	logger.Info("Audio route configuration checks passed",
+		"normalizeVolume", config.NormalizeVolume,
+		"normalizeRuntime", config.NormalizeRuntime,
+		"normalizeWindows", config.NormalizeSampleWindows)
 
 	// Configure routes from configuration ASYNCHRONOUSLY.
 	for route, dir := range config.DirectoryRoutes {
@@ -398,13 +488,17 @@ func configureAudioRoutes(
 		routeCopy := route
 		dirCopy := dir
 
+		logger.Info("Starting goroutine for route", "route", routeCopy, "directory", dirCopy)
+
 		// Start configuring EACH stream in a separate goroutine.
 		go func(r, d string) {
-			logger.Info("Asynchronous configuration of route", slog.String("route", r))
+			logger.Info("Asynchronous configuration of route started", slog.String("route", r), slog.String("directory", d))
 			if success := configureSyncRoute(logger, server, stationManager, r, d, config); success {
 				logger.Info("Route successfully configured", slog.String("route", r))
 			} else {
-				logger.Error("ERROR: Route configuration failed", slog.String("route", r))
+				criticalErr := fmt.Errorf("CRITICAL: Route configuration failed for %s", r)
+				logger.Error("CRITICAL: Route configuration failed", slog.String("route", r))
+				sentry.CaptureException(criticalErr)
 			}
 		}(routeCopy, dirCopy)
 	}
@@ -498,29 +592,56 @@ func configureSyncRoute(
 	route, dir string,
 	config *Config,
 ) bool {
-	logger.Info("Starting synchronous configuration of route", slog.String("route", route))
+	// Добавляем recovery от panic внутри goroutine
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("PANIC in configureSyncRoute for route %s: %v", route, r)
+			logger.Error("PANIC in route configuration", "route", route, "panic", r)
+			sentry.CaptureException(err)
+		}
+	}()
 
+	logger.Info("Starting synchronous configuration of route", slog.String("route", route), slog.String("directory", dir))
+
+	logger.Info("ROUTE CONFIG STEP 1: Checking directory exists", "route", route, "directory", dir)
 	if !ensureDirectoryExists(logger, dir, route) {
+		err := fmt.Errorf("directory check failed for route %s: %s", route, dir)
+		logger.Error("Directory check failed", "route", route, "directory", dir)
+		sentry.CaptureException(err)
 		return false
 	}
 
+	logger.Info("ROUTE CONFIG STEP 2: Checking audio files", "route", route, "directory", dir)
 	if !checkAudioFiles(logger, dir, route) {
+		err := fmt.Errorf("audio files check failed for route %s: %s", route, dir)
+		logger.Error("Audio files check failed", "route", route, "directory", dir)
+		sentry.CaptureException(err)
 		return false
 	}
 
+	logger.Info("ROUTE CONFIG STEP 3: Creating playlist", "route", route, "directory", dir)
 	pl := createPlaylistOrNil(logger, dir, route, config)
 	if pl == nil {
+		err := fmt.Errorf("playlist creation failed for route %s: %s", route, dir)
+		logger.Error("Playlist creation failed", "route", route, "directory", dir)
+		sentry.CaptureException(err)
 		return false
 	}
 
+	logger.Info("ROUTE CONFIG STEP 4: Creating streamer", "route", route)
 	streamer := createStreamer(logger, config, route)
 	if streamer == nil {
+		err := fmt.Errorf("streamer creation failed for route %s", route)
+		logger.Error("Streamer creation failed", "route", route)
+		sentry.CaptureException(err)
 		return false
 	}
 
+	logger.Info("ROUTE CONFIG STEP 5: Adding station to manager", "route", route)
 	stationManager.AddStation(route, streamer, pl)
 	logger.Info("Radio station successfully added to manager", slog.String("route", route))
 
+	logger.Info("ROUTE CONFIG STEP 6: Registering stream on HTTP server", "route", route)
 	server.RegisterStream(route, streamer, pl)
 	logger.Info("Audio stream successfully registered on HTTP server", slog.String("route", route))
 

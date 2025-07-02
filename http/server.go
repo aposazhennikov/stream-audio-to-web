@@ -1001,11 +1001,43 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		var historyHTMLBuilder strings.Builder
 		historyHTMLBuilder.WriteString("<ul>")
 		for _, item := range history {
-			trackName := html.EscapeString(fmt.Sprintf("%v", item))
+			var trackName string
+			
+			// Extract track name properly based on item type
+			switch track := item.(type) {
+			case interface{ GetPath() string }:
+				trackName = filepath.Base(track.GetPath())
+			case interface{ GetNormalizedPath() string }:
+				trackName = filepath.Base(track.GetNormalizedPath())
+			case *struct{ Path string; Name string }:
+				if track != nil {
+					trackName = track.Name
+					if trackName == "" {
+						trackName = filepath.Base(track.Path)
+					}
+				}
+			case string:
+				trackName = filepath.Base(track)
+			default:
+				// Fallback to string representation but clean it up
+				str := fmt.Sprintf("%v", item)
+				if strings.Contains(str, "{") && strings.Contains(str, "}") {
+					// This looks like a struct, try to extract filename
+					trackName = "Unknown track"
+				} else {
+					trackName = filepath.Base(str)
+				}
+			}
+			
+			if trackName == "" {
+				trackName = "Unknown track"
+			}
+			
+			escapedTrackName := html.EscapeString(trackName)
 			historyHTMLBuilder.WriteString(fmt.Sprintf(
 				`<li><span>%s</span><button class="copy-button" onclick="copyToClipboard('%s', this)"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
-				trackName,
-				trackName,
+				escapedTrackName,
+				escapedTrackName,
 			))
 		}
 		historyHTMLBuilder.WriteString("</ul>")

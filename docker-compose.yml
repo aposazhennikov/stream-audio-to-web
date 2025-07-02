@@ -32,7 +32,7 @@ services:
       - NORMALIZE_VOLUME=false
       - NORMALIZE_RUNTIME=off
       - NORMALIZE_SAMPLE_WINDOWS=0
-      - NORMALIZE_SAMPLE_MS=200
+      - NORMALIZE_SAMPLE_MS=0
       - STATUS_PASSWORD=1234554321
       - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
       # Relay configuration

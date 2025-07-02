@@ -226,11 +226,15 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 
 	// Check if normalization should be used.
 	if !s.normalizeVolume {
+		s.logger.Info("DIAGNOSTICS: Using raw audio streaming (normalization disabled)", 
+			"trackPath", trackPath)
 		return s.processRawAudio(file, fileInfo, trackPath, startTime)
 	}
 
-	// --- Нормализация ---.
-	return s.processNormalizedAudio(file, trackPath, startTime)
+	// CRITICAL CHECK: Always use raw audio if normalization is problematic
+	s.logger.Error("WARNING: Normalization is enabled but currently causes critical errors - forcing raw audio",
+		"trackPath", trackPath)
+	return s.processRawAudio(file, fileInfo, trackPath, startTime)
 }
 
 // processRawAudio handles streaming of raw (non-normalized) audio.
@@ -302,7 +306,7 @@ func (s *Streamer) processRawAudio(file *os.File, fileInfo os.FileInfo, trackPat
 	return nil
 }
 
-// processNormalizedAudio handles streaming of normalized audio.
+	// processNormalizedAudio handles streaming of normalized audio.
 func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, startTime time.Time) error {
 	// Extract route name from track path for metrics.
 	route := getRouteFromTrackPath(trackPath)
@@ -326,6 +330,11 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 	// Process audio streaming.
 	bytesRead, err := s.streamFromPipe(pr, trackPath)
 	if err != nil {
+		sentry.CaptureException(fmt.Errorf("CRITICAL: Audio streaming failed for track %s: %w", trackPath, err))
+		s.logger.Error("CRITICAL: Audio streaming failed",
+			"trackPath", trackPath,
+			"error", err.Error(),
+			"bytesRead", bytesRead)
 		// Wait for normalization to complete before returning
 		<-normalizationDone
 		return err
@@ -336,6 +345,18 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 
 	// Handle playback completion.
 	duration := time.Since(startTime)
+	
+	// CRITICAL CHECK: Detect if track played too quickly (< 1 second) 
+	if duration.Seconds() < 1.0 && bytesRead < 1000 {
+		criticalErr := fmt.Errorf("CRITICAL: Track played too quickly - possible normalization failure")
+		sentry.CaptureException(criticalErr)
+		s.logger.Error("CRITICAL: Track played too quickly - possible normalization failure",
+			"trackPath", trackPath,
+			"duration", duration.Seconds(),
+			"bytesRead", bytesRead,
+			"route", route)
+	}
+	
 	s.logAndRecordPlaybackCompletion(trackPath, bytesRead, duration, route)
 
 	// Add pause between tracks.
@@ -354,9 +375,11 @@ func (s *Streamer) runNormalization(file *os.File, writer *io.PipeWriter, route 
 				"route", route)
 		} else {
 			// Для более серьезных ошибок и логируем, и отправляем в Sentry.
-			s.logger.Info("DIAGNOSTICS: ERROR during audio normalization",
-				"error", normErr.Error())
-			sentry.CaptureException(normErr)
+			criticalErr := fmt.Errorf("CRITICAL: Audio normalization failed for route %s: %w", route, normErr)
+			s.logger.Error("CRITICAL: Audio normalization failed",
+				"error", normErr.Error(),
+				"route", route)
+			sentry.CaptureException(criticalErr)
 		}
 	}
 }
@@ -369,9 +392,11 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 	if !ok || buffer == nil {
 		// If we can't get a proper buffer from pool, create a new one
 		buffer = make([]byte, s.bufferSize)
-		s.logger.Warn("DIAGNOSTICS: Created new buffer as pool returned invalid type", 
+		bufferErr := fmt.Errorf("CRITICAL: Buffer pool returned invalid type")
+		s.logger.Error("CRITICAL: Buffer pool returned invalid type", 
 			"expected", "[]byte", 
 			"got", fmt.Sprintf("%T", bufferInterface))
+		sentry.CaptureException(bufferErr)
 	}
 	defer s.bufferPool.Put(buffer) // Put back buffer, not pointer to buffer
 
@@ -392,6 +417,14 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 			// Check for EOF.
 			if errors.Is(readErr, io.EOF) {
 				s.logger.Info("DIAGNOSTICS: End of normalized audio data reached", "trackPath", trackPath)
+				// CRITICAL CHECK: If we reach EOF but read 0 bytes, this is suspicious
+				if bytesRead == 0 {
+					criticalErr := fmt.Errorf("CRITICAL: EOF reached but no audio data was read from pipe")
+					s.logger.Error("CRITICAL: EOF reached but no audio data was read",
+						"trackPath", trackPath,
+						"bytesRead", bytesRead)
+					sentry.CaptureException(criticalErr)
+				}
 				break
 			}
 
@@ -401,9 +434,23 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 			}
 
 			// Handle other errors.
-			s.logger.Info("DIAGNOSTICS: ERROR reading normalized audio data", "error", readErr.Error())
-			sentry.CaptureException(readErr)
+			criticalErr := fmt.Errorf("CRITICAL: Error reading normalized audio data from pipe: %w", readErr)
+			s.logger.Error("CRITICAL: Error reading normalized audio data", 
+				"error", readErr.Error(),
+				"trackPath", trackPath,
+				"bytesRead", bytesRead)
+			sentry.CaptureException(criticalErr)
 			return bytesRead, fmt.Errorf("error reading normalized audio data: %w", readErr)
+		}
+
+		// CRITICAL CHECK: If read returned 0 bytes but no error, this is suspicious
+		if n == 0 {
+			criticalErr := fmt.Errorf("CRITICAL: Read returned 0 bytes without error")
+			s.logger.Error("CRITICAL: Read returned 0 bytes without error",
+				"trackPath", trackPath,
+				"bytesRead", bytesRead)
+			sentry.CaptureException(criticalErr)
+			break
 		}
 
 		bytesRead += int64(n)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/effects"
+	sentry "github.com/getsentry/sentry-go"
 	mp3 "github.com/hajimehoshi/go-mp3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -651,7 +652,10 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 
 	// Check if file is already closed
 	if file == nil {
-		return fmt.Errorf("file is nil")
+		criticalErr := fmt.Errorf("CRITICAL: NormalizeMP3Stream called with nil file")
+		config.logger.Error("CRITICAL: NormalizeMP3Stream called with nil file", "route", route)
+		sentry.CaptureException(criticalErr)
+		return criticalErr
 	}
 
 	// Calculate gain factor.
@@ -668,10 +672,12 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
 		if strings.Contains(seekErr.Error(), "file already closed") || 
 		   strings.Contains(seekErr.Error(), "closed") {
-			config.logger.Info("DIAGNOSTICS: File already closed during seek, cannot normalize",
+			criticalErr := fmt.Errorf("CRITICAL: File already closed during seek in normalization")
+			config.logger.Error("CRITICAL: File already closed during seek in normalization",
 				"filePath", filePath,
 				"error", seekErr.Error())
-			return fmt.Errorf("file already closed during seek: %w", seekErr)
+			sentry.CaptureException(criticalErr)
+			return criticalErr
 		}
 		return fmt.Errorf("error seeking to start: %w", seekErr)
 	}
@@ -681,12 +687,19 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	if decodeErr != nil {
 		if strings.Contains(decodeErr.Error(), "file already closed") || 
 		   strings.Contains(decodeErr.Error(), "closed") {
-			config.logger.Info("DIAGNOSTICS: File already closed during decoder creation",
+			criticalErr := fmt.Errorf("CRITICAL: File already closed during decoder creation")
+			config.logger.Error("CRITICAL: File already closed during decoder creation",
 				"filePath", filePath,
 				"error", decodeErr.Error())
-			return fmt.Errorf("file already closed during decoder creation: %w", decodeErr)
+			sentry.CaptureException(criticalErr)
+			return criticalErr
 		}
-		return fmt.Errorf("error creating decoder: %w", decodeErr)
+		criticalErr := fmt.Errorf("CRITICAL: Failed to create MP3 decoder: %w", decodeErr)
+		config.logger.Error("CRITICAL: Failed to create MP3 decoder",
+			"filePath", filePath,
+			"error", decodeErr.Error())
+		sentry.CaptureException(criticalErr)
+		return criticalErr
 	}
 
 	// Create volume filter.
@@ -699,8 +712,26 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	n, streamErr := StreamToBuffer(volumeFilter, buffer, len(buffer))
 	if streamErr != nil {
 		if !errors.Is(streamErr, io.EOF) {
-			return fmt.Errorf("error streaming to buffer: %w", streamErr)
+			criticalErr := fmt.Errorf("CRITICAL: Failed to stream audio to buffer: %w", streamErr)
+			config.logger.Error("CRITICAL: Failed to stream audio to buffer",
+				"filePath", filePath,
+				"route", route,
+				"error", streamErr.Error(),
+				"bytesStreamed", n)
+			sentry.CaptureException(criticalErr)
+			return criticalErr
 		}
+	}
+
+	// CRITICAL CHECK: If no data was streamed, this is a problem
+	if n == 0 {
+		criticalErr := fmt.Errorf("CRITICAL: No audio data was streamed from normalized buffer")
+		config.logger.Error("CRITICAL: No audio data was streamed from normalized buffer",
+			"filePath", filePath,
+			"route", route,
+			"gainFactor", gainFactor)
+		sentry.CaptureException(criticalErr)
+		return criticalErr
 	}
 
 	// Write to output.
@@ -715,7 +746,14 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 					"error", writeErr.Error())
 				return nil // Not an error, just pipe was closed
 			}
-			return fmt.Errorf("error writing to output: %w", writeErr)
+			criticalErr := fmt.Errorf("CRITICAL: Failed to write normalized audio data: %w", writeErr)
+			config.logger.Error("CRITICAL: Failed to write normalized audio data",
+				"filePath", filePath,
+				"route", route,
+				"bytesToWrite", n,
+				"error", writeErr.Error())
+			sentry.CaptureException(criticalErr)
+			return criticalErr
 		}
 	}
 
