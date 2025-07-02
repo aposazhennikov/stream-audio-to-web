@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,7 +17,6 @@ import (
 	"errors"
 
 	sentry "github.com/getsentry/sentry-go"
-	mp3 "github.com/hajimehoshi/go-mp3"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -724,21 +725,71 @@ func (s *Streamer) GetPlaybackInfo() (string, time.Time, time.Duration, time.Dur
 	return s.currentTrackPath, s.trackStartTime, elapsed, s.trackDuration
 }
 
-// calculateMP3Duration calculates the duration of an MP3 file using a simpler method
+// calculateMP3Duration calculates the duration of an MP3 file using ffprobe (most accurate)
 func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
+	// Method 1: Try ffprobe (most accurate)
+	duration := s.calculateDurationWithFFProbe(trackPath)
+	if duration > 0 {
+		s.logger.Info("MP3 duration calculated with ffprobe", 
+			"trackPath", trackPath, 
+			"duration", duration.String())
+		return duration
+	}
+
+	// Method 2: Fallback to simple file size estimation
+	return s.calculateDurationBySimpleEstimation(trackPath)
+}
+
+// calculateDurationWithFFProbe uses ffprobe to get exact duration
+func (s *Streamer) calculateDurationWithFFProbe(trackPath string) time.Duration {
+	// Try ffprobe command to get exact duration
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", trackPath)
+	output, err := cmd.Output()
+	if err != nil {
+		s.logger.Info("ffprobe not available or failed", 
+			"trackPath", trackPath, 
+			"error", err.Error())
+		return time.Duration(0)
+	}
+
+	// Parse duration from ffprobe output
+	durationStr := strings.TrimSpace(string(output))
+	durationFloat, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		s.logger.Error("Failed to parse ffprobe duration", 
+			"trackPath", trackPath, 
+			"output", durationStr,
+			"error", err.Error())
+		return time.Duration(0)
+	}
+
+	duration := time.Duration(durationFloat * float64(time.Second))
+	
+	// Sanity check
+	if duration < time.Second || duration > 4*time.Hour {
+		s.logger.Error("ffprobe returned unreasonable duration", 
+			"trackPath", trackPath, 
+			"duration", duration.String())
+		return time.Duration(0)
+	}
+
+	return duration
+}
+
+// calculateDurationBySimpleEstimation uses simple file size estimation
+func (s *Streamer) calculateDurationBySimpleEstimation(trackPath string) time.Duration {
 	file, err := os.Open(trackPath)
 	if err != nil {
-		s.logger.Error("Failed to open file for duration calculation", 
+		s.logger.Error("Failed to open file for simple duration calculation", 
 			"trackPath", trackPath, 
 			"error", err.Error())
 		return time.Duration(0)
 	}
 	defer file.Close()
 
-	// Get file size
 	fileInfo, err := file.Stat()
 	if err != nil {
-		s.logger.Error("Failed to get file stats for duration", 
+		s.logger.Error("Failed to get file stats for simple duration", 
 			"trackPath", trackPath, 
 			"error", err.Error())
 		return time.Duration(0)
@@ -746,25 +797,11 @@ func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
 	
 	fileSize := fileInfo.Size()
 	
-	// Create MP3 decoder to get sample rate
-	decoder, err := mp3.NewDecoder(file)
-	if err != nil {
-		s.logger.Error("Failed to create MP3 decoder for duration", 
-			"trackPath", trackPath, 
-			"error", err.Error())
-		return time.Duration(0)
-	}
-
-	// Get sample rate from decoder
-	sampleRate := decoder.SampleRate()
-	
-	// Estimate duration using average MP3 bitrate (128 kbps is common)
-	// This is a rough approximation but should be reasonable
+	// Use conservative 128kbps estimate
 	avgBitrate := 128 * 1000 // 128 kbps in bits per second
 	bytesPerSecond := avgBitrate / 8 // Convert to bytes per second
 	
-	estimatedDurationSeconds := float64(fileSize) / float64(bytesPerSecond)
-	estimatedDuration := time.Duration(estimatedDurationSeconds * float64(time.Second))
+	estimatedDuration := time.Duration(float64(fileSize)/float64(bytesPerSecond)) * time.Second
 	
 	// Clamp to reasonable values (1 second to 3 hours)
 	if estimatedDuration < time.Second {
@@ -773,15 +810,18 @@ func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
 		estimatedDuration = 3 * time.Hour
 	}
 	
-	s.logger.Info("Calculated MP3 duration",
+	s.logger.Info("MP3 duration calculated by simple estimation",
 		"trackPath", trackPath,
 		"duration", estimatedDuration.String(),
 		"fileSize", fileSize,
-		"sampleRate", sampleRate,
-		"estimatedBitrate", avgBitrate)
+		"method", "simple_estimation")
 	
 	return estimatedDuration
 }
+
+
+
+
 
 // broadcastToClients sends data to all connected clients.
 func (s *Streamer) broadcastToClients(data []byte) {

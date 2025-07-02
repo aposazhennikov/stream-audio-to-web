@@ -30,8 +30,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o audio-streamer .
 # Stage 2: Creating the final image
 FROM alpine:latest
 
-# Installing basic utilities
-RUN apk add --no-cache ca-certificates tzdata curl findutils
+# Installing basic utilities and FFmpeg for accurate MP3 duration detection
+RUN apk add --no-cache ca-certificates tzdata curl findutils ffmpeg
 
 # Copying binary file from build stage
 COPY --from=builder /app/audio-streamer /app/

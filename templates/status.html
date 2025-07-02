@@ -705,18 +705,23 @@
         }
 
         // Check current track more frequently after manual track switch
-        let checkInterval = 1000; // Default 1 second for smooth time updates
-        let fastCheckCount = 0;
+        let updateIntervalId = null;
+        let currentInterval = 1000; // Default 1 second for smooth time updates
         
-        function scheduleNextCheck() {
-            setTimeout(() => {
+        function startUpdateInterval() {
+            // Clear existing interval
+            if (updateIntervalId) {
+                clearInterval(updateIntervalId);
+            }
+            
+            // Start new interval with current timing
+            updateIntervalId = setInterval(() => {
                 updateAllTrackInfo(); // Single call updates both tracks and times
-                scheduleNextCheck();
-            }, checkInterval);
+            }, currentInterval);
         }
         
-        // Start checking
-        scheduleNextCheck();
+        // Start checking with 1-second intervals
+        startUpdateInterval();
         
         // Speed up checking after manual track switches WITHOUT page reload
         document.addEventListener('click', function(e) {
@@ -738,9 +743,11 @@
                         if (response.ok) {
                             console.log('Track switch request sent successfully');
                             // Speed up track checking for faster UI updates
-                            checkInterval = 300; // Check every 300ms for faster response
+                            currentInterval = 300; // Check every 300ms for faster response
+                            startUpdateInterval(); // Restart interval with new timing
                             setTimeout(() => {
-                                checkInterval = 1000; // Return to normal 1-second updates after 15 seconds
+                                currentInterval = 1000; // Return to normal 1-second updates after 15 seconds
+                                startUpdateInterval(); // Restart interval with normal timing
                                 console.log('Returning to normal update speed');
                             }, 15000);
                         } else {
