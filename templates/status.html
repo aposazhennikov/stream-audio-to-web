@@ -548,8 +548,54 @@
                 .catch(error => console.error('Error checking current track:', error));
         }
 
-        // Check current track every 2 seconds.
-        setInterval(checkCurrentTracks, 2000);
+        // Check current track more frequently after manual track switch
+        let checkInterval = 2000; // Default 2 seconds
+        let fastCheckCount = 0;
+        
+        function scheduleNextCheck() {
+            setTimeout(() => {
+                checkCurrentTracks();
+                scheduleNextCheck();
+            }, checkInterval);
+        }
+        
+        // Start checking
+        scheduleNextCheck();
+        
+        // Speed up checking after manual track switches WITHOUT page reload
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('next-track') || e.target.classList.contains('prev-track')) {
+                console.log('Manual track switch detected - speeding up updates');
+                
+                // Prevent default form submission that causes page reload
+                e.preventDefault();
+                
+                // Submit form via AJAX instead
+                const form = e.target.closest('form');
+                if (form) {
+                    fetch(form.action, {
+                        method: 'POST',
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    }).then(response => {
+                        if (response.ok) {
+                            console.log('Track switch request sent successfully');
+                            // Speed up track checking for faster UI updates
+                            checkInterval = 300; // Check every 300ms for faster response
+                            setTimeout(() => {
+                                checkInterval = 2000; // Return to normal after 15 seconds
+                                console.log('Returning to normal update speed');
+                            }, 15000);
+                        } else {
+                            console.error('Track switch failed:', response.status);
+                        }
+                    }).catch(error => {
+                        console.error('Track switch error:', error);
+                    });
+                }
+            }
+        });
         
         // Initialization on page load.
         window.addEventListener('DOMContentLoaded', () => {

@@ -62,6 +62,8 @@ type Streamer struct {
 	trackSecondsMetric *prometheus.CounterVec // Метрика для подсчета времени воспроизведения трека.
 	metricMutex        sync.RWMutex           // Мьютекс для защиты метрики.
 	logger             *slog.Logger           // Logger for streamer operations
+	streamingStopped   chan struct{}          // НОВЫЙ канал для синхронизации остановки стриминга
+	isStreaming        int32                  // НОВЫЙ атомарный флаг состояния стриминга
 }
 
 // NewStreamer creates a new audio streamer.
@@ -93,6 +95,8 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		trackSecondsMetric: nil,
 		metricMutex:        sync.RWMutex{},
 		logger:             slog.Default(),
+		streamingStopped:   make(chan struct{}),
+		isStreaming:        0,
 	}
 }
 
@@ -133,33 +137,50 @@ func (s *Streamer) Close() {
 // StopCurrentTrack immediately stops the playback of the current track.
 // Used when manually switching tracks.
 func (s *Streamer) StopCurrentTrack() {
-	// First signal the need to stop.
-	// Safe check for already closed channel.
+	startTime := time.Now()
+	
+	s.logger.Error("CRITICAL: IMMEDIATE track stop requested",
+		"timestamp", startTime.Format("15:04:05.000"))
+	
+	// Закрываем quit канал для немедленной остановки
 	select {
 	case <-s.quit:
-		// Channel already closed, create a new one.
-		s.logger.Info("DIAGNOSTICS: Quit channel already closed, skipping closure")
+		s.logger.Error("CRITICAL: Quit channel already closed, creating new one")
 	default:
-		// Channel not yet closed, close it.
 		close(s.quit)
+		s.logger.Error("CRITICAL: Quit channel closed - track MUST stop NOW")
 	}
 
-	// Clear the last buffer - this is critically important to prevent.
-	// sending data from the old track to new clients.
+	// Очищаем буфер немедленно чтобы предотвратить воспроизведение старых данных
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
 
-	// DO NOT close client channels to maintain connections.
-	// s.clientMutex.Lock().
-	// instead of closing channels just log.
-	s.logger.Info("DIAGNOSTICS: Stopping current track without closing client connections")
-	// s.clientMutex.Unlock().
+	// КРИТИЧЕСКОЕ ОЖИДАНИЕ: ждём только если стриминг действительно активен
+	if atomic.LoadInt32(&s.isStreaming) == 1 {
+		s.logger.Error("CRITICAL: Waiting for active streaming to stop...")
+		
+		select {
+		case <-s.streamingStopped:
+			s.logger.Error("CRITICAL: Streaming stopped successfully",
+				"stopDurationMs", time.Since(startTime).Milliseconds())
+		case <-time.After(1 * time.Second): // Уменьшили с 2 до 1 секунды
+			criticalErr := fmt.Errorf("CRITICAL: 1-second track stop timeout")
+			s.logger.Error("CRITICAL: Track stop timeout after 1 second",
+				"isStreaming", atomic.LoadInt32(&s.isStreaming))
+			sentry.CaptureException(criticalErr)
+		}
+	} else {
+		s.logger.Error("CRITICAL: No active streaming detected - stop immediate")
+	}
 
-	// Create new channel for next track.
+	// Создаём новые каналы для следующего трека
 	s.quit = make(chan struct{})
+	s.streamingStopped = make(chan struct{})
 
-	s.logger.Info("DIAGNOSTICS: Current track stopped, buffer cleared")
+	totalTime := time.Since(startTime)
+	s.logger.Error("CRITICAL: Track stop COMPLETED",
+		"totalStopTimeMs", totalTime.Milliseconds())
 }
 
 // GetCurrentTrackChannel returns a channel with information about the current track.
@@ -169,6 +190,17 @@ func (s *Streamer) GetCurrentTrackChannel() <-chan string {
 
 // StreamTrack streams a track to all connected clients.
 func (s *Streamer) StreamTrack(trackPath string) error {
+	// КРИТИЧЕСКИ ВАЖНО: устанавливаем флаг стриминга в начале
+	atomic.StoreInt32(&s.isStreaming, 1)
+	defer func() {
+		// И сбрасываем в конце + сигнализируем об остановке
+		atomic.StoreInt32(&s.isStreaming, 0)
+		select {
+		case s.streamingStopped <- struct{}{}:
+		default:
+		}
+	}()
+
 	// Check for empty path.
 	if trackPath == "" {
 		sentryErr := errors.New("empty audio file path")
@@ -176,7 +208,9 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		return sentryErr
 	}
 
-	s.logger.Info("DIAGNOSTICS: Attempting to play file", "trackPath", trackPath)
+	s.logger.Error("CRITICAL: Starting track streaming",
+		"trackPath", trackPath,
+		"timestamp", time.Now().Format("15:04:05.000"))
 
 	// Check if file exists.
 	fileInfo, statErr := os.Stat(trackPath)

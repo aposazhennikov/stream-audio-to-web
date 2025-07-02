@@ -24,6 +24,7 @@ type AudioStreamer interface {
 	StreamTrack(trackPath string) error
 	Close()
 	StopCurrentTrack()
+	GetClientCount() int
 }
 
 // PlaylistManager interface for playlist management.
@@ -96,43 +97,62 @@ func (rs *Station) Stop() {
 // RestartPlayback restarts playback of the current track.
 // Called when switching tracks via API.
 func (rs *Station) RestartPlayback() {
+	startTime := time.Now()
+	rs.logger.Error("CRITICAL: Track switch requested - forcing immediate playback restart",
+		slog.String("route", rs.route),
+		slog.String("timestamp", startTime.Format("15:04:05.000")))
+
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
 
-	// Immediately stop the streamer (interrupts current playback).
+	// CRITICAL: Stop the streamer immediately with enhanced synchronization
+	rs.logger.Error("CRITICAL: Stopping current track streamer",
+		slog.String("route", rs.route))
 	rs.streamer.StopCurrentTrack()
 
-	// Add a short delay to complete streamer operations.
-	time.Sleep(shortDelayMs * time.Millisecond)
+	// КРИТИЧЕСКОЕ ОЖИДАНИЕ: короткая пауза для завершения операций стримера
+	time.Sleep(100 * time.Millisecond) // Быстрая пауза вместо длительного ожидания
+	rs.logger.Error("CRITICAL: Streamer stop signal sent, proceeding with restart",
+		slog.String("route", rs.route))
 
 	// Interrupt current playback if it's ongoing.
 	select {
 	case <-rs.currentTrack: // Channel already closed
 		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
+		rs.logger.Error("CRITICAL: Current track channel was already closed",
+			slog.String("route", rs.route))
 	default:
 		// Close channel to interrupt current playback.
 		close(rs.currentTrack)
 		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
+		rs.logger.Error("CRITICAL: Current track channel closed - playback interrupted",
+			slog.String("route", rs.route))
 	}
 
 	// Explicitly update the current track in the playlist to ensure it appears in the now-playing.
 	// This is critically important for the proper functioning of track switching tests.
-	_ = rs.playlist.GetCurrentTrack() // Get the current track but don't save it to a variable
-	rs.logger.Info(
-		"DIAGNOSTICS: Current track after manual switching for station obtained",
+	currentTrack := rs.playlist.GetCurrentTrack()
+	rs.logger.Error("CRITICAL: Current track after manual switching obtained",
 		slog.String("route", rs.route),
-	)
+		slog.Any("track", currentTrack))
 
 	// Send restart signal to playback loop.
 	select {
 	case rs.restart <- struct{}{}: // Send signal if channel is not full
-		rs.logger.Info("DIAGNOSTICS: Restart signal sent for station", slog.String("route", rs.route))
+		rs.logger.Error("CRITICAL: Restart signal sent for immediate playback",
+			slog.String("route", rs.route))
 	default:
 		// Channel already contains signal, no need to send another.
-		rs.logger.Info("DIAGNOSTICS: Restart signal already queued for station", slog.String("route", rs.route))
+		rs.logger.Error("CRITICAL: Restart signal already queued",
+			slog.String("route", rs.route))
 	}
+	
+	totalTime := time.Since(startTime)
+	rs.logger.Error("CRITICAL: Track switch completed",
+		slog.String("route", rs.route),
+		slog.Int64("totalSwitchTimeMs", totalTime.Milliseconds()))
 }
 
 // streamLoop main track playback loop.
