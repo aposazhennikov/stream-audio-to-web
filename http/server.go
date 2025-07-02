@@ -43,21 +43,24 @@ type PlaylistManager interface {
 	GetStartTime() time.Time    // Get start time.
 	PreviousTrack() interface{} // Switch to previous track.
 	Shuffle()                   // Shuffle the playlist.
+	GetShuffleEnabled() bool    // Get current shuffle status.
+	SetShuffleEnabled(bool)     // Set shuffle status.
 }
 
 // Server represents HTTP server for audio streaming.
 type Server struct {
-	router         *mux.Router
-	streams        map[string]StreamHandler
-	playlists      map[string]PlaylistManager
-	streamFormat   string
-	maxClients     int
-	mutex          sync.RWMutex
-	currentTracks  map[string]string
-	trackMutex     sync.RWMutex
-	statusPassword string                                    // Password for accessing /status page.
-	stationManager interface{ RestartPlayback(string) bool } // Interface for restarting playback.
-	relayManager   *relay.Manager                            // Manager for relay functionality.
+	router            *mux.Router
+	streams           map[string]StreamHandler
+	playlists         map[string]PlaylistManager
+	streamFormat      string
+	maxClients        int
+	mutex             sync.RWMutex
+	currentTracks     map[string]string
+	trackMutex        sync.RWMutex
+	statusPassword    string                                    // Password for accessing /status page.
+	stationManager    interface{ RestartPlayback(string) bool } // Interface for restarting playback.
+	relayManager      *relay.Manager                            // Manager for relay functionality.
+	globalShuffleConfig bool                                   // Global shuffle configuration.
 	// Prometheus metrics.
 	listenerCount     *prometheus.GaugeVec   // Gauge for tracking active listeners.
 	bytesSent         *prometheus.CounterVec // Counter for bytes sent.
@@ -1731,9 +1734,37 @@ func (s *Server) isShuffleRouteValid(w http.ResponseWriter, r *http.Request, rou
 
 // processShuffleModeSetting processes the shuffle mode setting and sends response.
 func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Request, route, mode string) {
-	// TODO: Implement setting shuffle mode for the playlist.
-	// This would require extending the PlaylistManager interface.
-	// For now, just acknowledge the request.
+	// Get the playlist for this route.
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		s.logger.Error("Route not found for shuffle mode setting", slog.String("route", route))
+		isAjax := isAjaxRequest(r)
+		if isAjax {
+			w.Header().Set("Content-Type", "application/json")
+			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"route":   route,
+				"error":   "Route not found",
+			}); encodeErr != nil {
+				s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+				return
+			}
+			return
+		}
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+	
+	// Set shuffle mode on the playlist.
+	shuffleEnabled := mode == "on"
+	playlist.SetShuffleEnabled(shuffleEnabled)
+	
+	s.logger.Info("Shuffle mode updated for route", 
+		slog.String("route", route), 
+		slog.Bool("enabled", shuffleEnabled))
 
 	isAjax := isAjaxRequest(r)
 	if isAjax {
@@ -1742,6 +1773,7 @@ func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Reques
 			"success": true,
 			"route":   route,
 			"mode":    mode,
+			"enabled": shuffleEnabled,
 			"message": fmt.Sprintf("Shuffle mode set to %s for route %s", mode, route),
 		}); encodeErr != nil {
 			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
@@ -1835,18 +1867,34 @@ func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// getShuffleStatusForRoute returns shuffle status for specific route (placeholder implementation)
+// getShuffleStatusForRoute returns shuffle status for specific route.
 func (s *Server) getShuffleStatusForRoute(route string) bool {
-	// TODO: Implement per-route shuffle status based on playlist configuration
-	// For now, return true as placeholder
-	return true
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		// If route doesn't exist, return global shuffle setting as fallback.
+		return s.globalShuffleConfig
+	}
+	
+	// Get shuffle status from playlist.
+	return playlist.GetShuffleEnabled()
 }
 
-// getGlobalShuffleStatus returns global shuffle configuration (placeholder implementation)
+// getGlobalShuffleStatus returns global shuffle configuration.
 func (s *Server) getGlobalShuffleStatus() bool {
-	// TODO: Get this from configuration or environment variables
-	// For now, return true as placeholder
-	return true
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.globalShuffleConfig
+}
+
+// SetGlobalShuffleConfig sets the global shuffle configuration.
+func (s *Server) SetGlobalShuffleConfig(enabled bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.globalShuffleConfig = enabled
+	s.logger.Info("Global shuffle configuration updated", slog.Bool("enabled", enabled))
 }
 
 // ClearHistoryForRoute clears track history for a specific route (internal method)

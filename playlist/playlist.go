@@ -920,3 +920,97 @@ func (p *Playlist) reshufflePlaylistPreservingCurrent() {
 		slog.Int("position", p.current),
 	)
 }
+
+// GetShuffleEnabled returns current shuffle status.
+func (p *Playlist) GetShuffleEnabled() bool {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.shuffle
+}
+
+// SetShuffleEnabled sets the shuffle status and optionally reshuffles the playlist.
+func (p *Playlist) SetShuffleEnabled(enabled bool) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	
+	oldShuffle := p.shuffle
+	p.shuffle = enabled
+	
+	p.logger.Info("Shuffle status changed", 
+		slog.Bool("from", oldShuffle), 
+		slog.Bool("to", enabled),
+		slog.String("directory", p.directory))
+	
+	// If shuffle was just enabled and we have tracks, shuffle them.
+	if !oldShuffle && enabled && len(p.tracks) > 1 {
+		p.logger.Info("Shuffling tracks due to shuffle being enabled")
+		p.shuffleTracksInternal()
+	}
+	
+	// If shuffle was disabled, sort tracks by name for consistent order.
+	if oldShuffle && !enabled && len(p.tracks) > 1 {
+		p.logger.Info("Sorting tracks by name due to shuffle being disabled")
+		// Save current track path to restore position after sorting.
+		var currentTrackPath string
+		if p.current < len(p.tracks) {
+			currentTrackPath = p.tracks[p.current].Path
+		}
+		
+		// Sort tracks by name.
+		sort.Slice(p.tracks, func(i, j int) bool {
+			return p.tracks[i].Name < p.tracks[j].Name
+		})
+		
+		// Restore current track position.
+		if currentTrackPath != "" {
+			for i, track := range p.tracks {
+				if track.Path == currentTrackPath {
+					p.current = i
+					break
+				}
+			}
+		}
+		
+		p.logger.Info("Tracks sorted by name", 
+			slog.Int("trackCount", len(p.tracks)),
+			slog.Int("currentIndex", p.current))
+	}
+}
+
+// shuffleTracksInternal перемешивает треки без блокировки (для внутреннего использования).
+func (p *Playlist) shuffleTracksInternal() {
+	// Save current track path to restore position after shuffling.
+	var currentTrackPath string
+	if p.current < len(p.tracks) {
+		currentTrackPath = p.tracks[p.current].Path
+	}
+	
+	// Используем криптографически безопасный генератор для перемешивания.
+	for i := len(p.tracks) - 1; i > 0; i-- {
+		// Генерируем случайное число от 0 до i включительно.
+		maxInt := big.NewInt(int64(i + 1))
+		j, err := rand.Int(rand.Reader, maxInt)
+		if err != nil {
+			// В случае ошибки используем i в качестве резервного варианта.
+			p.logger.Error("Error generating random number", slog.String("error", err.Error()))
+			continue
+		}
+
+		// Меняем местами элементы.
+		p.tracks[i], p.tracks[j.Int64()] = p.tracks[j.Int64()], p.tracks[i]
+	}
+	
+	// Restore current track position.
+	if currentTrackPath != "" {
+		for i, track := range p.tracks {
+			if track.Path == currentTrackPath {
+				p.current = i
+				break
+			}
+		}
+	}
+
+	p.logger.Info("Tracks shuffled internally", 
+		slog.Int("trackCount", len(p.tracks)),
+		slog.Int("currentIndex", p.current))
+}

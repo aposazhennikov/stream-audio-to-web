@@ -282,6 +282,10 @@ func initializeComponents(
 	logger.Info("Creating HTTP server...")
 	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
 	logger.Info("HTTP server created")
+	
+	// Set global shuffle configuration.
+	server.SetGlobalShuffleConfig(config.Shuffle)
+	logger.Info("Global shuffle configuration set for HTTP server", slog.Bool("enabled", config.Shuffle))
 
 	// Configure normalization parameters with safe defaults.
 	normalizeWindows := config.NormalizeSampleWindows
@@ -1133,6 +1137,17 @@ func (d *dummyPlaylistManager) PreviousTrack() interface{} {
 
 // Shuffle implements PlaylistManager.Shuffle method.
 func (d *dummyPlaylistManager) Shuffle() {
+	// Empty implementation for dummy placeholder.
+}
+
+// GetShuffleEnabled implements PlaylistManager.GetShuffleEnabled method.
+func (d *dummyPlaylistManager) GetShuffleEnabled() bool {
+	// Dummy implementation - always return false.
+	return false
+}
+
+// SetShuffleEnabled implements PlaylistManager.SetShuffleEnabled method.
+func (d *dummyPlaylistManager) SetShuffleEnabled(enabled bool) {
 	// Empty implementation for dummy placeholder.
 }
 
