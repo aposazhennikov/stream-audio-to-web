@@ -649,6 +649,11 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	filePath := file.Name()
 	config := GetNormalizerConfig()
 
+	// Check if file is already closed
+	if file == nil {
+		return fmt.Errorf("file is nil")
+	}
+
 	// Calculate gain factor.
 	gainFactor, gainErr := CalculateGain(filePath, route)
 	if gainErr != nil {
@@ -659,14 +664,28 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 		return StreamRawMP3(file, writer)
 	}
 
-	// Reset file position.
+	// Reset file position with error handling for closed files.
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		if strings.Contains(seekErr.Error(), "file already closed") || 
+		   strings.Contains(seekErr.Error(), "closed") {
+			config.logger.Info("DIAGNOSTICS: File already closed during seek, cannot normalize",
+				"filePath", filePath,
+				"error", seekErr.Error())
+			return fmt.Errorf("file already closed during seek: %w", seekErr)
+		}
 		return fmt.Errorf("error seeking to start: %w", seekErr)
 	}
 
-	// Create MP3 decoder.
+	// Create MP3 decoder with error handling for closed files.
 	decoder, decodeErr := mp3.NewDecoder(file)
 	if decodeErr != nil {
+		if strings.Contains(decodeErr.Error(), "file already closed") || 
+		   strings.Contains(decodeErr.Error(), "closed") {
+			config.logger.Info("DIAGNOSTICS: File already closed during decoder creation",
+				"filePath", filePath,
+				"error", decodeErr.Error())
+			return fmt.Errorf("file already closed during decoder creation: %w", decodeErr)
+		}
 		return fmt.Errorf("error creating decoder: %w", decodeErr)
 	}
 
@@ -679,12 +698,25 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	// Stream to buffer.
 	n, streamErr := StreamToBuffer(volumeFilter, buffer, len(buffer))
 	if streamErr != nil {
-		return fmt.Errorf("error streaming to buffer: %w", streamErr)
+		if !errors.Is(streamErr, io.EOF) {
+			return fmt.Errorf("error streaming to buffer: %w", streamErr)
+		}
 	}
 
 	// Write to output.
-	if _, writeErr := writer.Write(buffer[:n]); writeErr != nil {
-		return fmt.Errorf("error writing to output: %w", writeErr)
+	if n > 0 {
+		if _, writeErr := writer.Write(buffer[:n]); writeErr != nil {
+			// Check for closed pipe errors which are not critical
+			if errors.Is(writeErr, io.ErrClosedPipe) || 
+			   strings.Contains(writeErr.Error(), "closed pipe") ||
+			   strings.Contains(writeErr.Error(), "broken pipe") {
+				config.logger.Info("DIAGNOSTICS: Pipe closed during normalization write",
+					"filePath", filePath,
+					"error", writeErr.Error())
+				return nil // Not an error, just pipe was closed
+			}
+			return fmt.Errorf("error writing to output: %w", writeErr)
+		}
 	}
 
 	return nil
@@ -696,8 +728,20 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 	filePath := file.Name()
 	config := GetNormalizerConfig()
 
-	// Reset file position to beginning.
+	// Check if file is already closed
+	if file == nil {
+		return fmt.Errorf("file is nil")
+	}
+
+	// Reset file position to beginning with error handling for closed files.
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		if strings.Contains(seekErr.Error(), "file already closed") || 
+		   strings.Contains(seekErr.Error(), "closed") {
+			config.logger.Info("DIAGNOSTICS: File already closed during raw stream seek",
+				"filePath", filePath,
+				"error", seekErr.Error())
+			return fmt.Errorf("file already closed during raw stream seek: %w", seekErr)
+		}
 		return fmt.Errorf("error seeking to beginning of file: %w", seekErr)
 	}
 
@@ -713,6 +757,14 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 			break
 		}
 		if readErr != nil {
+			// Check for file closed errors
+			if strings.Contains(readErr.Error(), "file already closed") || 
+			   strings.Contains(readErr.Error(), "closed") {
+				config.logger.Info("DIAGNOSTICS: File already closed during raw stream read",
+					"filePath", filePath,
+					"error", readErr.Error())
+				return fmt.Errorf("file already closed during raw stream read: %w", readErr)
+			}
 			return fmt.Errorf("error reading file: %w", readErr)
 		}
 

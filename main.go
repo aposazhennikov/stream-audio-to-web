@@ -43,7 +43,7 @@ const (
 	readTimeoutSec         = 15
 	idleTimeoutSec         = 60
 	shutdownTimeoutSec     = 10
-	defaultRoute           = "/humor"
+	defaultRoute           = "/status"
 	maxSplitParts          = 2      // Maximum number of parts when splitting configuration strings
 	strTrue                = "true" // Строковое значение "true" для проверки
 	partsCount             = 2      // Ожидаемое количество частей при разделении строки
@@ -323,7 +323,7 @@ func startHTTPServer(logger *slog.Logger, port int, handler http.Handler) *http.
 // configureRootRedirection sets up redirection from root route.
 func configureRootRedirection(logger *slog.Logger, config *Config, server *httpServer.Server) string {
 	// Redirect from root route.
-	redirectPath := defaultRoute // redirect to /humor by default
+	redirectPath := defaultRoute // redirect to /status by default
 	if _, exists := config.DirectoryRoutes["/humor"]; !exists {
 		// If /humor doesn't exist, take the first route from configuration.
 		for route := range config.DirectoryRoutes {
@@ -390,7 +390,7 @@ func configureAudioRoutes(
 	for route, dir := range config.DirectoryRoutes {
 		// Route should already be normalized with leading slash in loadConfig.
 		// But check just in case.
-		if route[0] != '/' {
+		if !strings.HasPrefix(route, "/") {
 			route = "/" + route
 		}
 
@@ -399,12 +399,12 @@ func configureAudioRoutes(
 		dirCopy := dir
 
 		// Start configuring EACH stream in a separate goroutine.
-		go func(route, dir string) {
-			logger.Info("Asynchronous configuration of route", slog.String("route", route))
-			if success := configureSyncRoute(logger, server, stationManager, route, dir, config); success {
-				logger.Info("Route successfully configured", slog.String("route", route))
+		go func(r, d string) {
+			logger.Info("Asynchronous configuration of route", slog.String("route", r))
+			if success := configureSyncRoute(logger, server, stationManager, r, d, config); success {
+				logger.Info("Route successfully configured", slog.String("route", r))
 			} else {
-				logger.Error("ERROR: Route configuration failed", slog.String("route", route))
+				logger.Error("ERROR: Route configuration failed", slog.String("route", r))
 			}
 		}(routeCopy, dirCopy)
 	}
@@ -833,23 +833,22 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		logger.Info("Обнаружен JSON формат в DIRECTORY_ROUTES")
 
 		// Перебираем маршруты из JSON
-		for routeName, path := range jsonRoutes {
+		for route, path := range jsonRoutes {
 			// Нормализуем маршрут (добавляем слэш в начало, если его нет)
-			routePath := routeName
-			if !strings.HasPrefix(routePath, "/") {
-				logger.Info("Normalized route", slog.String("from", routePath), slog.String("to", "/"+routePath))
-				routePath = "/" + routePath
+			if !strings.HasPrefix(route, "/") {
+				logger.Info("Normalized route", slog.String("from", route), slog.String("to", "/"+route))
+				route = "/" + route
 			}
 
 			// Проверяем существование директории
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-				logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", routePath))
+				logger.Warn("Directory does not exist", slog.String("path", path), slog.String("route", route))
 				continue
 			}
 
-			// В config.DirectoryRoutes ключи должны быть путями, а значения - маршрутами
-			config.DirectoryRoutes[path] = routePath
-			logger.Info("Added directory route from JSON", slog.String("path", path), slog.String("route", routePath))
+			// Ключ - маршрут, значение - путь к директории
+			config.DirectoryRoutes[route] = path
+			logger.Info("Added directory route from JSON", slog.String("route", route), slog.String("path", path))
 		}
 
 		logger.Info("Directory routes configured from JSON", slog.Int("count", len(config.DirectoryRoutes)))
@@ -868,8 +867,9 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 			continue
 		}
 
-		path := parts[0]
-		url := parts[1]
+		url := parts[0] // Маршрут
+		path := parts[1] // Путь к директории
+
 		if !strings.HasPrefix(url, "/") {
 			url = "/" + url
 		}
@@ -881,9 +881,9 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		}
 
 		// Add to configuration.
-		config.DirectoryRoutes[path] = url
+		config.DirectoryRoutes[url] = path
 
-		logger.Info("Added directory route", slog.String("path", path), slog.String("url", url))
+		logger.Info("Added directory route", slog.String("url", url), slog.String("path", path))
 	}
 
 	logger.Debug("Directory routes configured", slog.Int("count", len(config.DirectoryRoutes)))

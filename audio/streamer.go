@@ -311,14 +311,28 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 	pr, pw := io.Pipe()
 	defer pr.Close() // Always close the reader when function exits.
 
+	// Create a channel to signal when normalization is complete
+	normalizationDone := make(chan struct{})
+
 	// Start normalization in a separate goroutine.
-	go s.runNormalization(file, pw, route)
+	go func() {
+		defer func() {
+			pw.Close()
+			close(normalizationDone) // Signal that normalization is complete
+		}()
+		s.runNormalization(file, pw, route)
+	}()
 
 	// Process audio streaming.
 	bytesRead, err := s.streamFromPipe(pr, trackPath)
 	if err != nil {
+		// Wait for normalization to complete before returning
+		<-normalizationDone
 		return err
 	}
+
+	// Wait for normalization to complete
+	<-normalizationDone
 
 	// Handle playback completion.
 	duration := time.Since(startTime)
@@ -331,7 +345,6 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 
 // runNormalization runs audio normalization in a separate goroutine.
 func (s *Streamer) runNormalization(file *os.File, writer *io.PipeWriter, route string) {
-	defer writer.Close()
 	if normErr := NormalizeMP3Stream(file, writer, route); normErr != nil {
 		// Проверяем, содержит ли ошибка строку "EOF", которая обычно не является критической.
 		if strings.Contains(normErr.Error(), "EOF") {
@@ -351,11 +364,16 @@ func (s *Streamer) runNormalization(file *os.File, writer *io.PipeWriter, route 
 // streamFromPipe streams audio data from a pipe.
 func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int64, error) {
 	// Get buffer from pool.
-	buffer, okPipe := s.bufferPool.Get().([]byte)
-	if !okPipe {
-		return 0, errors.New("failed to get buffer from pool")
+	bufferInterface := s.bufferPool.Get()
+	buffer, ok := bufferInterface.([]byte)
+	if !ok || buffer == nil {
+		// If we can't get a proper buffer from pool, create a new one
+		buffer = make([]byte, s.bufferSize)
+		s.logger.Warn("DIAGNOSTICS: Created new buffer as pool returned invalid type", 
+			"expected", "[]byte", 
+			"got", fmt.Sprintf("%T", bufferInterface))
 	}
-	defer s.bufferPool.Put(&buffer)
+	defer s.bufferPool.Put(buffer) // Put back buffer, not pointer to buffer
 
 	var bytesRead int64
 	s.logger.Info("DIAGNOSTICS: Starting to read normalized audio data", "trackPath", trackPath)
@@ -768,11 +786,16 @@ func (s *Streamer) CloseClient(clientID int) {
 
 // streamAudioLoop handles the main stream reading and broadcasting loop.
 func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *int64) error {
-	buffer, ok := s.bufferPool.Get().([]byte)
-	if !ok {
-		return errors.New("failed to get buffer from pool")
+	bufferInterface := s.bufferPool.Get()
+	buffer, ok := bufferInterface.([]byte)
+	if !ok || buffer == nil {
+		// If we can't get a proper buffer from pool, create a new one
+		buffer = make([]byte, s.bufferSize)
+		s.logger.Warn("DIAGNOSTICS: Created new buffer as pool returned invalid type", 
+			"expected", "[]byte", 
+			"got", fmt.Sprintf("%T", bufferInterface))
 	}
-	defer s.bufferPool.Put(&buffer)
+	defer s.bufferPool.Put(buffer) // Put back buffer, not pointer to buffer
 
 	for {
 		// Check completion signal before reading.

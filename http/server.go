@@ -1014,7 +1014,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		streams = append(streams, StreamInfo{
 			Route:        route,
 			RouteID:      strings.TrimPrefix(route, "/"),
-			DisplayName:  strings.TrimPrefix(route, "/"),
+			DisplayName:  route,
 			StartTime:    s.playlists[route].GetStartTime().Format("15:04:05"),
 			CurrentTrack: currentTrack,
 			Listeners:    stream.GetClientCount(),

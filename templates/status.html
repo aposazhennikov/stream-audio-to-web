@@ -36,19 +36,19 @@
             </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
             <div class="button-group">
-                <form method="post" action="/prev-track/{{.RouteID}}" style="flex: 1;">
+                <form method="post" action="/prev-track/{{.RouteID}}">
                     <button type="submit" class="prev-track">Previous track</button>
                 </form>
-                <form method="post" action="/next-track/{{.RouteID}}" style="flex: 1;">
+                <form method="post" action="/next-track/{{.RouteID}}">
                     <button type="submit" class="next-track">Next track</button>
                 </form>
-                <form method="post" action="/shuffle-playlist/{{.RouteID}}" style="flex: 1;">
+                <form method="post" action="/shuffle-playlist/{{.RouteID}}">
                     <button type="submit" class="shuffle-playlist">Shuffle now</button>
                 </form>
-                <form method="post" action="/set-shuffle/{{.RouteID}}/on" style="flex: 1;">
+                <form method="post" action="/set-shuffle/{{.RouteID}}/on">
                     <button type="submit" class="enable-shuffle">Enable Shuffle</button>
                 </form>
-                <form method="post" action="/set-shuffle/{{.RouteID}}/off" style="flex: 1;">
+                <form method="post" action="/set-shuffle/{{.RouteID}}/off">
                     <button type="submit" class="disable-shuffle">Disable Shuffle</button>
                 </form>
                 <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
@@ -245,30 +245,37 @@
         }
 
         .button-group {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 0.75rem;
             margin-top: 1.5rem;
             border-top: 1px solid var(--color-border);
             padding-top: 1.5rem;
         }
 
+        .button-group form {
+            display: contents;
+        }
+
         button {
             background-color: var(--color-primary);
             color: white;
             border: none;
-            padding: 0.6rem 1.2rem;
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             cursor: pointer;
             font-family: inherit;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 500;
             transition: var(--transition);
-            flex: 1 1 auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
+            min-height: 42px;
+            white-space: nowrap;
+            text-align: center;
+            width: 100%;
         }
 
         button:hover {
@@ -374,49 +381,74 @@
             }
             
             .button-group {
-                flex-direction: column;
+                grid-template-columns: 1fr;
+                gap: 0.5rem;
             }
             
             button {
-                width: 100%;
+                font-size: 0.9rem;
+                padding: 0.8rem 1rem;
+                min-height: 44px;
+            }
+        }
+
+        @media (max-width: 1024px) and (min-width: 769px) {
+            .button-group {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         .copy-button {
-            background: none;
-            border: none;
+            background: var(--color-surface-accent);
+            border: 1px solid var(--color-border);
             cursor: pointer;
-            padding: 0.2rem 0.5rem;
-            border-radius: var(--border-radius);
-            margin-left: 1rem;
+            padding: 0.25rem 0.4rem;
+            border-radius: 4px;
+            margin-left: 0.5rem;
             position: relative;
-            background-color: var(--color-surface);
             transition: var(--transition);
+            min-width: 28px;
+            max-width: 32px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
         }
 
         .copy-button:hover {
-            background-color: var(--color-surface-accent);
+            background-color: var(--color-primary-light);
+            border-color: var(--color-primary);
+            transform: scale(1.05);
         }
 
         .copy-icon {
-            font-size: 1rem;
+            font-size: 0.8rem;
             color: var(--color-text-secondary);
+            transition: var(--transition);
+        }
+
+        .copy-button:hover .copy-icon {
+            color: var(--color-primary);
         }
 
         .copy-feedback {
             position: absolute;
-            top: 50%;
+            top: -35px;
             left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 0.9rem;
+            transform: translateX(-50%);
+            font-size: 0.75rem;
             font-weight: 500;
             color: var(--color-success);
             background-color: var(--color-surface);
-            padding: 0.2rem 0.6rem;
-            border-radius: var(--border-radius);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
             opacity: 0;
             transition: opacity 0.2s;
             pointer-events: none;
+            white-space: nowrap;
+            box-shadow: var(--box-shadow);
+            border: 1px solid var(--color-border);
         }
 
         .copy-button.copied .copy-feedback {
