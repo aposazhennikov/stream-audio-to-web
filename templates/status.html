@@ -12,15 +12,23 @@
             </div>
         </div>
         <h1>Audio Streams Status</h1>
-        {{if .RelayEnabled}}
-        <div class="relay-management-link">
-            <a href="/relay-management" class="relay-link">
-                <span class="relay-icon">🔄</span>
-                Relay Management
-                {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
-            </a>
+        <div class="server-info">
+            <div class="global-shuffle-info">
+                <span class="shuffle-icon">🔀</span>
+                Global Shuffle: <span class="global-shuffle-status {{if .GlobalShuffle}}enabled{{else}}disabled{{end}}">
+                    {{if .GlobalShuffle}}Enabled{{else}}Disabled{{end}}
+                </span>
+            </div>
+            {{if .RelayEnabled}}
+            <div class="relay-management-link">
+                <a href="/relay-management" class="relay-link">
+                    <span class="relay-icon">🔄</span>
+                    Relay Management
+                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
+                </a>
+            </div>
+            {{end}}
         </div>
-        {{end}}
     </header>
     <div class="container">
         {{range .Streams}}
@@ -42,6 +50,11 @@
                 </div>
             </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="status-info shuffle-info">
+                Shuffle: <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">
+                    {{if .ShuffleEnabled}}Enabled{{else}}Disabled{{end}}
+                </span>
+            </div>
             <div class="button-group">
                 <form method="post" action="/prev-track/{{.RouteID}}">
                     <button type="submit" class="prev-track">Previous track</button>
@@ -59,6 +72,7 @@
                     <button type="submit" class="disable-shuffle">Disable Shuffle</button>
                 </form>
                 <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
+                <button onclick="clearTrackHistory('{{.RouteID}}', '{{.Route}}')" class="clear-history">Clear history</button>
             </div>
             <div id="track-list-{{.RouteID}}" class="track-list">
                 {{.HistoryHTML}}
@@ -100,8 +114,50 @@
             border-radius: 2px;
         }
 
+        .server-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 2rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .global-shuffle-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: var(--color-surface-accent);
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .shuffle-icon {
+            font-size: 1.1rem;
+        }
+
+        .global-shuffle-status {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.6rem;
+            border-radius: 1rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .global-shuffle-status.enabled {
+            background-color: rgba(46, 204, 113, 0.2);
+            color: #27ae60;
+        }
+
+        .global-shuffle-status.disabled {
+            background-color: rgba(149, 165, 166, 0.2);
+            color: var(--color-text-secondary);
+        }
+
         .relay-management-link {
-            margin-top: 0.5rem;
             display: inline-block;
         }
 
@@ -235,6 +291,30 @@
             content: '👥';
         }
 
+        .status-info.shuffle-info:before {
+            content: '🔀';
+        }
+
+        .shuffle-status {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            margin-left: 0.5rem;
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        .shuffle-status.enabled {
+            background-color: rgba(46, 204, 113, 0.1);
+            color: #27ae60;
+        }
+
+        .shuffle-status.disabled {
+            background-color: rgba(149, 165, 166, 0.1);
+            color: var(--color-text-secondary);
+        }
+
         .listeners-count {
             display: inline-flex;
             align-items: center;
@@ -318,6 +398,18 @@
             content: '📋';
         }
 
+        button.clear-history {
+            background-color: var(--color-error);
+        }
+        
+        button.clear-history:before {
+            content: '🗑️';
+        }
+        
+        button.clear-history:hover {
+            background-color: var(--color-error-dark);
+        }
+
         .track-list {
             display: none;
             margin-top: 1rem;
@@ -359,6 +451,16 @@
             position: absolute;
             left: 0;
             top: 0.5rem;
+        }
+
+        .no-data {
+            text-align: center;
+            color: var(--color-text-secondary);
+            font-style: italic;
+            padding: 1rem;
+            background-color: rgba(149, 165, 166, 0.1);
+            border-radius: var(--border-radius);
+            margin: 0.5rem 0;
         }
 
         .error-container {
@@ -556,10 +658,13 @@
             const isVisible = trackList.style.display === 'block';
             trackList.style.display = isVisible ? 'none' : 'block';
             
-            // Change button text.
-            const buttons = trackList.previousElementSibling.querySelectorAll('button');
-            const historyButton = buttons[buttons.length - 1];
-            historyButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
+            // Find the correct Show/Hide History button (blue one, not the red Clear History)
+            const buttonGroup = trackList.previousElementSibling;
+            const showHistoryButton = buttonGroup.querySelector('button.show-history');
+            
+            if (showHistoryButton) {
+                showHistoryButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
+            }
         }
 
         function copyToClipboard(text, button) {
@@ -580,6 +685,31 @@
                     button.classList.remove('copied');
                 }, 2000);
             });
+        }
+
+        function clearTrackHistory(routeID, route) {
+            if (confirm('Are you sure you want to clear the track history for this stream?')) {
+                fetch(`/clear-history${route}`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                }).then(response => {
+                    if (response.ok) {
+                        // Clear the track list display
+                        const trackListDiv = document.querySelector(`#track-list-${routeID}`);
+                        if (trackListDiv) {
+                            trackListDiv.innerHTML = '<div class="no-data">No tracks in history yet.</div>';
+                        }
+                        console.log('Track history cleared for route:', route);
+                    } else {
+                        alert('Failed to clear track history');
+                    }
+                }).catch(error => {
+                    console.error('Error clearing track history:', error);
+                    alert('Error clearing track history');
+                });
+            }
         }
 
         // Function for automatic player updating when track changes.
@@ -629,6 +759,9 @@
                         
                         // UPDATE STATUS PAGE: Find and update track display on status page
                         updateTrackDisplayOnStatusPage(route, tracks[route]);
+                        
+                        // UPDATE HISTORY: Refresh track history for this route
+                        updateTrackHistoryOnStatusPage(route);
                         
                         // If this route is open, reload player.
                         if (window.location.pathname === route) {
@@ -704,6 +837,46 @@
             });
         }
 
+        // NEW FUNCTION: Update track history on status page in real-time
+        function updateTrackHistoryOnStatusPage(route) {
+            // Find the stream container for this route
+            const streamContainers = document.querySelectorAll('.stream-container');
+            streamContainers.forEach(container => {
+                const headerLink = container.querySelector('.stream-header a');
+                if (headerLink && headerLink.getAttribute('href') === route) {
+                    // Found the container for this route
+                    const trackListDiv = container.querySelector(`#track-list-${route.replace('/', '')}`);
+                    
+                    // Only update if the track list is currently visible
+                    if (trackListDiv && trackListDiv.style.display === 'block') {
+                        console.log('Refreshing track history for route:', route);
+                        
+                        // Fetch updated track history from status page data
+                        fetch('/streams')
+                            .then(response => response.json())
+                            .then(data => {
+                                // Find the stream data for this route
+                                const streamData = data.streams ? data.streams.find(s => s.route === route) : null;
+                                if (streamData && streamData.history_html) {
+                                    // Update the track list with smooth animation
+                                    trackListDiv.style.opacity = '0.7';
+                                    setTimeout(() => {
+                                        trackListDiv.innerHTML = streamData.history_html;
+                                        trackListDiv.style.opacity = '1';
+                                        console.log('Track history updated for route:', route);
+                                    }, 200);
+                                } else {
+                                    // If no history data, show the empty message
+                                    trackListDiv.innerHTML = '<div class="no-data">No tracks in history yet.</div>';
+                                    console.log('No history data available for route:', route);
+                                }
+                            })
+                            .catch(error => console.error('Error updating track history:', error));
+                    }
+                }
+            });
+        }
+
         // Check current track more frequently after manual track switch
         let updateIntervalId = null;
         let currentInterval = 1000; // Default 1 second for smooth time updates
@@ -723,6 +896,9 @@
         // Start checking with 1-second intervals
         startUpdateInterval();
         
+        // Track switch state management to prevent double-clicks
+        let trackSwitchInProgress = {};
+        
         // Speed up checking after manual track switches WITHOUT page reload
         document.addEventListener('click', function(e) {
             if (e.target.classList.contains('next-track') || e.target.classList.contains('prev-track')) {
@@ -730,33 +906,66 @@
                 
                 // Prevent default form submission that causes page reload
                 e.preventDefault();
+                e.stopPropagation();
                 
-                // Submit form via AJAX instead
+                // Get the form and route to prevent duplicate submissions
                 const form = e.target.closest('form');
-                if (form) {
-                    fetch(form.action, {
-                        method: 'POST',
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest'
-                        }
-                    }).then(response => {
-                        if (response.ok) {
-                            console.log('Track switch request sent successfully');
-                            // Speed up track checking for faster UI updates
-                            currentInterval = 300; // Check every 300ms for faster response
-                            startUpdateInterval(); // Restart interval with new timing
-                            setTimeout(() => {
-                                currentInterval = 1000; // Return to normal 1-second updates after 15 seconds
-                                startUpdateInterval(); // Restart interval with normal timing
-                                console.log('Returning to normal update speed');
-                            }, 15000);
-                        } else {
-                            console.error('Track switch failed:', response.status);
-                        }
-                    }).catch(error => {
-                        console.error('Track switch error:', error);
-                    });
+                if (!form) return;
+                
+                const formAction = form.action;
+                const buttonType = e.target.classList.contains('next-track') ? 'next' : 'prev';
+                const routeMatch = formAction.match(/\/(next|prev)-track\/(.+)/);
+                if (!routeMatch) return;
+                
+                const route = '/' + routeMatch[2];
+                const switchKey = `${route}-${buttonType}`;
+                
+                // Prevent multiple simultaneous requests for the same route/direction
+                if (trackSwitchInProgress[switchKey]) {
+                    console.log('Track switch already in progress for', switchKey, '- ignoring click');
+                    return;
                 }
+                
+                // Mark as in progress
+                trackSwitchInProgress[switchKey] = true;
+                
+                // Disable the button temporarily
+                e.target.disabled = true;
+                e.target.style.opacity = '0.6';
+                
+                console.log('Submitting track switch:', switchKey);
+                
+                // Submit form via AJAX
+                fetch(form.action, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                }).then(response => {
+                    if (response.ok) {
+                        console.log('Track switch request sent successfully for', switchKey);
+                        // Speed up track checking for faster UI updates
+                        currentInterval = 300; // Check every 300ms for faster response
+                        startUpdateInterval(); // Restart interval with new timing
+                        setTimeout(() => {
+                            currentInterval = 1000; // Return to normal 1-second updates after 15 seconds
+                            startUpdateInterval(); // Restart interval with normal timing
+                            console.log('Returning to normal update speed');
+                        }, 15000);
+                    } else {
+                        console.error('Track switch failed:', response.status, 'for', switchKey);
+                    }
+                }).catch(error => {
+                    console.error('Track switch error for', switchKey, ':', error);
+                }).finally(() => {
+                    // Re-enable button and clear in-progress flag after delay
+                    setTimeout(() => {
+                        trackSwitchInProgress[switchKey] = false;
+                        e.target.disabled = false;
+                        e.target.style.opacity = '1';
+                        console.log('Track switch completed for', switchKey);
+                    }, 1000); // Wait 1 second before allowing next click
+                });
             }
         });
         

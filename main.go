@@ -123,6 +123,11 @@ func main() {
 	checkStreamStatus(logger, server)
 	logger.Info("STEP 10: Stream status checked")
 
+	// Start automatic history cleanup routine
+	logger.Info("STEP 10.5: Starting automatic history cleanup routine...")
+	go startHistoryCleanupRoutine(logger, server)
+	logger.Info("STEP 10.5: History cleanup routine started")
+
 	// Wait for shutdown signal.
 	logger.Info("STEP 11: Waiting for shutdown signal...")
 	sig := waitForShutdownSignal()
@@ -1168,4 +1173,47 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 	}
 
 	logger.Info("Playlist reload complete")
+}
+
+// startHistoryCleanupRoutine starts a routine that cleans track history every 12 hours
+func startHistoryCleanupRoutine(logger *slog.Logger, server *httpServer.Server) {
+	logger.Info("History cleanup routine started - will clean every 12 hours")
+	
+	ticker := time.NewTicker(12 * time.Hour)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			cleanAllTrackHistories(logger, server)
+		}
+	}
+}
+
+// cleanAllTrackHistories clears track history for all streams
+func cleanAllTrackHistories(logger *slog.Logger, server *httpServer.Server) {
+	logger.Info("Starting automatic cleanup of all track histories")
+	
+	// Get all registered streams by checking common routes
+	commonRoutes := []string{"/humor", "/science", "/politics", "/nature", "/shaov", "/troshin", "/test_audio"}
+	
+	clearedCount := 0
+	for _, route := range commonRoutes {
+		if server.IsStreamRegistered(route) {
+			// Try to clear history via HTTP endpoint internally
+			err := server.ClearHistoryForRoute(route)
+			if err == nil {
+				logger.Info("Cleared history for route", slog.String("route", route))
+				clearedCount++
+			} else {
+				logger.Error("Failed to clear history for route", 
+					slog.String("route", route), 
+					slog.String("error", err.Error()))
+			}
+		}
+	}
+	
+	logger.Info("Automatic history cleanup completed", 
+		slog.Int("streams_cleaned", clearedCount),
+		slog.String("next_cleanup", time.Now().Add(12*time.Hour).Format("2006-01-02 15:04:05")))
 }

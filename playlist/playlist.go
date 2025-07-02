@@ -446,13 +446,24 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 
 // NextTrack moves to the next track and returns it.
 func (p *Playlist) NextTrack() interface{} {
+	p.logger.Info("PLAYLIST DEBUG: NextTrack() called", 
+		slog.String("directory", p.directory),
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	
 	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
 	tracksEmpty := len(p.tracks) == 0
+	currentIndex := p.current
 	p.mutex.RUnlock()
+
+	p.logger.Info("PLAYLIST DEBUG: Current state", 
+		slog.Bool("tracksEmpty", tracksEmpty),
+		slog.Int("currentIndex", currentIndex),
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
 
 	// Если треков нет, сразу возвращаем nil без запуска горутин.
 	if tracksEmpty {
+		p.logger.Info("PLAYLIST DEBUG: No tracks available, returning nil")
 		return nil
 	}
 
@@ -480,15 +491,33 @@ func (p *Playlist) NextTrack() interface{} {
 		}
 
 		// Переходим к следующему треку.
+		oldCurrent := p.current
 		p.current = (p.current + 1) % len(p.tracks)
+		
+		p.logger.Info("PLAYLIST DEBUG: Track index changed", 
+			slog.Int("from", oldCurrent),
+			slog.Int("to", p.current),
+			slog.Int("totalTracks", len(p.tracks)),
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
 
 		// Проверяем необходимость повторного перемешивания.
 		if p.current == 0 && p.shuffle && len(p.tracks) > 1 {
+			p.logger.Info("PLAYLIST DEBUG: Reshuffling playlist (reached end)")
 			p.reshufflePlaylistPreservingCurrent()
 		}
 
 		// Создаем копию трека для безопасного возврата.
 		track := p.tracks[p.current]
+		trackName := track.Name
+		if trackName == "" {
+			trackName = filepath.Base(track.Path)
+		}
+		
+		p.logger.Info("PLAYLIST DEBUG: Returning new track", 
+			slog.String("trackName", trackName),
+			slog.Int("newIndex", p.current),
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+		
 		c <- &track
 	}()
 
@@ -611,6 +640,16 @@ func (p *Playlist) GetHistory() []interface{} {
 	}
 
 	return history
+}
+
+// ClearHistory clears the track history.
+func (p *Playlist) ClearHistory() {
+	p.historyMutex.Lock()
+	defer p.historyMutex.Unlock()
+	
+	p.history = make([]Track, 0, maxHistorySize)
+	p.logger.Info("Track history cleared", 
+		slog.String("directory", p.directory))
 }
 
 // GetStartTime returns the playlist start time.

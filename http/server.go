@@ -65,7 +65,7 @@ type Server struct {
 	logger            *slog.Logger           // Logger for server operations.
 }
 
-const xmlHTTPRequestHeader = "Xmlhttprequest"
+const xmlHTTPRequestHeader = "X-Requested-With"
 
 const (
 	defaultStatusPassword     = "1234554321"
@@ -248,6 +248,11 @@ func hasUnicodeChars(s string) bool {
 	return false
 }
 
+// isAjaxRequest checks if request is an AJAX request.
+func isAjaxRequest(r *http.Request) bool {
+	return r.Header.Get(xmlHTTPRequestHeader) == "XMLHttpRequest"
+}
+
 // setupRoutes configures HTTP server routes.
 func (s *Server) setupRoutes() {
 	// Monitoring and health endpoints.
@@ -277,6 +282,9 @@ func (s *Server) setupRoutes() {
 
 	// Endpoint to set shuffle mode for specific stream.
 	s.router.HandleFunc("/set-shuffle/{route}/{mode}", s.handleSetShuffleMode).Methods("POST")
+
+	// Endpoint to clear track history for specific stream.
+	s.router.HandleFunc("/clear-history/{route}", s.handleClearHistory).Methods("POST")
 
 	// Add relay routes if relay manager is available
 	s.setupRelayRoutes()
@@ -403,9 +411,10 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 	defer s.mutex.RUnlock()
 
 	type streamInfo struct {
-		Route        string `json:"route"`
-		Listeners    int    `json:"listeners"`
+		Route       string `json:"route"`
+		Listeners   int    `json:"listeners"`
 		CurrentTrack string `json:"current_track"`
+		HistoryHTML string `json:"history_html"`
 	}
 
 	streams := make([]streamInfo, 0, len(s.streams))
@@ -414,10 +423,61 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 		currentTrack := s.currentTracks[route]
 		s.trackMutex.RUnlock()
 
+		// Generate history HTML for this stream
+		history := s.playlists[route].GetHistory()
+		var historyHTMLBuilder strings.Builder
+		
+		if len(history) == 0 {
+			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
+		} else {
+			historyHTMLBuilder.WriteString("<ul>")
+			for _, item := range history {
+				var trackName string
+				
+				// Extract track name properly based on item type
+				switch track := item.(type) {
+				case interface{ GetPath() string }:
+					trackName = filepath.Base(track.GetPath())
+				case interface{ GetNormalizedPath() string }:
+					trackName = filepath.Base(track.GetNormalizedPath())
+				case *struct{ Path string; Name string }:
+					if track != nil {
+						trackName = track.Name
+						if trackName == "" {
+							trackName = filepath.Base(track.Path)
+						}
+					}
+				case string:
+					trackName = filepath.Base(track)
+				default:
+					str := fmt.Sprintf("%v", item)
+					if strings.Contains(str, "{") && strings.Contains(str, "}") {
+						trackName = "Unknown track"
+					} else {
+						trackName = filepath.Base(str)
+					}
+				}
+				
+				if trackName == "" {
+					trackName = "Unknown track"
+				}
+				
+				escapedTrackName := html.EscapeString(trackName)
+				historyHTMLBuilder.WriteString(fmt.Sprintf(
+					`<li><span>%s</span><button class="copy-button" onclick="copyToClipboard('%s', this)"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
+					escapedTrackName,
+					escapedTrackName,
+				))
+			}
+			historyHTMLBuilder.WriteString("</ul>")
+		}
+		historyHTML := historyHTMLBuilder.String()
+
 		streams = append(streams, streamInfo{
 			Route:        route,
 			Listeners:    stream.GetClientCount(),
 			CurrentTrack: currentTrack,
+			HistoryHTML:  historyHTML,
 		})
 	}
 
@@ -1131,13 +1191,14 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	defer s.mutex.RUnlock()
 
 	type StreamInfo struct {
-		Route        string
-		RouteID      string
-		DisplayName  string
-		StartTime    string
-		CurrentTrack string
-		Listeners    int
-		HistoryHTML  template.HTML
+		Route          string
+		RouteID        string
+		DisplayName    string
+		StartTime      string
+		CurrentTrack   string
+		Listeners      int
+		HistoryHTML    template.HTML
+		ShuffleEnabled bool
 	}
 
 	streams := make([]StreamInfo, 0, len(s.streams))
@@ -1149,8 +1210,13 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Get playlist history.
 		history := s.playlists[route].GetHistory()
 		var historyHTMLBuilder strings.Builder
-		historyHTMLBuilder.WriteString("<ul>")
-		for _, item := range history {
+		
+		if len(history) == 0 {
+			// Show message when no history is available
+			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
+		} else {
+			historyHTMLBuilder.WriteString("<ul>")
+			for _, item := range history {
 			var trackName string
 			
 			// Extract track name properly based on item type
@@ -1191,16 +1257,18 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			))
 		}
 		historyHTMLBuilder.WriteString("</ul>")
+		}
 		historyHTML := historyHTMLBuilder.String()
 
 		streams = append(streams, StreamInfo{
-			Route:        route,
-			RouteID:      strings.TrimPrefix(route, "/"),
-			DisplayName:  route,
-			StartTime:    s.playlists[route].GetStartTime().Format("15:04:05"),
-			CurrentTrack: currentTrack,
-			Listeners:    stream.GetClientCount(),
-			HistoryHTML:  template.HTML(historyHTML),
+			Route:          route,
+			RouteID:        strings.TrimPrefix(route, "/"),
+			DisplayName:    route,
+			StartTime:      s.playlists[route].GetStartTime().Format("15:04:05"),
+			CurrentTrack:   currentTrack,
+			Listeners:      stream.GetClientCount(),
+			HistoryHTML:    template.HTML(historyHTML),
+			ShuffleEnabled: s.getShuffleStatusForRoute(route),
 		})
 	}
 
@@ -1225,10 +1293,11 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams":      streams,
-		"Title":        "Audio Streams Status",
-		"RelayEnabled": s.relayManager != nil,
-		"RelayActive":  s.relayManager != nil && s.relayManager.IsActive(),
+		"Streams":       streams,
+		"Title":         "Audio Streams Status",
+		"RelayEnabled":  s.relayManager != nil,
+		"RelayActive":   s.relayManager != nil && s.relayManager.IsActive(),
+		"GlobalShuffle": s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
@@ -1238,8 +1307,16 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleTrackSwitchHandler handles track switching.
 func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
+	s.logger.Info("TRACK SWITCH DEBUG: handleTrackSwitchHandler called", 
+		slog.String("direction", direction),
+		slog.String("method", r.Method),
+		slog.String("remoteAddr", r.RemoteAddr),
+		slog.String("userAgent", r.UserAgent()),
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	
 	// Check authentication.
 	if !s.checkAuth(r) {
+		s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
 		s.handleUnauthenticatedTrackSwitch(w, r)
 		return
 	}
@@ -1270,7 +1347,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 
 // handleUnauthenticatedTrackSwitch handles unauthenticated track switching requests.
 func (s *Server) handleUnauthenticatedTrackSwitch(w http.ResponseWriter, r *http.Request) {
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1296,7 +1373,7 @@ func (s *Server) getPlaylistForRoute(route string) (PlaylistManager, bool) {
 
 // handlePlaylistNotFound handles case when playlist for route is not found.
 func (s *Server) handlePlaylistNotFound(w http.ResponseWriter, r *http.Request, route string) {
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1314,16 +1391,26 @@ func (s *Server) handlePlaylistNotFound(w http.ResponseWriter, r *http.Request, 
 
 // getTrackForDirection gets the track for the specified direction.
 func (s *Server) getTrackForDirection(playlist PlaylistManager, direction string) interface{} {
+	s.logger.Info("TRACK SWITCH DEBUG: getTrackForDirection called", 
+		slog.String("direction", direction),
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	
 	if direction == "next" {
-		return playlist.NextTrack()
+		track := playlist.NextTrack()
+		s.logger.Info("TRACK SWITCH DEBUG: NextTrack() called and returned", 
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+		return track
 	}
-	return playlist.PreviousTrack()
+	track := playlist.PreviousTrack()
+	s.logger.Info("TRACK SWITCH DEBUG: PreviousTrack() called and returned", 
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	return track
 }
 
 // handleTrackNotFound handles case when track for direction is not found.
 func (s *Server) handleTrackNotFound(w http.ResponseWriter, r *http.Request, route, direction string) {
 	s.logger.Error("Track not found for direction", slog.String("direction", direction))
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1363,7 +1450,7 @@ func (s *Server) handleTrackSwitchResult(w http.ResponseWriter, r *http.Request,
 // handleMissingStationManager handles case when station manager is not set.
 func (s *Server) handleMissingStationManager(w http.ResponseWriter, r *http.Request, route, trackName string) {
 	s.logger.Warn("WARNING: Station manager not set, restart playback not possible")
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1401,7 +1488,7 @@ func (s *Server) sendTrackSwitchResponse(
 	route, trackName string,
 	success bool,
 ) {
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1486,7 +1573,7 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 // handleShufflePlaylist shuffles the playlist for a specific stream.
 func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(r) {
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		isAjax := isAjaxRequest(r)
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1510,7 +1597,7 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	s.mutex.RUnlock()
 
 	if !exists {
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		isAjax := isAjaxRequest(r)
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1531,7 +1618,7 @@ func (s *Server) handleShufflePlaylist(w http.ResponseWriter, r *http.Request) {
 	playlist.Shuffle()
 	s.logger.Info("Playlist shuffled for route", slog.String("route", route))
 
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1576,7 +1663,7 @@ func (s *Server) handleSetShuffleMode(w http.ResponseWriter, r *http.Request) {
 // isShuffleModeAuthValid checks if the user is authenticated for setting shuffle mode.
 func (s *Server) isShuffleModeAuthValid(w http.ResponseWriter, r *http.Request) bool {
 	if !s.checkAuth(r) {
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		isAjax := isAjaxRequest(r)
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1597,7 +1684,7 @@ func (s *Server) isShuffleModeAuthValid(w http.ResponseWriter, r *http.Request) 
 // isShuffleModeValid validates the shuffle mode value.
 func (s *Server) isShuffleModeValid(w http.ResponseWriter, r *http.Request, route, mode string) bool {
 	if mode != "on" && mode != "off" {
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		isAjax := isAjaxRequest(r)
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1623,7 +1710,7 @@ func (s *Server) isShuffleRouteValid(w http.ResponseWriter, r *http.Request, rou
 	s.mutex.RUnlock()
 
 	if !exists {
-		isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+		isAjax := isAjaxRequest(r)
 		if isAjax {
 			w.Header().Set("Content-Type", "application/json")
 			if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1648,7 +1735,7 @@ func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Reques
 	// This would require extending the PlaylistManager interface.
 	// For now, just acknowledge the request.
 
-	isAjax := r.Header.Get(xmlHTTPRequestHeader) == "1" || r.URL.Query().Get("ajax") == "1"
+	isAjax := isAjaxRequest(r)
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1687,6 +1774,99 @@ func (s *Server) SetStatusPassword(password string) {
 	defer s.mutex.Unlock()
 	s.statusPassword = password
 	s.logger.Info("Status password set for HTTP server")
+}
+
+// handleClearHistory handles clearing track history for a specific stream.
+func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	route := vars["route"]
+	
+	if route == "" {
+		s.logger.Error("No route provided for clear history")
+		http.Error(w, "Route parameter is required", http.StatusBadRequest)
+		return
+	}
+	
+	// Add leading slash if not present
+	if !strings.HasPrefix(route, "/") {
+		route = "/" + route
+	}
+	
+	s.logger.Info("Clearing track history for route", slog.String("route", route))
+	
+	// Get the playlist manager for this route
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		s.logger.Error("Playlist not found for route", slog.String("route", route))
+		http.Error(w, "Playlist not found", http.StatusNotFound)
+		return
+	}
+	
+	// Clear the history (implement ClearHistory method in playlist interface)
+	if clearablePlaylist, ok := playlist.(interface{ ClearHistory() }); ok {
+		clearablePlaylist.ClearHistory()
+		s.logger.Info("Track history cleared successfully", slog.String("route", route))
+	} else {
+		s.logger.Error("Playlist does not support clearing history", slog.String("route", route))
+		http.Error(w, "Clear history not supported", http.StatusNotImplemented)
+		return
+	}
+	
+	// Check if this is an AJAX request
+	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest"
+	
+	if isAjax {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Track history cleared successfully",
+			"route":   route,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode JSON response", slog.String("error", encodeErr.Error()))
+			return
+		}
+	} else {
+		// Redirect back to status page
+		http.Redirect(w, r, "/status-page", http.StatusSeeOther)
+	}
+}
+
+// getShuffleStatusForRoute returns shuffle status for specific route (placeholder implementation)
+func (s *Server) getShuffleStatusForRoute(route string) bool {
+	// TODO: Implement per-route shuffle status based on playlist configuration
+	// For now, return true as placeholder
+	return true
+}
+
+// getGlobalShuffleStatus returns global shuffle configuration (placeholder implementation)
+func (s *Server) getGlobalShuffleStatus() bool {
+	// TODO: Get this from configuration or environment variables
+	// For now, return true as placeholder
+	return true
+}
+
+// ClearHistoryForRoute clears track history for a specific route (internal method)
+func (s *Server) ClearHistoryForRoute(route string) error {
+	// Get the playlist manager for this route
+	s.mutex.RLock()
+	playlist, exists := s.playlists[route]
+	s.mutex.RUnlock()
+	
+	if !exists {
+		return fmt.Errorf("playlist not found for route: %s", route)
+	}
+	
+	// Clear the history if playlist supports it
+	if clearablePlaylist, ok := playlist.(interface{ ClearHistory() }); ok {
+		clearablePlaylist.ClearHistory()
+		return nil
+	}
+	
+	return fmt.Errorf("playlist does not support clearing history for route: %s", route)
 }
 
 // TrackInfo returns track information for specified stream.
