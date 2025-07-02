@@ -31,6 +31,7 @@ type StreamHandler interface {
 	RemoveClient(clientID int)
 	GetClientCount() int
 	GetCurrentTrackChannel() <-chan string
+	GetPlaybackInfo() (string, time.Time, time.Duration, time.Duration)
 }
 
 // PlaylistManager interface for playlist management.
@@ -258,6 +259,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
+	s.router.HandleFunc("/playback-time", s.playbackTimeHandler).Methods("GET")
 
 	// Add status page with password check.
 	s.router.HandleFunc("/status", s.statusLoginHandler).Methods("GET", "HEAD")
@@ -555,6 +557,154 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 		// Обработка ошибки JSON используя логирование.
 		s.logNormalizationError(encodeErr, fmt.Sprintf("json encode for route %s", route))
 	}
+}
+
+// playbackTimeHandler returns playback time information for all routes or specific route
+func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
+	route := r.URL.Query().Get("route")
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	type PlaybackTimeInfo struct {
+		Route        string  `json:"route"`
+		TrackPath    string  `json:"track_path"`
+		TrackName    string  `json:"track_name"`
+		StartTime    string  `json:"start_time"`
+		ElapsedMs    int64   `json:"elapsed_ms"`
+		ElapsedText  string  `json:"elapsed_text"`
+		TotalMs      int64   `json:"total_ms"`
+		TotalText    string  `json:"total_text"`
+		RemainingMs  int64   `json:"remaining_ms"`
+		RemainingText string `json:"remaining_text"`
+		ProgressPercent float64 `json:"progress_percent"`
+		IsPlaying    bool    `json:"is_playing"`
+	}
+
+	if route == "" {
+		// Return info for all routes
+		s.mutex.RLock()
+		allPlaybackInfo := make(map[string]PlaybackTimeInfo)
+		for r, stream := range s.streams {
+			trackPath, startTime, elapsed, totalDuration := stream.GetPlaybackInfo()
+			trackName := filepath.Base(trackPath)
+			if trackName == "." || trackName == "" {
+				trackName = "No track"
+			}
+			
+			elapsedMs := elapsed.Milliseconds()
+			elapsedText := formatDuration(elapsed)
+			totalMs := totalDuration.Milliseconds()
+			totalText := formatDuration(totalDuration)
+			
+			remaining := totalDuration - elapsed
+			if remaining < 0 {
+				remaining = 0
+			}
+			remainingMs := remaining.Milliseconds()
+			remainingText := formatDuration(remaining)
+			
+			progressPercent := float64(0)
+			if totalDuration > 0 {
+				progressPercent = float64(elapsed) / float64(totalDuration) * 100
+				if progressPercent > 100 {
+					progressPercent = 100
+				}
+			}
+			
+			allPlaybackInfo[r] = PlaybackTimeInfo{
+				Route:         r,
+				TrackPath:     trackPath,
+				TrackName:     trackName,
+				StartTime:     startTime.Format("15:04:05"),
+				ElapsedMs:     elapsedMs,
+				ElapsedText:   elapsedText,
+				TotalMs:       totalMs,
+				TotalText:     totalText,
+				RemainingMs:   remainingMs,
+				RemainingText: remainingText,
+				ProgressPercent: progressPercent,
+				IsPlaying:     !startTime.IsZero(),
+			}
+		}
+		s.mutex.RUnlock()
+
+		if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+			"playback_times": allPlaybackInfo,
+		}); encodeErr != nil {
+			s.logger.Error("Failed to encode all playback times", slog.String("error", encodeErr.Error()))
+		}
+		return
+	}
+
+	// Return info for specific route
+	s.mutex.RLock()
+	stream, exists := s.streams[route]
+	s.mutex.RUnlock()
+
+	if !exists {
+		errorMsg := fmt.Sprintf("Stream %s not found", route)
+		s.logger.Error("ERROR: Stream not found for playback time", slog.String("route", route))
+		http.Error(w, errorMsg, http.StatusNotFound)
+		return
+	}
+
+	trackPath, startTime, elapsed, totalDuration := stream.GetPlaybackInfo()
+	trackName := filepath.Base(trackPath)
+	if trackName == "." || trackName == "" {
+		trackName = "No track"
+	}
+	
+	elapsedMs := elapsed.Milliseconds()
+	elapsedText := formatDuration(elapsed)
+	totalMs := totalDuration.Milliseconds()
+	totalText := formatDuration(totalDuration)
+	
+	remaining := totalDuration - elapsed
+	if remaining < 0 {
+		remaining = 0
+	}
+	remainingMs := remaining.Milliseconds()
+	remainingText := formatDuration(remaining)
+	
+	progressPercent := float64(0)
+	if totalDuration > 0 {
+		progressPercent = float64(elapsed) / float64(totalDuration) * 100
+		if progressPercent > 100 {
+			progressPercent = 100
+		}
+	}
+
+	playbackInfo := PlaybackTimeInfo{
+		Route:         route,
+		TrackPath:     trackPath,
+		TrackName:     trackName,
+		StartTime:     startTime.Format("15:04:05"),
+		ElapsedMs:     elapsedMs,
+		ElapsedText:   elapsedText,
+		TotalMs:       totalMs,
+		TotalText:     totalText,
+		RemainingMs:   remainingMs,
+		RemainingText: remainingText,
+		ProgressPercent: progressPercent,
+		IsPlaying:     !startTime.IsZero(),
+	}
+
+	if encodeErr := json.NewEncoder(w).Encode(playbackInfo); encodeErr != nil {
+		s.logger.Error("Failed to encode playback time info", slog.String("error", encodeErr.Error()))
+	}
+}
+
+// formatDuration formats duration as MM:SS or HH:MM:SS
+func formatDuration(d time.Duration) string {
+	totalSeconds := int(d.Seconds())
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+	
+	if hours > 0 {
+		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 
 // isConnectionClosedError checks if error is result of client closing connection.

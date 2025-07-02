@@ -1087,6 +1087,10 @@ func (d *dummyStreamHandler) GetCurrentTrackChannel() <-chan string {
 	return d.clientCh
 }
 
+func (d *dummyStreamHandler) GetPlaybackInfo() (string, time.Time, time.Duration, time.Duration) {
+	return "", time.Time{}, time.Duration(0), time.Duration(0)
+}
+
 // getDummyMP3 returns the name of a dummy MP3 file.
 func getDummyMP3() string {
 	return "dummy.mp3"

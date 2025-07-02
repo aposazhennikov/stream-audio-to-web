@@ -28,11 +28,18 @@
             <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
             <div class="status-info start-time">Started: {{.StartTime}}</div>
             <div class="status-info current-track">
-                <span>{{.CurrentTrack}}</span>
-                <button class="copy-button" onclick="copyToClipboard('{{.CurrentTrack}}', this)">
-                    <span class="copy-icon">📋</span>
-                    <span class="copy-feedback"></span>
-                </button>
+                <div class="track-info-container">
+                    <div class="track-name-container">
+                        <span class="track-name">{{.CurrentTrack}}</span>
+                        <button class="copy-button" onclick="copyToClipboard('{{.CurrentTrack}}', this)">
+                            <span class="copy-icon">📋</span>
+                            <span class="copy-feedback"></span>
+                        </button>
+                    </div>
+                    <div class="playback-time-container">
+                        <span class="playback-time" data-route="{{.Route}}">00:00 / 00:00</span>
+                    </div>
+                </div>
             </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
             <div class="button-group">
@@ -454,6 +461,73 @@
         .copy-button.copied .copy-feedback {
             opacity: 1;
         }
+
+        /* NEW STYLES: Track info layout with time display */
+        .track-info-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            width: 100%;
+        }
+
+        .track-name-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            min-width: 0; /* Allow shrinking */
+        }
+
+        .track-name {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: calc(100% - 40px); /* Account for copy button */
+        }
+
+        .playback-time-container {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            background: var(--color-surface-accent);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            min-width: 120px; /* Increased for "MM:SS / MM:SS" format */
+            justify-content: center;
+        }
+
+        .playback-time {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--color-text-secondary);
+            letter-spacing: 0.5px;
+        }
+
+        /* Responsive design for smaller screens */
+        @media (max-width: 768px) {
+            .track-info-container {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .track-name-container {
+                width: 100%;
+            }
+            
+            .track-name {
+                max-width: calc(100% - 40px);
+            }
+            
+            .playback-time-container {
+                align-self: flex-end;
+                margin-top: 5px;
+            }
+        }
     </style>
     {{end}}
 
@@ -512,49 +586,131 @@
         const audioPlayers = {};
         const currentTracks = {};
 
-        // Function to get the current track for each route.
-        function checkCurrentTracks() {
-            fetch('/now-playing')
+        // NEW FUNCTION: Update playback time for all routes
+        function updatePlaybackTimes() {
+            fetch('/playback-time')
                 .then(response => response.json())
-                .then(tracks => {
-                    Object.keys(tracks).forEach(route => {
-                        // If track changed, reload player.
-                        if (currentTracks[route] !== tracks[route]) {
-                            console.log('Track changed on route ' + route + ': ' + tracks[route]);
-                            currentTracks[route] = tracks[route];
-                            
-                            // If this route is open, reload player.
-                            if (window.location.pathname === route) {
-                                console.log('Reloading audio player for ' + route);
-                                const audio = document.querySelector('audio');
-                                if (audio) {
-                                    // Save current volume.
-                                    const volume = audio.volume;
-                                    // Save URL for later use.
-                                    const originalSrc = audio.src;
-                                    // Stop current player.
-                                    audio.pause();
-                                    // Reload source with new timestamp parameter to bypass caching.
-                                    audio.src = originalSrc + '?t=' + new Date().getTime();
-                                    // Restore volume.
-                                    audio.volume = volume;
-                                    // Start playback.
-                                    audio.play().catch(e => console.error('Playback error:', e));
-                                }
+                .then(data => {
+                    const playbackTimes = data.playback_times || {};
+                    Object.keys(playbackTimes).forEach(route => {
+                        const timeInfo = playbackTimes[route];
+                        const timeElement = document.querySelector(`.playback-time[data-route="${route}"]`);
+                        if (timeElement) {
+                            if (timeInfo.is_playing && timeInfo.total_text !== "00:00") {
+                                // Show elapsed / total format
+                                timeElement.textContent = `${timeInfo.elapsed_text} / ${timeInfo.total_text}`;
+                                timeElement.style.color = 'var(--color-primary)';
+                            } else {
+                                // Show just elapsed or default
+                                timeElement.textContent = timeInfo.elapsed_text || "00:00 / 00:00";
+                                timeElement.style.color = 'var(--color-text-secondary)';
                             }
                         }
                     });
                 })
-                .catch(error => console.error('Error checking current track:', error));
+                .catch(error => console.error('Error updating playback times:', error));
+        }
+
+        // Combined function to get both current track and playback time info
+        function updateAllTrackInfo() {
+            // Fetch both track names and playback times at once
+            Promise.all([
+                fetch('/now-playing').then(r => r.json()),
+                fetch('/playback-time').then(r => r.json())
+            ]).then(([tracksData, playbackData]) => {
+                const tracks = tracksData.tracks || tracksData; // Handle both response formats
+                const playbackTimes = playbackData.playback_times || {};
+                
+                // Update track names first
+                Object.keys(tracks).forEach(route => {
+                    if (currentTracks[route] !== tracks[route]) {
+                        console.log('Track changed on route ' + route + ': ' + tracks[route]);
+                        currentTracks[route] = tracks[route];
+                        
+                        // UPDATE STATUS PAGE: Find and update track display on status page
+                        updateTrackDisplayOnStatusPage(route, tracks[route]);
+                        
+                        // If this route is open, reload player.
+                        if (window.location.pathname === route) {
+                            console.log('Reloading audio player for ' + route);
+                            const audio = document.querySelector('audio');
+                            if (audio) {
+                                const volume = audio.volume;
+                                const originalSrc = audio.src;
+                                audio.pause();
+                                audio.src = originalSrc + '?t=' + new Date().getTime();
+                                audio.volume = volume;
+                                audio.play().catch(e => console.error('Playback error:', e));
+                            }
+                        }
+                    }
+                });
+                
+                // Update playback times
+                Object.keys(playbackTimes).forEach(route => {
+                    const timeInfo = playbackTimes[route];
+                    const timeElement = document.querySelector(`.playback-time[data-route="${route}"]`);
+                    if (timeElement) {
+                        if (timeInfo.is_playing && timeInfo.total_text !== "00:00") {
+                            timeElement.textContent = `${timeInfo.elapsed_text} / ${timeInfo.total_text}`;
+                            timeElement.style.color = 'var(--color-primary)';
+                        } else {
+                            timeElement.textContent = timeInfo.elapsed_text || "00:00 / 00:00";
+                            timeElement.style.color = 'var(--color-text-secondary)';
+                        }
+                    }
+                });
+                
+            }).catch(error => console.error('Error updating track info:', error));
+        }
+        
+        // Keep the old function for compatibility but redirect to new one
+        function checkCurrentTracks() {
+            updateAllTrackInfo();
+        }
+        
+        // Keep the old function for compatibility but redirect to new one  
+        function updatePlaybackTimes() {
+            updateAllTrackInfo();
+        }
+        
+        // NEW FUNCTION: Update track display on status page in real-time
+        function updateTrackDisplayOnStatusPage(route, newTrackName) {
+            // Find the stream container for this route
+            const streamContainers = document.querySelectorAll('.stream-container');
+            streamContainers.forEach(container => {
+                const headerLink = container.querySelector('.stream-header a');
+                if (headerLink && headerLink.getAttribute('href') === route) {
+                    // Found the container for this route, update the track name
+                    const currentTrackElement = container.querySelector('.current-track .track-name');
+                    const copyButton = container.querySelector('.current-track .copy-button');
+                    
+                    if (currentTrackElement) {
+                        // Update track name with animation
+                        currentTrackElement.style.opacity = '0.5';
+                        setTimeout(() => {
+                            currentTrackElement.textContent = newTrackName;
+                            currentTrackElement.style.opacity = '1';
+                            
+                            // Update copy button onclick attribute
+                            if (copyButton) {
+                                copyButton.setAttribute('onclick', `copyToClipboard('${newTrackName}', this)`);
+                            }
+                            
+                            console.log('Updated track display for route:', route, 'to:', newTrackName);
+                        }, 150);
+                    }
+                }
+            });
         }
 
         // Check current track more frequently after manual track switch
-        let checkInterval = 2000; // Default 2 seconds
+        let checkInterval = 1000; // Default 1 second for smooth time updates
         let fastCheckCount = 0;
         
         function scheduleNextCheck() {
             setTimeout(() => {
-                checkCurrentTracks();
+                updateAllTrackInfo(); // Single call updates both tracks and times
                 scheduleNextCheck();
             }, checkInterval);
         }
@@ -584,7 +740,7 @@
                             // Speed up track checking for faster UI updates
                             checkInterval = 300; // Check every 300ms for faster response
                             setTimeout(() => {
-                                checkInterval = 2000; // Return to normal after 15 seconds
+                                checkInterval = 1000; // Return to normal 1-second updates after 15 seconds
                                 console.log('Returning to normal update speed');
                             }, 15000);
                         } else {
@@ -599,8 +755,8 @@
         
         // Initialization on page load.
         window.addEventListener('DOMContentLoaded', () => {
-            // Initial track information loading.
-            checkCurrentTracks();
+            // Initial track and time information loading.
+            updateAllTrackInfo();
         });
     </script>
 </body>

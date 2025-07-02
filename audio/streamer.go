@@ -15,6 +15,7 @@ import (
 	"errors"
 
 	sentry "github.com/getsentry/sentry-go"
+	mp3 "github.com/hajimehoshi/go-mp3"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -64,6 +65,10 @@ type Streamer struct {
 	logger             *slog.Logger           // Logger for streamer operations
 	streamingStopped   chan struct{}          // НОВЫЙ канал для синхронизации остановки стриминга
 	isStreaming        int32                  // НОВЫЙ атомарный флаг состояния стриминга
+	trackStartTime     time.Time              // НОВЫЙ: время начала воспроизведения текущего трека
+	currentTrackPath   string                 // НОВЫЙ: путь к текущему треку
+	trackDuration      time.Duration          // НОВЫЙ: длительность текущего трека
+	trackMutex         sync.RWMutex           // НОВЫЙ: мьютекс для защиты trackStartTime и currentTrackPath
 }
 
 // NewStreamer creates a new audio streamer.
@@ -97,6 +102,10 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		logger:             slog.Default(),
 		streamingStopped:   make(chan struct{}),
 		isStreaming:        0,
+		trackStartTime:     time.Time{},
+		currentTrackPath:   "",
+		trackDuration:      time.Duration(0),
+		trackMutex:         sync.RWMutex{},
 	}
 }
 
@@ -208,9 +217,16 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		return sentryErr
 	}
 
+	// КРИТИЧЕСКИ ВАЖНО: устанавливаем время начала трека и рассчитываем длительность
+	s.trackMutex.Lock()
+	s.trackStartTime = time.Now()
+	s.currentTrackPath = trackPath
+	s.trackDuration = s.calculateMP3Duration(trackPath)
+	s.trackMutex.Unlock()
+	
 	s.logger.Error("CRITICAL: Starting track streaming",
 		"trackPath", trackPath,
-		"timestamp", time.Now().Format("15:04:05.000"))
+		"timestamp", s.trackStartTime.Format("15:04:05.000"))
 
 	// Check if file exists.
 	fileInfo, statErr := os.Stat(trackPath)
@@ -693,6 +709,78 @@ func (s *Streamer) RemoveClient(clientID int) {
 // GetClientCount returns the current number of clients.
 func (s *Streamer) GetClientCount() int {
 	return int(atomic.LoadInt32(&s.clientCounter))
+}
+
+// GetPlaybackInfo returns current playback information (track path, start time, elapsed time, total duration)
+func (s *Streamer) GetPlaybackInfo() (string, time.Time, time.Duration, time.Duration) {
+	s.trackMutex.RLock()
+	defer s.trackMutex.RUnlock()
+	
+	elapsed := time.Duration(0)
+	if !s.trackStartTime.IsZero() {
+		elapsed = time.Since(s.trackStartTime)
+	}
+	
+	return s.currentTrackPath, s.trackStartTime, elapsed, s.trackDuration
+}
+
+// calculateMP3Duration calculates the duration of an MP3 file using a simpler method
+func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
+	file, err := os.Open(trackPath)
+	if err != nil {
+		s.logger.Error("Failed to open file for duration calculation", 
+			"trackPath", trackPath, 
+			"error", err.Error())
+		return time.Duration(0)
+	}
+	defer file.Close()
+
+	// Get file size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		s.logger.Error("Failed to get file stats for duration", 
+			"trackPath", trackPath, 
+			"error", err.Error())
+		return time.Duration(0)
+	}
+	
+	fileSize := fileInfo.Size()
+	
+	// Create MP3 decoder to get sample rate
+	decoder, err := mp3.NewDecoder(file)
+	if err != nil {
+		s.logger.Error("Failed to create MP3 decoder for duration", 
+			"trackPath", trackPath, 
+			"error", err.Error())
+		return time.Duration(0)
+	}
+
+	// Get sample rate from decoder
+	sampleRate := decoder.SampleRate()
+	
+	// Estimate duration using average MP3 bitrate (128 kbps is common)
+	// This is a rough approximation but should be reasonable
+	avgBitrate := 128 * 1000 // 128 kbps in bits per second
+	bytesPerSecond := avgBitrate / 8 // Convert to bytes per second
+	
+	estimatedDurationSeconds := float64(fileSize) / float64(bytesPerSecond)
+	estimatedDuration := time.Duration(estimatedDurationSeconds * float64(time.Second))
+	
+	// Clamp to reasonable values (1 second to 3 hours)
+	if estimatedDuration < time.Second {
+		estimatedDuration = time.Second
+	} else if estimatedDuration > 3*time.Hour {
+		estimatedDuration = 3 * time.Hour
+	}
+	
+	s.logger.Info("Calculated MP3 duration",
+		"trackPath", trackPath,
+		"duration", estimatedDuration.String(),
+		"fileSize", fileSize,
+		"sampleRate", sampleRate,
+		"estimatedBitrate", avgBitrate)
+	
+	return estimatedDuration
 }
 
 // broadcastToClients sends data to all connected clients.
