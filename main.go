@@ -343,6 +343,9 @@ func initializeRelayManager(logger *slog.Logger, config *Config, server *httpSer
 
 	// Set relay manager for HTTP server.
 	server.SetRelayManager(relayManager)
+	
+	// CRITICAL: Setup relay routes AFTER relay manager is set
+	server.SetupRelayRoutes()
 	logger.Info("Relay manager initialized and set for HTTP server")
 
 	return relayManager

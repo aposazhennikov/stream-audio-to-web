@@ -1,9 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-{{template "head" .}}
-<body>
-    {{define "content"}}
-    <header class="header">
+{{define "content"}}
+<header class="header">
         <div class="theme-toggle-wrapper">
             <div class="theme-toggle" id="theme-toggle">
                 <div class="toggle-ball">
@@ -98,9 +94,9 @@
             </div>
         </div>
     </div>
-    {{end}}
+{{end}}
 
-    {{block "additional_styles" .}}
+{{block "additional_styles" .}}
     <style>
         .header {
             text-align: center;
@@ -422,6 +418,4 @@
             });
             }
         });
-    </script>
-</body>
-</html> 
+    </script> 

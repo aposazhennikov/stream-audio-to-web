@@ -12,6 +12,11 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// SetupRelayRoutes is a public method to configure relay routes after relay manager is set
+func (s *Server) SetupRelayRoutes() {
+	s.setupRelayRoutes()
+}
+
 // setupRelayRoutes configures all relay-related routes in the router.
 func (s *Server) setupRelayRoutes() {
 	// Only setup relay routes if a relay manager is available

@@ -16,7 +16,7 @@ services:
       - /home/shaov:/app/shaov
       #- /home/troshin:/app/troshin
       #- /home/test_audio:/app/test_audio
-      - ./relay_data:/app/relay_data
+      - ./relay_data:/app/relay_data:rw
     environment:
       - STREAM_FORMAT=mp3
       - BITRATE=128
