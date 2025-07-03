@@ -5,6 +5,7 @@ package radio
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,8 @@ type Station struct {
 	waitGroup    sync.WaitGroup
 	mutex        sync.Mutex // Mutex for synchronizing access to channels
 	logger       *slog.Logger
+	manualTrackSwitch bool  // НОВЫЙ флаг для отслеживания ручного переключения треков
+	switchMutex  sync.RWMutex // НОВЫЙ мьютекс для защиты флага
 }
 
 // NewRadioStation creates a new radio station.
@@ -53,13 +56,14 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 		logger = slog.Default()
 	}
 	return &Station{
-		streamer:     streamer,
-		playlist:     playlist,
-		route:        route,
-		stop:         make(chan struct{}),
-		restart:      make(chan struct{}, 1), // Buffered channel for restart
-		currentTrack: make(chan struct{}),    // Channel for interrupting current track
-		logger:       logger,
+		streamer:          streamer,
+		playlist:          playlist,
+		route:             route,
+		stop:              make(chan struct{}),
+		restart:           make(chan struct{}, 1), // Buffered channel for restart
+		currentTrack:      make(chan struct{}),    // Channel for interrupting current track
+		logger:            logger,
+		manualTrackSwitch: false, // НОВЫЙ флаг инициализирован как false
 	}
 }
 
@@ -98,87 +102,175 @@ func (rs *Station) Stop() {
 // Called when switching tracks via API.
 func (rs *Station) RestartPlayback() {
 	startTime := time.Now()
-	rs.logger.Error("CRITICAL: Track switch requested - forcing immediate playback restart",
-		slog.String("route", rs.route),
-		slog.String("timestamp", startTime.Format("15:04:05.000")))
+	
+	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: MANUAL TRACK SWITCH requested - forcing immediate playback restart",
+			slog.String("route", rs.route),
+			slog.String("timestamp", startTime.Format("15:04:05.000")))
+	} else {
+		rs.logger.Error("CRITICAL: Track switch requested - forcing immediate playback restart",
+			slog.String("route", rs.route),
+			slog.String("timestamp", startTime.Format("15:04:05.000")))
+	}
+
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Устанавливаем флаг ручного переключения
+	rs.switchMutex.Lock()
+	rs.manualTrackSwitch = true
+	rs.switchMutex.Unlock()
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Manual track switch flag set to TRUE",
+			slog.String("route", rs.route))
+	}
 
 	rs.mutex.Lock()
 	defer rs.mutex.Unlock()
 
 	// CRITICAL: Stop the streamer immediately with enhanced synchronization
-	rs.logger.Error("CRITICAL: Stopping current track streamer",
-		slog.String("route", rs.route))
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Stopping current track streamer",
+			slog.String("route", rs.route))
+	} else {
+		rs.logger.Error("CRITICAL: Stopping current track streamer",
+			slog.String("route", rs.route))
+	}
 	rs.streamer.StopCurrentTrack()
 
-	// КРИТИЧЕСКОЕ ОЖИДАНИЕ: короткая пауза для завершения операций стримера
-	time.Sleep(100 * time.Millisecond) // Быстрая пауза вместо длительного ожидания
-	rs.logger.Error("CRITICAL: Streamer stop signal sent, proceeding with restart",
-		slog.String("route", rs.route))
+	// УБИРАЕМ ЗАДЕРЖКУ: Не ждем 100ms, переходим сразу к перезапуску
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Streamer stop signal sent, proceeding with restart immediately",
+			slog.String("route", rs.route))
+	} else {
+		rs.logger.Error("CRITICAL: Streamer stop signal sent, proceeding with restart immediately",
+			slog.String("route", rs.route))
+	}
 
 	// Interrupt current playback if it's ongoing.
 	select {
 	case <-rs.currentTrack: // Channel already closed
 		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
-		rs.logger.Error("CRITICAL: Current track channel was already closed",
-			slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Current track channel was already closed",
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Error("CRITICAL: Current track channel was already closed",
+				slog.String("route", rs.route))
+		}
 	default:
 		// Close channel to interrupt current playback.
 		close(rs.currentTrack)
 		// Create new channel for next track.
 		rs.currentTrack = make(chan struct{})
-		rs.logger.Error("CRITICAL: Current track channel closed - playback interrupted",
-			slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Current track channel closed - playback interrupted",
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Error("CRITICAL: Current track channel closed - playback interrupted",
+				slog.String("route", rs.route))
+		}
 	}
 
 	// Explicitly update the current track in the playlist to ensure it appears in the now-playing.
 	// This is critically important for the proper functioning of track switching tests.
 	currentTrack := rs.playlist.GetCurrentTrack()
-	rs.logger.Error("CRITICAL: Current track after manual switching obtained",
-		slog.String("route", rs.route),
-		slog.Any("track", currentTrack))
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Current track after manual switching obtained",
+			slog.String("route", rs.route),
+			slog.Any("track", currentTrack))
+	} else {
+		rs.logger.Error("CRITICAL: Current track after manual switching obtained",
+			slog.String("route", rs.route),
+			slog.Any("track", currentTrack))
+	}
 
 	// Send restart signal to playback loop.
 	select {
 	case rs.restart <- struct{}{}: // Send signal if channel is not full
-		rs.logger.Error("CRITICAL: Restart signal sent for immediate playback",
-			slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Restart signal sent for immediate playback",
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Error("CRITICAL: Restart signal sent for immediate playback",
+				slog.String("route", rs.route))
+		}
 	default:
 		// Channel already contains signal, no need to send another.
-		rs.logger.Error("CRITICAL: Restart signal already queued",
-			slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Restart signal already queued",
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Error("CRITICAL: Restart signal already queued",
+				slog.String("route", rs.route))
+		}
 	}
 	
 	totalTime := time.Since(startTime)
-	rs.logger.Error("CRITICAL: Track switch completed",
-		slog.String("route", rs.route),
-		slog.Int64("totalSwitchTimeMs", totalTime.Milliseconds()))
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: MANUAL TRACK SWITCH completed",
+			slog.String("route", rs.route),
+			slog.Int64("totalSwitchTimeMs", totalTime.Milliseconds()))
+	} else {
+		rs.logger.Error("CRITICAL: Track switch completed",
+			slog.String("route", rs.route),
+			slog.Int64("totalSwitchTimeMs", totalTime.Milliseconds()))
+	}
 }
 
 // streamLoop main track playback loop.
 func (rs *Station) streamLoop() {
 	defer rs.waitGroup.Done()
 
-	rs.logger.Info("DIAGNOSTICS: Main playback loop started for station...", slog.String("route", rs.route))
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Main playback loop started", slog.String("route", rs.route))
+	} else {
+		rs.logger.Info("DIAGNOSTICS: Main playback loop started for station...", slog.String("route", rs.route))
+	}
 
 	consecutiveEmptyTracks := 0
 	maxEmptyAttempts := 5 // Maximum number of attempts to check empty playlist
 	var isRestartRequested bool
+	loopCounter := 0
 
 	for {
+		loopCounter++
+		
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Stream loop iteration", 
+				slog.String("route", rs.route),
+				slog.Int("iteration", loopCounter),
+				slog.Bool("isRestartRequested", isRestartRequested))
+		}
+
 		// Check stop and restart signals before starting new cycle.
 		if rs.checkStopSignal() {
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Stop signal received, exiting stream loop", 
+					slog.String("route", rs.route))
+			}
 			return
 		}
 
 		isRestartRequested = rs.checkRestartSignal(isRestartRequested)
 
 		// Get current track.
-		rs.logger.Info("DIAGNOSTICS: Getting current track for station...", slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Getting current track", slog.String("route", rs.route))
+		} else {
+			rs.logger.Info("DIAGNOSTICS: Getting current track for station...", slog.String("route", rs.route))
+		}
 		track := rs.playlist.GetCurrentTrack()
 
 		if track == nil {
 			// Обрабатываем случай с отсутствием трека.
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: No track available", slog.String("route", rs.route))
+			}
 			consecutiveEmptyTracks = rs.handleNoTrack(consecutiveEmptyTracks, maxEmptyAttempts)
 			continue
 		}
@@ -189,11 +281,27 @@ func (rs *Station) streamLoop() {
 		// Получаем трек и проверяем его валидность.
 		trackPath := rs.validateTrack(track, isRestartRequested)
 		if trackPath == "" {
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Track validation failed", slog.String("route", rs.route))
+			}
 			continue
+		}
+
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: About to play track", 
+				slog.String("route", rs.route),
+				slog.String("trackPath", trackPath),
+				slog.Bool("isRestartRequested", isRestartRequested))
 		}
 
 		// Проигрываем трек и обрабатываем результат.
 		isRestartRequested = rs.playAndProcessTrack(trackPath, isRestartRequested)
+
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Track playback completed", 
+				slog.String("route", rs.route),
+				slog.Bool("isRestartRequested", isRestartRequested))
+		}
 
 		// Small pause before next iteration to prevent CPU racing.
 		time.Sleep(loopPauseMs * time.Millisecond)
@@ -204,7 +312,13 @@ func (rs *Station) streamLoop() {
 func (rs *Station) checkStopSignal() bool {
 	select {
 	case <-rs.stop:
-		rs.logger.Info("Stopping radio station", slog.String("route", rs.route))
+		isFloydStream := strings.Contains(rs.route, "floyd")
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Stop signal received - stopping radio station", 
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Info("Stopping radio station", slog.String("route", rs.route))
+		}
 		return true
 	default:
 		return false
@@ -215,7 +329,24 @@ func (rs *Station) checkStopSignal() bool {
 func (rs *Station) checkRestartSignal(currentState bool) bool {
 	select {
 	case <-rs.restart:
-		rs.logger.Info("DIAGNOSTICS: Restart signal processed for station", slog.String("route", rs.route))
+		isFloydStream := strings.Contains(rs.route, "floyd")
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Restart signal processed for station", slog.String("route", rs.route))
+		} else {
+			rs.logger.Info("DIAGNOSTICS: Restart signal processed for station", slog.String("route", rs.route))
+		}
+		
+		// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: При получении restart сигнала сбрасываем флаг ручного переключения
+		rs.switchMutex.Lock()
+		oldFlag := rs.manualTrackSwitch
+		rs.manualTrackSwitch = false
+		rs.switchMutex.Unlock()
+		
+		if isFloydStream && oldFlag {
+			rs.logger.Error("FLOYD DEBUG: Manual track switch flag reset during restart signal processing",
+				slog.String("route", rs.route))
+		}
+		
 		return true
 	default:
 		return currentState
@@ -287,27 +418,71 @@ func (rs *Station) validateTrack(track interface{}, isRestartRequested bool) str
 
 // playAndProcessTrack запускает проигрывание трека и обрабатывает его результат.
 func (rs *Station) playAndProcessTrack(trackPath string, isRestartRequested bool) bool {
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Starting track playback processing", 
+			slog.String("route", rs.route),
+			slog.String("trackPath", trackPath),
+			slog.Bool("isRestartRequested", isRestartRequested))
+	}
+
 	// Create local copy of channel for current track.
 	rs.mutex.Lock()
 	currentTrackCh := rs.currentTrack
 	rs.mutex.Unlock()
 
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Current track channel acquired", 
+			slog.String("route", rs.route))
+	}
+
 	// Start track playback in separate goroutine.
 	trackFinished := make(chan error, 1)
 	go rs.startTrackPlayback(trackPath, trackFinished)
 
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Track playback goroutine started", 
+			slog.String("route", rs.route))
+	}
+
 	// Wait for either track completion or interrupt signal.
-	return rs.waitForPlaybackResult(currentTrackCh, trackFinished, trackPath, isRestartRequested)
+	result := rs.waitForPlaybackResult(currentTrackCh, trackFinished, trackPath, isRestartRequested)
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Track playback processing completed", 
+			slog.String("route", rs.route),
+			slog.Bool("result", result))
+	}
+	
+	return result
 }
 
 // startTrackPlayback запускает проигрывание трека.
 func (rs *Station) startTrackPlayback(trackPath string, resultCh chan<- error) {
-	rs.logger.Info(
-		"DIAGNOSTICS: Starting playback of track",
-		slog.String("trackPath", trackPath),
-		slog.String("route", rs.route),
-	)
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Starting playback of track in goroutine",
+			slog.String("trackPath", trackPath),
+			slog.String("route", rs.route))
+	} else {
+		rs.logger.Info(
+			"DIAGNOSTICS: Starting playback of track",
+			slog.String("trackPath", trackPath),
+			slog.String("route", rs.route),
+		)
+	}
+	
 	err := rs.streamer.StreamTrack(trackPath)
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Streamer returned from StreamTrack",
+			slog.String("trackPath", trackPath),
+			slog.String("route", rs.route),
+			slog.String("error", fmt.Sprintf("%v", err)))
+	}
+	
 	resultCh <- err
 }
 
@@ -318,18 +493,40 @@ func (rs *Station) waitForPlaybackResult(
 	trackPath string,
 	isRestartRequested bool,
 ) bool {
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Waiting for playback result", 
+			slog.String("route", rs.route),
+			slog.String("trackPath", trackPath))
+	}
+
 	select {
 	case <-rs.stop:
 		// Station stopped, exit loop.
-		rs.logger.Info("Stopping radio station during playback", slog.String("route", rs.route))
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Stop signal received during playback", 
+				slog.String("route", rs.route))
+		} else {
+			rs.logger.Info("Stopping radio station during playback", slog.String("route", rs.route))
+		}
 		return isRestartRequested // Возвращаем текущее значение, хотя оно не будет использовано
 
 	case <-currentTrackCh:
 		// Track interrupted by RestartPlayback signal.
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Track interrupted by RestartPlayback signal", 
+				slog.String("route", rs.route))
+		}
 		return rs.handleTrackInterruption(trackFinished, trackPath, isRestartRequested)
 
 	case err := <-trackFinished:
 		// Track completed naturally or an error occurred.
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Track playback finished", 
+				slog.String("route", rs.route),
+				slog.String("error", fmt.Sprintf("%v", err)))
+		}
 		return rs.handleTrackCompletion(err, trackPath, isRestartRequested)
 	}
 }
@@ -370,38 +567,128 @@ func (rs *Station) handleTrackInterruption(trackFinished chan error, trackPath s
 
 // handleTrackCompletion обрабатывает завершение проигрывания трека.
 func (rs *Station) handleTrackCompletion(err error, trackPath string, isRestartRequested bool) bool {
-	if err != nil {
-		rs.logger.Error(
-			"Error playing track",
+	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
+	isFloydStream := strings.Contains(rs.route, "floyd")
+	
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем флаг ручного переключения
+	rs.switchMutex.RLock()
+	isManualSwitch := rs.manualTrackSwitch
+	rs.switchMutex.RUnlock()
+	
+	if isFloydStream {
+		rs.logger.Error("FLOYD DEBUG: Track completion handler called",
 			slog.String("trackPath", trackPath),
-			slog.String("error", err.Error()),
-		)
+			slog.Bool("isRestartRequested", isRestartRequested),
+			slog.Bool("isManualSwitch", isManualSwitch))
+	}
+	
+	if err != nil {
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Error playing track",
+				slog.String("trackPath", trackPath),
+				slog.String("error", err.Error()),
+				slog.Bool("isRestartRequested", isRestartRequested),
+				slog.Bool("isManualSwitch", isManualSwitch))
+		} else {
+			rs.logger.Error("Error playing track",
+				slog.String("trackPath", trackPath),
+				slog.String("error", err.Error()))
+		}
 		sentry.CaptureException(fmt.Errorf("error playing track %s: %w", trackPath, err))
 		
-		// On error, skip track and move to next only if not a manual restart.
-		if !isRestartRequested {
-			rs.logger.Info("DIAGNOSTICS: Moving to next track due to error", slog.String("route", rs.route))
-			rs.playlist.NextTrack()
+		// On error, skip track and move to next only if not a manual restart and not manual switch.
+		if !isRestartRequested && !isManualSwitch {
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Moving to next track due to error", slog.String("route", rs.route))
+			} else {
+				rs.logger.Info("DIAGNOSTICS: Moving to next track due to error", slog.String("route", rs.route))
+			}
+			nextTrack := rs.playlist.NextTrack()
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: NextTrack() returned after error", 
+					slog.Any("nextTrack", nextTrack))
+			}
 		} else {
-			rs.logger.Info("DIAGNOSTICS: Restart request detected, not calling NextTrack for error", slog.String("route", rs.route))
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Skipping NextTrack due to restart or manual switch", 
+					slog.String("route", rs.route),
+					slog.Bool("isRestartRequested", isRestartRequested),
+					slog.Bool("isManualSwitch", isManualSwitch))
+			} else {
+				rs.logger.Info("DIAGNOSTICS: Restart request detected, not calling NextTrack for error", slog.String("route", rs.route))
+			}
+			
+			// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сбрасываем флаг ручного переключения
+			if isManualSwitch {
+				rs.switchMutex.Lock()
+				rs.manualTrackSwitch = false
+				rs.switchMutex.Unlock()
+				if isFloydStream {
+					rs.logger.Error("FLOYD DEBUG: Manual track switch flag reset to FALSE",
+						slog.String("route", rs.route))
+				}
+			}
+			
 			return false // Сбрасываем флаг
 		}
 	} else {
-		rs.logger.Info(
-			"DIAGNOSTICS: Completed playback of track",
-			slog.String("trackPath", trackPath),
-			slog.String("route", rs.route),
-		)
-		// Move to next track only if no restart request.
-		if !isRestartRequested {
-			rs.logger.Info("DIAGNOSTICS: Moving to next track for station", slog.String("route", rs.route))
-			rs.playlist.NextTrack()
-		} else {
-			rs.logger.Info(
-				"DIAGNOSTICS: Restart request detected for station, resetting flag",
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Completed playback of track",
+				slog.String("trackPath", trackPath),
 				slog.String("route", rs.route),
-			)
+				slog.Bool("isRestartRequested", isRestartRequested),
+				slog.Bool("isManualSwitch", isManualSwitch))
+		} else {
+			rs.logger.Info("DIAGNOSTICS: Completed playback of track",
+				slog.String("trackPath", trackPath),
+				slog.String("route", rs.route))
+		}
+		// Move to next track only if no restart request and no manual switch.
+		if !isRestartRequested && !isManualSwitch {
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Moving to next track for station", slog.String("route", rs.route))
+			} else {
+				rs.logger.Info("DIAGNOSTICS: Moving to next track for station", slog.String("route", rs.route))
+			}
+			nextTrack := rs.playlist.NextTrack()
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: NextTrack() returned after natural completion", 
+					slog.Any("nextTrack", nextTrack))
+			}
+		} else {
+			if isFloydStream {
+				rs.logger.Error("FLOYD DEBUG: Skipping NextTrack due to restart or manual switch",
+					slog.String("route", rs.route),
+					slog.Bool("isRestartRequested", isRestartRequested),
+					slog.Bool("isManualSwitch", isManualSwitch))
+			} else {
+				rs.logger.Info("DIAGNOSTICS: Restart request detected for station, resetting flag",
+					slog.String("route", rs.route))
+			}
+			
+			// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сбрасываем флаг ручного переключения
+			if isManualSwitch {
+				rs.switchMutex.Lock()
+				rs.manualTrackSwitch = false
+				rs.switchMutex.Unlock()
+				if isFloydStream {
+					rs.logger.Error("FLOYD DEBUG: Manual track switch flag reset to FALSE",
+						slog.String("route", rs.route))
+				}
+			}
+			
 			return false // Сбрасываем флаг
+		}
+	}
+
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда сбрасываем флаг ручного переключения в конце
+	if isManualSwitch {
+		rs.switchMutex.Lock()
+		rs.manualTrackSwitch = false
+		rs.switchMutex.Unlock()
+		if isFloydStream {
+			rs.logger.Error("FLOYD DEBUG: Manual track switch flag reset to FALSE at end",
+				slog.String("route", rs.route))
 		}
 	}
 

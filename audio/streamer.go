@@ -148,16 +148,38 @@ func (s *Streamer) Close() {
 func (s *Streamer) StopCurrentTrack() {
 	startTime := time.Now()
 	
-	s.logger.Error("CRITICAL: IMMEDIATE track stop requested",
-		"timestamp", startTime.Format("15:04:05.000"))
+	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
+	s.trackMutex.RLock()
+	currentTrack := s.currentTrackPath
+	s.trackMutex.RUnlock()
+	
+	isFloydStream := strings.Contains(currentTrack, "floyd")
+	
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: STREAMER StopCurrentTrack called",
+			"currentTrack", currentTrack,
+			"isStreaming", atomic.LoadInt32(&s.isStreaming),
+			"timestamp", startTime.Format("15:04:05.000"))
+	} else {
+		s.logger.Error("CRITICAL: IMMEDIATE track stop requested",
+			"timestamp", startTime.Format("15:04:05.000"))
+	}
 	
 	// Закрываем quit канал для немедленной остановки
 	select {
 	case <-s.quit:
-		s.logger.Error("CRITICAL: Quit channel already closed, creating new one")
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Quit channel already closed, creating new one")
+		} else {
+			s.logger.Error("CRITICAL: Quit channel already closed, creating new one")
+		}
 	default:
 		close(s.quit)
-		s.logger.Error("CRITICAL: Quit channel closed - track MUST stop NOW")
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Quit channel closed - track MUST stop NOW")
+		} else {
+			s.logger.Error("CRITICAL: Quit channel closed - track MUST stop NOW")
+		}
 	}
 
 	// Очищаем буфер немедленно чтобы предотвратить воспроизведение старых данных
@@ -167,20 +189,38 @@ func (s *Streamer) StopCurrentTrack() {
 
 	// КРИТИЧЕСКОЕ ОЖИДАНИЕ: ждём только если стриминг действительно активен
 	if atomic.LoadInt32(&s.isStreaming) == 1 {
-		s.logger.Error("CRITICAL: Waiting for active streaming to stop...")
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Waiting for active streaming to stop...")
+		} else {
+			s.logger.Error("CRITICAL: Waiting for active streaming to stop...")
+		}
 		
 		select {
 		case <-s.streamingStopped:
-			s.logger.Error("CRITICAL: Streaming stopped successfully",
-				"stopDurationMs", time.Since(startTime).Milliseconds())
+			if isFloydStream {
+				s.logger.Error("FLOYD DEBUG: Streaming stopped successfully",
+					"stopDurationMs", time.Since(startTime).Milliseconds())
+			} else {
+				s.logger.Error("CRITICAL: Streaming stopped successfully",
+					"stopDurationMs", time.Since(startTime).Milliseconds())
+			}
 		case <-time.After(1 * time.Second): // Уменьшили с 2 до 1 секунды
 			criticalErr := fmt.Errorf("CRITICAL: 1-second track stop timeout")
-			s.logger.Error("CRITICAL: Track stop timeout after 1 second",
-				"isStreaming", atomic.LoadInt32(&s.isStreaming))
+			if isFloydStream {
+				s.logger.Error("FLOYD DEBUG: Track stop timeout after 1 second",
+					"isStreaming", atomic.LoadInt32(&s.isStreaming))
+			} else {
+				s.logger.Error("CRITICAL: Track stop timeout after 1 second",
+					"isStreaming", atomic.LoadInt32(&s.isStreaming))
+			}
 			sentry.CaptureException(criticalErr)
 		}
 	} else {
-		s.logger.Error("CRITICAL: No active streaming detected - stop immediate")
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: No active streaming detected - stop immediate")
+		} else {
+			s.logger.Error("CRITICAL: No active streaming detected - stop immediate")
+		}
 	}
 
 	// Создаём новые каналы для следующего трека
@@ -188,8 +228,13 @@ func (s *Streamer) StopCurrentTrack() {
 	s.streamingStopped = make(chan struct{})
 
 	totalTime := time.Since(startTime)
-	s.logger.Error("CRITICAL: Track stop COMPLETED",
-		"totalStopTimeMs", totalTime.Milliseconds())
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: STREAMER Track stop COMPLETED",
+			"totalStopTimeMs", totalTime.Milliseconds())
+	} else {
+		s.logger.Error("CRITICAL: Track stop COMPLETED",
+			"totalStopTimeMs", totalTime.Milliseconds())
+	}
 }
 
 // GetCurrentTrackChannel returns a channel with information about the current track.
@@ -210,6 +255,9 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 		}
 	}()
 
+	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
+	isFloydStream := strings.Contains(trackPath, "floyd")
+
 	// Check for empty path.
 	if trackPath == "" {
 		sentryErr := errors.New("empty audio file path")
@@ -224,25 +272,45 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	s.trackDuration = s.calculateMP3Duration(trackPath)
 	s.trackMutex.Unlock()
 	
-	s.logger.Error("CRITICAL: Starting track streaming",
-		"trackPath", trackPath,
-		"timestamp", s.trackStartTime.Format("15:04:05.000"))
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: STREAMER StreamTrack called",
+			"trackPath", trackPath,
+			"isStreaming", atomic.LoadInt32(&s.isStreaming),
+			"timestamp", s.trackStartTime.Format("15:04:05.000"))
+	} else {
+		s.logger.Error("CRITICAL: Starting track streaming",
+			"trackPath", trackPath,
+			"timestamp", s.trackStartTime.Format("15:04:05.000"))
+	}
 
 	// Check if file exists.
 	fileInfo, statErr := os.Stat(trackPath)
 	if statErr != nil {
-		s.logger.Info("DIAGNOSTICS: ERROR checking file",
-			"trackPath", trackPath,
-			"error", statErr.Error())
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: ERROR checking file",
+				"trackPath", trackPath,
+				"error", statErr.Error())
+		} else {
+			s.logger.Info("DIAGNOSTICS: ERROR checking file",
+				"trackPath", trackPath,
+				"error", statErr.Error())
+		}
 		sentryErr := errors.New("error checking file")
 		sentry.CaptureException(sentryErr)
 		return sentryErr
 	}
 
-	s.logger.Info("DIAGNOSTICS: File exists",
-		"trackPath", trackPath,
-		"size", fileInfo.Size(),
-		"mode", fileInfo.Mode().String())
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: File exists",
+			"trackPath", trackPath,
+			"size", fileInfo.Size(),
+			"mode", fileInfo.Mode().String())
+	} else {
+		s.logger.Info("DIAGNOSTICS: File exists",
+			"trackPath", trackPath,
+			"size", fileInfo.Size(),
+			"mode", fileInfo.Mode().String())
+	}
 
 	// Check that it's not a directory.
 	if fileInfo.IsDir() {
@@ -252,12 +320,22 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	}
 
 	// Open the file.
-	s.logger.Info("DIAGNOSTICS: Attempting to open file", "trackPath", trackPath)
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: Attempting to open file", "trackPath", trackPath)
+	} else {
+		s.logger.Info("DIAGNOSTICS: Attempting to open file", "trackPath", trackPath)
+	}
 	file, openErr := os.Open(trackPath)
 	if openErr != nil {
-		s.logger.Info("DIAGNOSTICS: ERROR opening file",
-			"trackPath", trackPath,
-			"error", openErr.Error())
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: ERROR opening file",
+				"trackPath", trackPath,
+				"error", openErr.Error())
+		} else {
+			s.logger.Info("DIAGNOSTICS: ERROR opening file",
+				"trackPath", trackPath,
+				"error", openErr.Error())
+		}
 		sentryErr := errors.New("error opening file")
 		sentry.CaptureException(sentryErr)
 		return openErr
@@ -267,24 +345,61 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	// Send information about current track to channel.
 	select {
 	case s.currentTrackCh <- filepath.Base(trackPath):
-		s.logger.Info("DIAGNOSTICS: Current track information updated", "track", filepath.Base(trackPath))
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Current track information updated", "track", filepath.Base(trackPath))
+		} else {
+			s.logger.Info("DIAGNOSTICS: Current track information updated", "track", filepath.Base(trackPath))
+		}
 	default:
-		s.logger.Info("DIAGNOSTICS: Failed to update current track information: channel full")
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Failed to update current track information: channel full")
+		} else {
+			s.logger.Info("DIAGNOSTICS: Failed to update current track information: channel full")
+		}
 	}
 
 	startTime := time.Now()
 
 	// Check if normalization should be used.
 	if !s.normalizeVolume {
-		s.logger.Info("DIAGNOSTICS: Using raw audio streaming (normalization disabled)", 
-			"trackPath", trackPath)
-		return s.processRawAudio(file, fileInfo, trackPath, startTime)
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Using raw audio streaming (normalization disabled)", 
+				"trackPath", trackPath)
+		} else {
+			s.logger.Info("DIAGNOSTICS: Using raw audio streaming (normalization disabled)", 
+				"trackPath", trackPath)
+		}
+		err := s.processRawAudio(file, fileInfo, trackPath, startTime)
+		
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: STREAMER StreamTrack completed",
+				"trackPath", trackPath,
+				"error", fmt.Sprintf("%v", err),
+				"duration", time.Since(startTime))
+		}
+		
+		return err
 	}
 
 	// CRITICAL CHECK: Always use raw audio if normalization is problematic
-	s.logger.Error("WARNING: Normalization is enabled but currently causes critical errors - forcing raw audio",
-		"trackPath", trackPath)
-	return s.processRawAudio(file, fileInfo, trackPath, startTime)
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: Normalization is enabled but forcing raw audio",
+			"trackPath", trackPath)
+	} else {
+		s.logger.Error("WARNING: Normalization is enabled but currently causes critical errors - forcing raw audio",
+			"trackPath", trackPath)
+	}
+	
+	err := s.processRawAudio(file, fileInfo, trackPath, startTime)
+	
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: STREAMER StreamTrack completed",
+			"trackPath", trackPath,
+			"error", fmt.Sprintf("%v", err),
+			"duration", time.Since(startTime))
+	}
+	
+	return err
 }
 
 // processRawAudio handles streaming of raw (non-normalized) audio.
@@ -356,7 +471,7 @@ func (s *Streamer) processRawAudio(file *os.File, fileInfo os.FileInfo, trackPat
 	return nil
 }
 
-	// processNormalizedAudio handles streaming of normalized audio.
+// processNormalizedAudio handles streaming of normalized audio.
 func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, startTime time.Time) error {
 	// Extract route name from track path for metrics.
 	route := getRouteFromTrackPath(trackPath)
@@ -818,10 +933,6 @@ func (s *Streamer) calculateDurationBySimpleEstimation(trackPath string) time.Du
 	return estimatedDuration
 }
 
-
-
-
-
 // broadcastToClients sends data to all connected clients.
 func (s *Streamer) broadcastToClients(data []byte) {
 	s.clientMutex.RLock()
@@ -994,6 +1105,14 @@ func (s *Streamer) CloseClient(clientID int) {
 
 // streamAudioLoop handles the main stream reading and broadcasting loop.
 func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *int64) error {
+	isFloydStream := strings.Contains(trackPath, "floyd")
+	
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: Starting streamAudioLoop", 
+			"trackPath", trackPath,
+			"isStreaming", atomic.LoadInt32(&s.isStreaming))
+	}
+
 	bufferInterface := s.bufferPool.Get()
 	buffer, ok := bufferInterface.([]byte)
 	if !ok || buffer == nil {
@@ -1005,11 +1124,29 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 	}
 	defer s.bufferPool.Put(buffer) // Put back buffer, not pointer to buffer
 
+	loopCounter := 0
 	for {
+		loopCounter++
+		
+		if isFloydStream && loopCounter%1000 == 0 { // Логируем каждую 1000-ю итерацию
+			s.logger.Error("FLOYD DEBUG: StreamAudioLoop iteration", 
+				"trackPath", trackPath,
+				"iteration", loopCounter,
+				"bytesRead", *bytesRead,
+				"isStreaming", atomic.LoadInt32(&s.isStreaming))
+		}
+
 		// Check completion signal before reading.
 		select {
 		case <-s.quit:
-			s.logger.Info("DIAGNOSTICS: Playback interrupted", "trackPath", trackPath)
+			if isFloydStream {
+				s.logger.Error("FLOYD DEBUG: Quit signal received in streamAudioLoop", 
+					"trackPath", trackPath,
+					"bytesRead", *bytesRead,
+					"iteration", loopCounter)
+			} else {
+				s.logger.Info("DIAGNOSTICS: Playback interrupted", "trackPath", trackPath)
+			}
 			return nil
 		default:
 			// Continue execution.
@@ -1018,19 +1155,40 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 		// Read data.
 		n, readErr := file.Read(buffer)
 		if errors.Is(readErr, io.EOF) {
-			s.logger.Info("DIAGNOSTICS: End of data reached", "trackPath", trackPath)
+			if isFloydStream {
+				s.logger.Error("FLOYD DEBUG: End of data reached in streamAudioLoop", 
+					"trackPath", trackPath,
+					"totalBytesRead", *bytesRead,
+					"iterations", loopCounter)
+			} else {
+				s.logger.Info("DIAGNOSTICS: End of data reached", "trackPath", trackPath)
+			}
 			break
 		}
 		if readErr != nil {
 			// Special handling for pipe closed.
 			if errors.Is(readErr, io.ErrClosedPipe) || strings.Contains(readErr.Error(), "closed pipe") {
-				s.logger.Info("DIAGNOSTICS: Pipe was closed during playback",
-					"trackPath", trackPath,
-					"action", "stopping")
+				if isFloydStream {
+					s.logger.Error("FLOYD DEBUG: Pipe was closed during playback",
+						"trackPath", trackPath,
+						"action", "stopping")
+				} else {
+					s.logger.Info("DIAGNOSTICS: Pipe was closed during playback",
+						"trackPath", trackPath,
+						"action", "stopping")
+				}
 				return nil
 			}
 
-			s.logger.Info("DIAGNOSTICS: ERROR reading data", "error", readErr.Error())
+			if isFloydStream {
+				s.logger.Error("FLOYD DEBUG: ERROR reading data in streamAudioLoop", 
+					"error", readErr.Error(),
+					"trackPath", trackPath,
+					"bytesRead", *bytesRead,
+					"iteration", loopCounter)
+			} else {
+				s.logger.Info("DIAGNOSTICS: ERROR reading data", "error", readErr.Error())
+			}
 			sentry.CaptureException(readErr)
 			return fmt.Errorf("error reading data: %w", readErr)
 		}
@@ -1043,6 +1201,13 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 		// Handle delay.
 		delayMs := s.calculateDelay(n)
 		s.waitForDelayOrQuit(delayMs, trackPath, *bytesRead)
+	}
+
+	if isFloydStream {
+		s.logger.Error("FLOYD DEBUG: streamAudioLoop completed normally", 
+			"trackPath", trackPath,
+			"totalBytesRead", *bytesRead,
+			"totalIterations", loopCounter)
 	}
 
 	return nil
@@ -1089,13 +1254,22 @@ func (s *Streamer) waitForDelayOrQuit(delayMs int, trackPath string, bytesRead i
 		return
 	}
 
+	isFloydStream := strings.Contains(trackPath, "floyd")
+
 	select {
 	case <-s.quit:
-		s.logger.Info(
-			"Audio streaming interrupted during delay",
-			"trackPath", trackPath,
-			"bytesRead", bytesRead,
-		)
+		if isFloydStream {
+			s.logger.Error("FLOYD DEBUG: Audio streaming interrupted during delay",
+				"trackPath", trackPath,
+				"bytesRead", bytesRead,
+				"delayMs", delayMs)
+		} else {
+			s.logger.Info(
+				"Audio streaming interrupted during delay",
+				"trackPath", trackPath,
+				"bytesRead", bytesRead,
+			)
+		}
 		return
 	case <-time.After(time.Duration(delayMs) * time.Millisecond):
 		// Продолжаем после задержки.

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1135,8 +1136,15 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 			HttpOnly: true,
 		})
 
-		// Redirect to status page.
-		http.Redirect(w, r, "/status-page", http.StatusFound)
+		// ИСПРАВЛЕНИЕ: Проверяем есть ли сохраненный URL для редиректа
+		redirectURL := r.URL.Query().Get("redirect")
+		if redirectURL != "" {
+			s.logger.Info("Redirecting to original URL after successful login", slog.String("redirectURL", redirectURL))
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+		} else {
+			// Если нет сохраненного URL, перенаправляем на status-page по умолчанию
+			http.Redirect(w, r, "/status-page", http.StatusFound)
+		}
 		return
 	}
 
@@ -1296,39 +1304,74 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleTrackSwitchHandler handles track switching.
 func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
-	s.logger.Info("TRACK SWITCH DEBUG: handleTrackSwitchHandler called", 
-		slog.String("direction", direction),
-		slog.String("method", r.Method),
-		slog.String("remoteAddr", r.RemoteAddr),
-		slog.String("userAgent", r.UserAgent()),
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	// Get route early for floyd detection
+	vars := mux.Vars(r)
+	route := "/" + vars["route"]
+	isFloydRoute := strings.Contains(route, "floyd")
+	
+	if isFloydRoute {
+		s.logger.Error("FLOYD DEBUG: HTTP handleTrackSwitchHandler called", 
+			slog.String("direction", direction),
+			slog.String("route", route),
+			slog.String("method", r.Method),
+			slog.String("remoteAddr", r.RemoteAddr),
+			slog.String("userAgent", r.UserAgent()),
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	} else {
+		s.logger.Info("TRACK SWITCH DEBUG: handleTrackSwitchHandler called", 
+			slog.String("direction", direction),
+			slog.String("method", r.Method),
+			slog.String("remoteAddr", r.RemoteAddr),
+			slog.String("userAgent", r.UserAgent()),
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	}
 	
 	// Check authentication.
 	if !s.checkAuth(r) {
-		s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
+		if isFloydRoute {
+			s.logger.Error("FLOYD DEBUG: Authentication failed")
+		} else {
+			s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
+		}
 		s.handleUnauthenticatedTrackSwitch(w, r)
 		return
 	}
 
-	// Get route.
-	vars := mux.Vars(r)
-	route := "/" + vars["route"]
-
 	// Get playlist.
 	playlist, exists := s.getPlaylistForRoute(route)
 	if !exists {
+		if isFloydRoute {
+			s.logger.Error("FLOYD DEBUG: Playlist not found", slog.String("route", route))
+		}
 		s.handlePlaylistNotFound(w, r, route)
 		return
+	}
+
+	if isFloydRoute {
+		s.logger.Error("FLOYD DEBUG: About to get track for direction", 
+			slog.String("direction", direction), 
+			slog.String("route", route))
 	}
 
 	// Get track.
 	track := s.getTrackForDirection(playlist, direction)
 	if track == nil {
+		if isFloydRoute {
+			s.logger.Error("FLOYD DEBUG: Track not found", 
+				slog.String("direction", direction), 
+				slog.String("route", route))
+		}
 		s.handleTrackNotFound(w, r, route, direction)
 		return
 	}
 
-	s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
+	if isFloydRoute {
+		s.logger.Error("FLOYD DEBUG: Manual track switch proceeding", 
+			slog.String("direction", direction), 
+			slog.String("route", route))
+	} else {
+		s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
+	}
 
 	// Handle track switching.
 	s.handleTrackSwitchResult(w, r, route, track)
@@ -1385,11 +1428,15 @@ func (s *Server) getTrackForDirection(playlist PlaylistManager, direction string
 		slog.String("timestamp", time.Now().Format("15:04:05.000")))
 	
 	if direction == "next" {
+		s.logger.Info("TRACK SWITCH DEBUG: About to call NextTrack()", 
+			slog.String("timestamp", time.Now().Format("15:04:05.000")))
 		track := playlist.NextTrack()
 		s.logger.Info("TRACK SWITCH DEBUG: NextTrack() called and returned", 
 			slog.String("timestamp", time.Now().Format("15:04:05.000")))
 		return track
 	}
+	s.logger.Info("TRACK SWITCH DEBUG: About to call PreviousTrack()", 
+		slog.String("timestamp", time.Now().Format("15:04:05.000")))
 	track := playlist.PreviousTrack()
 	s.logger.Info("TRACK SWITCH DEBUG: PreviousTrack() called and returned", 
 		slog.String("timestamp", time.Now().Format("15:04:05.000")))
@@ -1556,7 +1603,20 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("Cookie match", slog.Bool("match", cookie.Value == s.statusPassword))
 	}
 
-	http.Redirect(w, r, "/status", http.StatusFound)
+	// ИСПРАВЛЕНИЕ: Сохраняем оригинальный URL как query параметр
+	// чтобы после авторизации вернуть пользователя туда, где он хотел быть
+	originalURL := r.URL.Path
+	if r.URL.RawQuery != "" {
+		originalURL += "?" + r.URL.RawQuery
+	}
+	
+	// Только сохраняем URL если это не сама страница логина
+	if originalURL != "/status" && originalURL != "/status-page" {
+		encodedURL := url.QueryEscape(originalURL)
+		http.Redirect(w, r, "/status?redirect="+encodedURL, http.StatusFound)
+	} else {
+		http.Redirect(w, r, "/status", http.StatusFound)
+	}
 }
 
 // handleShufflePlaylist shuffles the playlist for a specific stream.

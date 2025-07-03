@@ -49,7 +49,7 @@ func (s *Server) setupRelayRoutes() {
 func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.checkAuth(r) {
-		http.Redirect(w, r, "/status", http.StatusFound)
+		s.redirectToLogin(w, r)
 		return
 	}
 

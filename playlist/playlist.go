@@ -446,24 +446,40 @@ func (p *Playlist) GetCurrentTrack() interface{} {
 
 // NextTrack moves to the next track and returns it.
 func (p *Playlist) NextTrack() interface{} {
-	p.logger.Info("PLAYLIST DEBUG: NextTrack() called", 
-		slog.String("directory", p.directory),
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	startTime := time.Now()
+	
+	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
+	isFloydStream := strings.Contains(p.directory, "floyd")
+	if isFloydStream {
+		p.logger.Error("FLOYD DEBUG: NextTrack() called", 
+			slog.String("directory", p.directory),
+			slog.String("timestamp", startTime.Format("15:04:05.000")))
+	}
 	
 	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
 	tracksEmpty := len(p.tracks) == 0
 	currentIndex := p.current
+	totalTracks := len(p.tracks)
+	var currentTrackName string
+	if currentIndex < len(p.tracks) {
+		currentTrackName = filepath.Base(p.tracks[currentIndex].Path)
+	}
 	p.mutex.RUnlock()
 
-	p.logger.Info("PLAYLIST DEBUG: Current state", 
-		slog.Bool("tracksEmpty", tracksEmpty),
-		slog.Int("currentIndex", currentIndex),
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
+	if isFloydStream {
+		p.logger.Error("FLOYD DEBUG: Current state", 
+			slog.Bool("tracksEmpty", tracksEmpty),
+			slog.Int("currentIndex", currentIndex),
+			slog.Int("totalTracks", totalTracks),
+			slog.String("currentTrack", currentTrackName))
+	}
 
 	// Если треков нет, сразу возвращаем nil без запуска горутин.
 	if tracksEmpty {
-		p.logger.Info("PLAYLIST DEBUG: No tracks available, returning nil")
+		if isFloydStream {
+			p.logger.Error("FLOYD DEBUG: No tracks available, returning nil")
+		}
 		return nil
 	}
 
@@ -490,13 +506,29 @@ func (p *Playlist) NextTrack() interface{} {
 			p.addTrackToHistory(currentTrack)
 		}
 
-		// Переходим к следующему треку.
+		// КРИТИЧЕСКАЯ ДИАГНОСТИКА: Логируем ДО изменения индекса
 		oldCurrent := p.current
+		oldTrackName := ""
+		if oldCurrent < len(p.tracks) {
+			oldTrackName = filepath.Base(p.tracks[oldCurrent].Path)
+		}
+		
+		if isFloydStream {
+			p.logger.Error("FLOYD DEBUG: BEFORE track switch", 
+				slog.Int("oldIndex", oldCurrent),
+				slog.String("oldTrack", oldTrackName))
+		}
+
+		// Переходим к следующему треку.
 		newCurrent := (p.current + 1) % len(p.tracks)
 		
 		// Проверяем необходимость повторного перемешивания ПЕРЕД изменением current.
 		if newCurrent == 0 && p.shuffle && len(p.tracks) > 1 {
-			p.logger.Info("PLAYLIST DEBUG: Reshuffling playlist (reached end)")
+			if isFloydStream {
+				p.logger.Error("FLOYD DEBUG: Reshuffling playlist (reached end)")
+			} else {
+				p.logger.Info("PLAYLIST DEBUG: Reshuffling playlist (reached end)")
+			}
 			p.reshufflePlaylistPreservingCurrent()
 			// После reshuffling НЕ меняем current - он уже установлен в reshufflePlaylistPreservingCurrent()
 		} else {
@@ -504,11 +536,18 @@ func (p *Playlist) NextTrack() interface{} {
 			p.current = newCurrent
 		}
 		
-		p.logger.Info("PLAYLIST DEBUG: Track index changed", 
-			slog.Int("from", oldCurrent),
-			slog.Int("to", p.current),
-			slog.Int("totalTracks", len(p.tracks)),
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+		// КРИТИЧЕСКАЯ ДИАГНОСТИКА: Логируем ПОСЛЕ изменения индекса
+		newTrackName := ""
+		if p.current < len(p.tracks) {
+			newTrackName = filepath.Base(p.tracks[p.current].Path)
+		}
+		
+		if isFloydStream {
+			p.logger.Error("FLOYD DEBUG: AFTER track switch", 
+				slog.Int("from", oldCurrent),
+				slog.Int("to", p.current),
+				slog.String("newTrack", newTrackName))
+		}
 
 		// Создаем копию трека для безопасного возврата.
 		track := p.tracks[p.current]
@@ -517,10 +556,12 @@ func (p *Playlist) NextTrack() interface{} {
 			trackName = filepath.Base(track.Path)
 		}
 		
-		p.logger.Info("PLAYLIST DEBUG: Returning new track", 
-			slog.String("trackName", trackName),
-			slog.Int("newIndex", p.current),
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
+		if isFloydStream {
+			p.logger.Error("FLOYD DEBUG: Returning new track", 
+				slog.String("trackName", trackName),
+				slog.Int("newIndex", p.current),
+				slog.Int64("executionTimeMs", time.Since(startTime).Milliseconds()))
+		}
 		
 		c <- &track
 	}()
@@ -528,6 +569,10 @@ func (p *Playlist) NextTrack() interface{} {
 	// Ожидаем результат с таймаутом.
 	select {
 	case result := <-c:
+		if isFloydStream {
+			p.logger.Error("FLOYD DEBUG: NextTrack() COMPLETED",
+				slog.Int64("totalTimeMs", time.Since(startTime).Milliseconds()))
+		}
 		return result
 	case <-time.After(timeout):
 		p.logger.Warn(
