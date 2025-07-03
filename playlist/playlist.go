@@ -492,19 +492,23 @@ func (p *Playlist) NextTrack() interface{} {
 
 		// Переходим к следующему треку.
 		oldCurrent := p.current
-		p.current = (p.current + 1) % len(p.tracks)
+		newCurrent := (p.current + 1) % len(p.tracks)
+		
+		// Проверяем необходимость повторного перемешивания ПЕРЕД изменением current.
+		if newCurrent == 0 && p.shuffle && len(p.tracks) > 1 {
+			p.logger.Info("PLAYLIST DEBUG: Reshuffling playlist (reached end)")
+			p.reshufflePlaylistPreservingCurrent()
+			// После reshuffling НЕ меняем current - он уже установлен в reshufflePlaylistPreservingCurrent()
+		} else {
+			// Обычный переход к следующему треку.
+			p.current = newCurrent
+		}
 		
 		p.logger.Info("PLAYLIST DEBUG: Track index changed", 
 			slog.Int("from", oldCurrent),
 			slog.Int("to", p.current),
 			slog.Int("totalTracks", len(p.tracks)),
 			slog.String("timestamp", time.Now().Format("15:04:05.000")))
-
-		// Проверяем необходимость повторного перемешивания.
-		if p.current == 0 && p.shuffle && len(p.tracks) > 1 {
-			p.logger.Info("PLAYLIST DEBUG: Reshuffling playlist (reached end)")
-			p.reshufflePlaylistPreservingCurrent()
-		}
 
 		// Создаем копию трека для безопасного возврата.
 		track := p.tracks[p.current]

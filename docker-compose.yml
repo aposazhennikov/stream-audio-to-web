@@ -19,7 +19,6 @@ services:
       #- /home/test_audio:/app/test_audio
       - ./relay_data:/app/relay_data:rw
     environment:
-      - STREAM_FORMAT=mp3
       - BITRATE=128
       - MAX_CLIENTS=10
       - LOG_LEVEL=error

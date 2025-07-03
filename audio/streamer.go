@@ -53,7 +53,6 @@ type Streamer struct {
 	currentTrackCh     chan string
 	clientChannels     map[int]chan []byte
 	clientMutex        sync.RWMutex
-	transcodeFormat    string
 	bitrate            int
 	lastChunk          []byte                 // Last sent chunk of audio data.
 	lastChunkMutex     sync.RWMutex           // Mutex for protecting lastChunk.
@@ -73,7 +72,7 @@ type Streamer struct {
 }
 
 // NewStreamer creates a new audio streamer.
-func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int) *Streamer {
+func NewStreamer(bufferSize, maxClients int, bitrate int) *Streamer {
 	if bufferSize <= 0 {
 		bufferSize = defaultBufferSize
 	}
@@ -90,7 +89,6 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 		currentTrackCh:     make(chan string, 1),
 		clientChannels:     make(map[int]chan []byte),
 		clientMutex:        sync.RWMutex{},
-		transcodeFormat:    transcodeFormat,
 		bitrate:            bitrate,
 		lastChunk:          nil,
 		lastChunkMutex:     sync.RWMutex{},
@@ -112,6 +110,7 @@ func NewStreamer(bufferSize, maxClients int, transcodeFormat string, bitrate int
 
 // SetVolumeNormalization enables or disables volume normalization.
 func (s *Streamer) SetVolumeNormalization(enabled bool) {
+	s.normalizeVolume = enabled
 	s.logger.Info("DIAGNOSTICS: Volume normalization", "enabled", enabled)
 }
 

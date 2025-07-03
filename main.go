@@ -31,7 +31,7 @@ import (
 const (
 	defaultPort            = 8000
 	defaultAudioDir        = "./audio"
-	defaultStreamFormat    = "mp3"
+
 	defaultBitrate         = 128
 	defaultMaxClients      = 500
 	defaultLogLevel        = "info"
@@ -54,7 +54,6 @@ type Config struct {
 	Port                   int
 	AudioDir               string
 	DirectoryRoutes        map[string]string
-	StreamFormat           string
 	Bitrate                int
 	MaxClients             int
 	LogLevel               string
@@ -242,7 +241,7 @@ func logConfiguration(logger *slog.Logger, config *Config) {
 	configLogger.Info("========== APPLICATION CONFIGURATION ==========")
 	configLogger.Info("Port", slog.Int("value", config.Port))
 	configLogger.Info("Default audio directory", slog.String("value", config.AudioDir))
-	configLogger.Info("Stream format", slog.String("value", config.StreamFormat))
+
 	configLogger.Info("Bitrate", slog.Int("value", config.Bitrate))
 	configLogger.Info("Max clients", slog.Int("value", config.MaxClients))
 	configLogger.Info("Buffer size", slog.Int("value", config.BufferSize))
@@ -280,7 +279,7 @@ func initializeComponents(
 ) (*httpServer.Server, *radio.StationManager, *relay.Manager) {
 	// Create HTTP server.
 	logger.Info("Creating HTTP server...")
-	server := httpServer.NewServer(config.StreamFormat, config.MaxClients)
+	server := httpServer.NewServer(config.MaxClients)
 	logger.Info("HTTP server created")
 	
 	// Set global shuffle configuration.
@@ -795,7 +794,7 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 
 func createStreamer(logger *slog.Logger, config *Config, route string) *audio.Streamer {
 	logger.Info("Creating audio streamer for route", slog.String("route", route))
-	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.StreamFormat, config.Bitrate)
+	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.Bitrate)
 	streamer.SetVolumeNormalization(config.NormalizeVolume)
 	logger.Info("Audio streamer for route successfully created", slog.String("route", route))
 	return streamer
@@ -816,7 +815,6 @@ func loadConfig() *Config {
 func parseCommandLineFlags() *Config {
 	port := flag.Int("port", defaultPort, "HTTP server port")
 	audioDir := flag.String("audio-dir", defaultAudioDir, "Directory with audio files")
-	streamFormat := flag.String("format", defaultStreamFormat, "Stream format (mp3, ogg, aac)")
 	bitrate := flag.Int("bitrate", defaultBitrate, "Stream bitrate")
 	maxClients := flag.Int("max-clients", defaultMaxClients, "Maximum number of clients")
 	logLevel := flag.String("log-level", defaultLogLevel, "Log level")
@@ -837,7 +835,6 @@ func parseCommandLineFlags() *Config {
 		Port:                   *port,
 		AudioDir:               *audioDir,
 		DirectoryRoutes:        make(map[string]string),
-		StreamFormat:           *streamFormat,
 		Bitrate:                *bitrate,
 		MaxClients:             *maxClients,
 		LogLevel:               *logLevel,
@@ -935,10 +932,6 @@ func loadRelayConfig(config *Config) {
 
 // loadStreamConfig загружает параметры потока из переменных окружения.
 func loadStreamConfig(config *Config) {
-	if format := os.Getenv("STREAM_FORMAT"); format != "" {
-		config.StreamFormat = format
-	}
-
 	if bitrateStr := os.Getenv("BITRATE"); bitrateStr != "" {
 		if bitrate, err := strconv.Atoi(bitrateStr); err == nil {
 			config.Bitrate = bitrate

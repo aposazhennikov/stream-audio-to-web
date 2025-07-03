@@ -52,7 +52,6 @@ type Server struct {
 	router            *mux.Router
 	streams           map[string]StreamHandler
 	playlists         map[string]PlaylistManager
-	streamFormat      string
 	maxClients        int
 	mutex             sync.RWMutex
 	currentTracks     map[string]string
@@ -83,7 +82,7 @@ const (
 )
 
 // NewServer creates a new HTTP server.
-func NewServer(streamFormat string, maxClients int) *Server {
+func NewServer(maxClients int) *Server {
 	// Get password for status page from environment variable.
 	statusPassword := getEnvOrDefault("STATUS_PASSWORD", defaultStatusPassword)
 
@@ -124,7 +123,6 @@ func NewServer(streamFormat string, maxClients int) *Server {
 		router:            mux.NewRouter(),
 		streams:           make(map[string]StreamHandler),
 		playlists:         make(map[string]PlaylistManager),
-		streamFormat:      streamFormat,
 		maxClients:        maxClients,
 		currentTracks:     make(map[string]string),
 		statusPassword:    statusPassword,
@@ -139,7 +137,6 @@ func NewServer(streamFormat string, maxClients int) *Server {
 
 	server.logger.Info(
 		"HTTP server created",
-		slog.String("streamFormat", streamFormat),
 		slog.Int("maxClients", maxClients),
 	)
 	return server
@@ -790,7 +787,6 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	s.logger.Info(
 		"Audio stream format",
 		slog.String("route", route),
-		slog.String("format", s.streamFormat),
 		slog.String("MIME", contentType),
 	)
 
@@ -844,20 +840,10 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	}
 }
 
-// determineContentType sets the appropriate MIME type based on stream format.
+// determineContentType sets the appropriate MIME type for audio streaming.
 func (s *Server) determineContentType() string {
-	var contentType string
-	switch s.streamFormat {
-	case "mp3":
-		contentType = "audio/mpeg"
-	case "aac":
-		contentType = "audio/aac"
-	case "ogg":
-		contentType = "audio/ogg"
-	default:
-		contentType = "audio/mpeg"
-	}
-	return contentType
+	// Default to MP3 since that's what we stream
+	return "audio/mpeg"
 }
 
 // getStream retrieves the stream handler for the given route.

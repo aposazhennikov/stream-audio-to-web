@@ -187,7 +187,7 @@ func (rs *Station) streamLoop() {
 		consecutiveEmptyTracks = 0
 
 		// Получаем трек и проверяем его валидность.
-		trackPath := rs.validateTrack(track)
+		trackPath := rs.validateTrack(track, isRestartRequested)
 		if trackPath == "" {
 			continue
 		}
@@ -255,7 +255,7 @@ func (rs *Station) handleNoTrack(consecutiveEmptyTracks, maxEmptyAttempts int) i
 }
 
 // validateTrack проверяет трек на валидность.
-func (rs *Station) validateTrack(track interface{}) string {
+func (rs *Station) validateTrack(track interface{}, isRestartRequested bool) string {
 	rs.logger.Info("DIAGNOSTICS: Track found for station", slog.String("route", rs.route))
 
 	// Streaming current track.
@@ -271,7 +271,14 @@ func (rs *Station) validateTrack(track interface{}) string {
 		sentry.CaptureMessage(
 			fmt.Sprintf("Unable to get track path for station %s", rs.route),
 		)
-		rs.playlist.NextTrack()
+		
+		// Only call NextTrack if this is not a manual restart.
+		if !isRestartRequested {
+			rs.logger.Info("DIAGNOSTICS: Moving to next track due to invalid path", slog.String("route", rs.route))
+			rs.playlist.NextTrack()
+		} else {
+			rs.logger.Info("DIAGNOSTICS: Restart request detected, not calling NextTrack for invalid path", slog.String("route", rs.route))
+		}
 		return ""
 	}
 
@@ -370,8 +377,15 @@ func (rs *Station) handleTrackCompletion(err error, trackPath string, isRestartR
 			slog.String("error", err.Error()),
 		)
 		sentry.CaptureException(fmt.Errorf("error playing track %s: %w", trackPath, err))
-		// On error, skip track and move to next.
-		rs.playlist.NextTrack()
+		
+		// On error, skip track and move to next only if not a manual restart.
+		if !isRestartRequested {
+			rs.logger.Info("DIAGNOSTICS: Moving to next track due to error", slog.String("route", rs.route))
+			rs.playlist.NextTrack()
+		} else {
+			rs.logger.Info("DIAGNOSTICS: Restart request detected, not calling NextTrack for error", slog.String("route", rs.route))
+			return false // Сбрасываем флаг
+		}
 	} else {
 		rs.logger.Info(
 			"DIAGNOSTICS: Completed playback of track",
