@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -630,6 +632,14 @@ func configureSyncRoute(
 		return false
 	}
 
+	logger.Info("ROUTE CONFIG STEP 2.5: Checking and converting audio bitrate", "route", route, "directory", dir)
+	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
+		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
+		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
+		sentry.CaptureException(err)
+		return false
+	}
+
 	logger.Info("ROUTE CONFIG STEP 3: Creating playlist", "route", route, "directory", dir)
 	pl := createPlaylistOrNil(logger, dir, route, config)
 	if pl == nil {
@@ -1224,4 +1234,164 @@ func cleanAllTrackHistories(logger *slog.Logger, server *httpServer.Server) {
 	logger.Info("Automatic history cleanup completed", 
 		slog.Int("streams_cleaned", clearedCount),
 		slog.String("next_cleanup", time.Now().Add(12*time.Hour).Format("2006-01-02 15:04:05")))
+}
+
+// checkAndConvertBitrate checks all audio files in directory and converts them to target bitrate if needed.
+func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrate int) bool {
+	logger.Info("BITRATE CONVERSION: Starting bitrate check for directory", 
+		slog.String("directory", dir), 
+		slog.String("route", route),
+		slog.Int("targetBitrate", targetBitrate))
+
+	files, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		logger.Error("ERROR: When reading directory for bitrate conversion",
+			"directory", dir,
+			"error", readErr,
+		)
+		sentry.CaptureException(fmt.Errorf("error reading directory %s for bitrate conversion: %w", dir, readErr))
+		return false
+	}
+
+	convertedFiles := 0
+	skippedFiles := 0
+	totalAudioFiles := 0
+
+	for _, file := range files {
+		fileName := file.Name()
+		lowerFileName := strings.ToLower(fileName)
+
+		// Check if it's an audio file.
+		isMP3 := strings.HasSuffix(lowerFileName, ".mp3")
+		isOGG := strings.HasSuffix(lowerFileName, ".ogg")
+		isAAC := strings.HasSuffix(lowerFileName, ".aac")
+		isWAV := strings.HasSuffix(lowerFileName, ".wav")
+		isFLAC := strings.HasSuffix(lowerFileName, ".flac")
+		isHidden := strings.HasPrefix(fileName, ".")
+
+		// Skip non-audio files, directories, and hidden files.
+		if file.IsDir() || isHidden || !(isMP3 || isOGG || isAAC || isWAV || isFLAC) {
+			continue
+		}
+
+		totalAudioFiles++
+		filePath := filepath.Join(dir, fileName)
+
+		// Check current bitrate of the file.
+		currentBitrate, err := getAudioBitrate(logger, filePath)
+		if err != nil {
+			logger.Error("BITRATE CONVERSION: Failed to get bitrate for file",
+				slog.String("file", filePath),
+				slog.String("error", err.Error()))
+			continue
+		}
+
+		logger.Info("BITRATE CONVERSION: File bitrate detected",
+			slog.String("file", fileName),
+			slog.Int("currentBitrate", currentBitrate),
+			slog.Int("targetBitrate", targetBitrate))
+
+		// Check if conversion is needed.
+		if currentBitrate == targetBitrate {
+			logger.Info("BITRATE CONVERSION: File already has target bitrate, skipping",
+				slog.String("file", fileName),
+				slog.Int("bitrate", currentBitrate))
+			skippedFiles++
+			continue
+		}
+
+		// Convert file to target bitrate.
+		if !convertAudioBitrate(logger, filePath, targetBitrate) {
+			logger.Error("BITRATE CONVERSION: Failed to convert file",
+				slog.String("file", filePath),
+				slog.Int("fromBitrate", currentBitrate),
+				slog.Int("toBitrate", targetBitrate))
+			continue
+		}
+
+		convertedFiles++
+		logger.Info("BITRATE CONVERSION: File successfully converted",
+			slog.String("file", fileName),
+			slog.Int("fromBitrate", currentBitrate),
+			slog.Int("toBitrate", targetBitrate))
+	}
+
+	logger.Info("BITRATE CONVERSION: Completed for directory",
+		slog.String("directory", dir),
+		slog.String("route", route),
+		slog.Int("totalAudioFiles", totalAudioFiles),
+		slog.Int("convertedFiles", convertedFiles),
+		slog.Int("skippedFiles", skippedFiles),
+		slog.Int("targetBitrate", targetBitrate))
+
+	return true
+}
+
+// getAudioBitrate returns the bitrate of an audio file using ffprobe.
+func getAudioBitrate(logger *slog.Logger, filePath string) (int, error) {
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "stream=bit_rate", "-of", "csv=p=0", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	bitrateStr := strings.TrimSpace(string(output))
+	if bitrateStr == "" || bitrateStr == "N/A" {
+		return 0, fmt.Errorf("could not determine bitrate")
+	}
+
+	bitrateFloat, err := strconv.ParseFloat(bitrateStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid bitrate value: %s", bitrateStr)
+	}
+
+	// Convert from bits per second to kilobits per second.
+	bitrateKbps := int(bitrateFloat / 1000)
+
+	return bitrateKbps, nil
+}
+
+// convertAudioBitrate converts an audio file to the target bitrate using ffmpeg.
+func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int) bool {
+	// Create temporary file for conversion.
+	tempFile := filePath + ".temp"
+	
+	// Remove temp file if it exists.
+	if _, err := os.Stat(tempFile); err == nil {
+		os.Remove(tempFile)
+	}
+
+	// Build ffmpeg command with explicit format specification.
+	cmd := exec.Command("ffmpeg", "-y", "-i", filePath, "-b:a", fmt.Sprintf("%dk", targetBitrate), "-codec:a", "libmp3lame", "-f", "mp3", tempFile)
+	
+	// Execute conversion.
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.Error("BITRATE CONVERSION: ffmpeg conversion failed",
+			slog.String("file", filePath),
+			slog.Int("targetBitrate", targetBitrate),
+			slog.String("error", err.Error()),
+			slog.String("output", string(output)))
+		
+		// Clean up temp file.
+		os.Remove(tempFile)
+		return false
+	}
+
+	// Replace original file with converted file.
+	if err := os.Rename(tempFile, filePath); err != nil {
+		logger.Error("BITRATE CONVERSION: Failed to replace original file",
+			slog.String("file", filePath),
+			slog.String("error", err.Error()))
+		
+		// Clean up temp file.
+		os.Remove(tempFile)
+		return false
+	}
+
+	logger.Info("BITRATE CONVERSION: Successfully converted file",
+		slog.String("file", filePath),
+		slog.Int("targetBitrate", targetBitrate))
+
+	return true
 }
