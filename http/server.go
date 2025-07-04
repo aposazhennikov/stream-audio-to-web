@@ -2162,6 +2162,28 @@ func (s *Server) setupTelegramRoutes() {
 		s.router.HandleFunc("/telegram-alerts/test", s.telegramAlertsTestHandler).Methods("POST")
 		s.logger.Info("Telegram alert routes configured")
 	}
+	
+	// Add temporary debug endpoint.
+	s.router.HandleFunc("/debug-telegram", s.debugTelegramHandler).Methods("GET")
+}
+
+// debugTelegramHandler provides debug information about Telegram manager status.
+func (s *Server) debugTelegramHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	debug := map[string]interface{}{
+		"tg_alert_env":        os.Getenv("TG_ALERT"),
+		"manager_not_nil":     s.telegramManager != nil,
+		"manager_is_enabled":  false,
+		"telegram_active":     false,
+	}
+	
+	if s.telegramManager != nil {
+		debug["manager_is_enabled"] = s.telegramManager.IsEnabled()
+		debug["telegram_active"] = s.telegramManager != nil && s.telegramManager.IsEnabled() && (os.Getenv("TG_ALERT") == "true")
+	}
+	
+	json.NewEncoder(w).Encode(debug)
 }
 
 // RouteStatus represents the status of a main route/stream

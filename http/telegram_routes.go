@@ -6,12 +6,29 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/user/stream-audio-to-web/telegram"
 )
+
+// getTimeInTimezone returns current time in the configured timezone
+func getTimeInTimezone() time.Time {
+	timezone := os.Getenv("TG_ALERT_TIMEZONE")
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		// If timezone loading fails, use UTC
+		loc = time.UTC
+	}
+	
+	return time.Now().In(loc)
+}
 
 // telegramAlertsHandler handles the telegram alerts management page
 func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +249,7 @@ func (s *Server) telegramAlertsTestHandler(w http.ResponseWriter, r *http.Reques
 	// Create test message
 	message := "🧪 *Telegram Alerts Test*\n\n"
 	message += "✅ Bot configuration is working correctly!\n"
-	message += "📅 *Test Time:* " + time.Now().Format("15:04:05") + "\n"
+	message += "📅 *Test Time:* " + getTimeInTimezone().Format("15:04:05") + "\n"
 	message += "🤖 *From:* Audio Stream Server"
 
 	// Send test message

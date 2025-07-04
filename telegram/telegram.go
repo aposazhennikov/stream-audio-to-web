@@ -49,6 +49,22 @@ type Manager struct {
 	running          bool
 }
 
+// getTimeInTimezone returns current time in the configured timezone
+func getTimeInTimezone() time.Time {
+	timezone := os.Getenv("TG_ALERT_TIMEZONE")
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		// If timezone loading fails, use UTC
+		loc = time.UTC
+	}
+	
+	return time.Now().In(loc)
+}
+
 // NewManager creates a new telegram alert manager
 func NewManager(configFile string, logger *slog.Logger) *Manager {
 	return &Manager{
@@ -192,7 +208,7 @@ func (m *Manager) Start() {
 	
 	m.running = true
 	go m.monitoringLoop()
-	m.logger.Info("Telegram alerts monitoring started")
+	m.logger.Error("TELEGRAM ALERTS: Monitoring started")
 }
 
 // Stop stops the monitoring loop
@@ -230,6 +246,11 @@ func (m *Manager) monitoringLoop() {
 func (m *Manager) checkStreams() {
 	config := m.GetConfig()
 	
+	// Log check start
+	m.logger.Error("TELEGRAM ALERTS: Starting stream check cycle", 
+		"routes", len(config.Routes),
+		"relay_routes", len(config.RelayRoutes))
+	
 	// Check regular routes
 	for route, enabled := range config.Routes {
 		if !enabled {
@@ -240,6 +261,10 @@ func (m *Manager) checkStreams() {
 		if m.routeCheckFunc != nil {
 			isAvailable = m.routeCheckFunc(route)
 		}
+		
+		m.logger.Error("TELEGRAM ALERTS: Route check result", 
+			"route", route, 
+			"available", isAvailable)
 		
 		m.updateStreamStatus(route, isAvailable, false)
 	}
@@ -254,6 +279,10 @@ func (m *Manager) checkStreams() {
 		if m.relayCheckFunc != nil {
 			isAvailable = m.relayCheckFunc(relayIndex)
 		}
+		
+		m.logger.Error("TELEGRAM ALERTS: Relay check result", 
+			"relay", relayIndex, 
+			"available", isAvailable)
 		
 		m.updateStreamStatus("relay/"+relayIndex, isAvailable, true)
 	}
@@ -290,6 +319,9 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 	if wasAvailable && !isAvailable {
 		// Stream went down
 		status.DownSince = &now
+		m.logger.Error("TELEGRAM ALERTS: Stream went DOWN", 
+			"route", route, 
+			"is_relay", isRelay)
 		m.sendAlert(route, false, nil, isRelay)
 	} else if !wasAvailable && isAvailable {
 		// Stream came back up
@@ -299,6 +331,10 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 			downtime = &dt
 		}
 		status.DownSince = nil
+		m.logger.Error("TELEGRAM ALERTS: Stream came UP", 
+			"route", route, 
+			"is_relay", isRelay, 
+			"downtime", downtime)
 		m.sendAlert(route, true, downtime, isRelay)
 	}
 }
@@ -307,8 +343,20 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, isRelay bool) {
 	config := m.GetConfig()
 	
+	m.logger.Error("TELEGRAM ALERTS: Attempting to send alert", 
+		"route", route, 
+		"is_up", isUp, 
+		"is_relay", isRelay,
+		"config_enabled", config.Enabled,
+		"has_bot_token", config.BotToken != "",
+		"has_chat_id", config.ChatID != "")
+	
 	// Check if we can send alerts
 	if !config.Enabled || config.BotToken == "" || config.ChatID == "" {
+		m.logger.Error("TELEGRAM ALERTS: Cannot send alert - missing configuration", 
+			"enabled", config.Enabled,
+			"has_bot_token", config.BotToken != "",
+			"has_chat_id", config.ChatID != "")
 		return
 	}
 	
@@ -337,7 +385,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 		}
 		message = fmt.Sprintf("%s *Stream Restored*\n\n", emoji)
 		message += fmt.Sprintf("🎵 *Route:* `%s`\n", route)
-		message += fmt.Sprintf("⏰ *Time:* %s\n", time.Now().Format("15:04:05"))
+		message += fmt.Sprintf("⏰ *Time:* %s\n", getTimeInTimezone().Format("15:04:05"))
 		
 		if downtime != nil {
 			message += fmt.Sprintf("⏱️ *Downtime:* %s\n", formatDuration(*downtime))
@@ -355,7 +403,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 		}
 		message = fmt.Sprintf("%s *Stream Down*\n\n", emoji)
 		message += fmt.Sprintf("🎵 *Route:* `%s`\n", route)
-		message += fmt.Sprintf("⏰ *Time:* %s\n", time.Now().Format("15:04:05"))
+		message += fmt.Sprintf("⏰ *Time:* %s\n", getTimeInTimezone().Format("15:04:05"))
 		
 		if isRelay {
 			message += "🌐 *Type:* Relay Stream"
@@ -366,11 +414,11 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 	
 	// Send the alert
 	if err := m.sendTelegramMessage(config.BotToken, config.ChatID, message); err != nil {
-		m.logger.Error("Failed to send telegram alert", 
+		m.logger.Error("TELEGRAM ALERTS: Failed to send alert", 
 			"route", route, 
 			"error", err.Error())
 	} else {
-		m.logger.Info("Telegram alert sent", 
+		m.logger.Error("TELEGRAM ALERTS: Alert sent successfully", 
 			"route", route, 
 			"is_up", isUp)
 		
