@@ -26,13 +26,13 @@
                     Relay Management
                     <span class="relay-active-badge">Active</span>
                 </a>
-                {{else}}
-                <span class="relay-link inactive">
-                    <span class="relay-icon">🔄</span>
-                    Relay Management
-                    <span class="relay-inactive-badge">Inactive</span>
-                </span>
-                {{end}}
+                                 {{else}}
+                 <span class="relay-link inactive" title="Set RELAY=true environment variable to enable relay functionality">
+                     <span class="relay-icon">🔄</span>
+                     Relay Management
+                     <span class="relay-inactive-badge">Inactive</span>
+                 </span>
+                 {{end}}
             </div>
             <div class="telegram-alerts-link">
                 {{if .TelegramActive}}
@@ -41,13 +41,13 @@
                     Telegram Alerts
                     <span class="telegram-active-badge">Active</span>
                 </a>
-                {{else}}
-                <span class="telegram-link inactive">
-                    <span class="telegram-icon">📱</span>
-                    Telegram Alerts
-                    <span class="telegram-inactive-badge">Inactive</span>
-                </span>
-                {{end}}
+                                 {{else}}
+                 <span class="telegram-link inactive" title="Set TG_ALERT=true environment variable to enable telegram alerts functionality">
+                     <span class="telegram-icon">📱</span>
+                     Telegram Alerts
+                     <span class="telegram-inactive-badge">Inactive</span>
+                 </span>
+                 {{end}}
             </div>
         </div>
     </header>
@@ -227,8 +227,66 @@
         .relay-link.inactive, .telegram-link.inactive {
             background-color: rgba(149, 165, 166, 0.1);
             color: var(--color-text-secondary);
-            cursor: not-allowed;
+            cursor: help;
             opacity: 0.6;
+            position: relative;
+        }
+
+        /* Custom tooltip styles for inactive links */
+        .relay-link.inactive::after, .telegram-link.inactive::after {
+            content: attr(title);
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            z-index: 1000;
+            margin-top: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            max-width: 300px;
+            white-space: normal;
+            word-wrap: break-word;
+        }
+
+        .relay-link.inactive::before, .telegram-link.inactive::before {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-bottom-color: #333;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            z-index: 1000;
+            margin-top: 3px;
+        }
+
+        .relay-link.inactive:hover::after, .telegram-link.inactive:hover::after,
+        .relay-link.inactive:hover::before, .telegram-link.inactive:hover::before {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Dark theme tooltip adjustments */
+        :root[data-theme="dark"] .relay-link.inactive::after, 
+        :root[data-theme="dark"] .telegram-link.inactive::after {
+            background-color: #555;
+            color: #e0e0e0;
+        }
+
+        :root[data-theme="dark"] .relay-link.inactive::before, 
+        :root[data-theme="dark"] .telegram-link.inactive::before {
+            border-bottom-color: #555;
         }
 
         .relay-icon, .telegram-icon {
