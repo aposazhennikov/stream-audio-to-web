@@ -35,12 +35,12 @@ services:
       - STATUS_PASSWORD=1234554321
       - SENTRY_DSN=https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176
       # Relay configuration
-      - RELAY=false
+      - RELAY=true
     
       - RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
       
       # Telegram Alerts configuration
-      - TG_ALERT=false
+      - TG_ALERT=true
       - TG_ALERT_CONFIG_FILE=/app/telegram_alerts/telegram_alerts.json
       
     healthcheck:

@@ -289,6 +289,9 @@ func (s *Server) setupRoutes() {
 	// Endpoint to clear track history for specific stream.
 	s.router.HandleFunc("/clear-history/{route}", s.handleClearHistory).Methods("POST")
 
+	// Endpoint to check status of main routes/streams
+	s.router.HandleFunc("/routes/status", s.checkRoutesStatusHandler).Methods("GET")
+
 	// Add relay routes if relay manager is available
 	s.setupRelayRoutes()
 	
@@ -2159,4 +2162,198 @@ func (s *Server) setupTelegramRoutes() {
 		s.router.HandleFunc("/telegram-alerts/test", s.telegramAlertsTestHandler).Methods("POST")
 		s.logger.Info("Telegram alert routes configured")
 	}
+}
+
+// RouteStatus represents the status of a main route/stream
+type RouteStatus struct {
+	Route  string `json:"route"`
+	Status string `json:"status"` // "online", "offline", "checking"
+	Error  string `json:"error,omitempty"`
+}
+
+// checkRoutesStatusHandler checks the status of all main routes/streams
+func (s *Server) checkRoutesStatusHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Authentication required",
+		})
+		return
+	}
+
+	s.mutex.RLock()
+	routes := make([]string, 0, len(s.streams))
+	for route := range s.streams {
+		routes = append(routes, route)
+	}
+	s.mutex.RUnlock()
+
+	statuses := s.checkAllRoutesStatus(routes)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"statuses": statuses,
+	})
+}
+
+// checkAllRoutesStatus checks the status of all main routes concurrently
+func (s *Server) checkAllRoutesStatus(routes []string) []RouteStatus {
+	statuses := make([]RouteStatus, len(routes))
+
+	if len(routes) == 0 {
+		return statuses
+	}
+
+	// Use channels and goroutines for concurrent status checking
+	type indexedStatus struct {
+		index  int
+		status RouteStatus
+	}
+
+	statusChan := make(chan indexedStatus, len(routes))
+
+	// Start goroutines for each route
+	for i, route := range routes {
+		go func(index int, routePath string) {
+			status := s.checkRouteStatus(routePath)
+			statusChan <- indexedStatus{index: index, status: status}
+		}(i, route)
+	}
+
+	// Collect results
+	for i := 0; i < len(routes); i++ {
+		result := <-statusChan
+		statuses[result.index] = result.status
+	}
+
+	s.logger.Info("Completed status check for all routes", 
+		"total_routes", len(routes))
+
+	return statuses
+}
+
+// checkRouteStatus checks the status of a specific route by validating current track and HTTP response
+func (s *Server) checkRouteStatus(route string) RouteStatus {
+	status := RouteStatus{
+		Route:  route,
+		Status: "checking",
+	}
+
+	// First check if stream is registered and has a current track
+	s.trackMutex.RLock()
+	currentTrack, hasTrack := s.currentTracks[route]
+	s.trackMutex.RUnlock()
+
+	// If no current track, the stream is likely not working properly
+	if !hasTrack || currentTrack == "" || currentTrack == "dummy.mp3" {
+		status.Status = "offline"
+		status.Error = "no audio track playing"
+		s.logger.Warn("Route has no current track", "route", route, "track", currentTrack)
+		return status
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// Make GET request to check if route is available and serving audio
+	url := fmt.Sprintf("http://localhost:8000%s", route)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("failed to create request: %v", err)
+		s.logger.Error("Failed to create request for route status check", 
+			"route", route,
+			"error", err.Error())
+		return status
+	}
+
+	// Set headers to mimic a real audio player
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "audio/mpeg, audio/*, */*")
+	req.Header.Set("Range", "bytes=0-1023") // Request only first 1KB to test availability
+	req.Header.Set("Connection", "close")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("request failed: %v", err)
+		s.logger.Error("Route status check request failed", 
+			"route", route,
+			"error", err.Error())
+		return status
+	}
+	defer resp.Body.Close()
+
+	// Check response status and content type
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		contentType := resp.Header.Get("Content-Type")
+		
+		// Check if content type looks like audio
+		if strings.Contains(contentType, "audio") || 
+		   strings.Contains(contentType, "mpeg") || 
+		   strings.Contains(contentType, "mp3") ||
+		   strings.Contains(contentType, "ogg") ||
+		   strings.Contains(contentType, "application/octet-stream") ||
+		   contentType == "" { // Some streams don't set content-type
+			
+			// Additional check: try to read some audio data
+			buffer := make([]byte, 1024)
+			n, readErr := resp.Body.Read(buffer)
+			
+			if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+				status.Status = "offline"
+				status.Error = "no audio data received"
+				s.logger.Warn("Route returns no audio data", 
+					"route", route,
+					"read_error", readErr.Error())
+			} else {
+				status.Status = "online"
+				s.logger.Info("Route status check successful", 
+					"route", route,
+					"status_code", resp.StatusCode,
+					"content_type", contentType,
+					"bytes_read", n,
+					"current_track", currentTrack)
+			}
+		} else {
+			status.Status = "offline"
+			status.Error = fmt.Sprintf("invalid content type: %s", contentType)
+			s.logger.Warn("Route has invalid content type", 
+				"route", route,
+				"content_type", contentType)
+		}
+	} else if resp.StatusCode == 206 {
+		// Partial content is also OK for range requests
+		// Additional check: try to read some audio data
+		buffer := make([]byte, 1024)
+		n, readErr := resp.Body.Read(buffer)
+		
+		if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+			status.Status = "offline"
+			status.Error = "no audio data received"
+			s.logger.Warn("Route returns no audio data (206)", 
+				"route", route,
+				"read_error", readErr.Error())
+		} else {
+			status.Status = "online"
+			s.logger.Info("Route status check successful (partial content)", 
+				"route", route,
+				"status_code", resp.StatusCode,
+				"bytes_read", n,
+				"current_track", currentTrack)
+		}
+	} else {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		s.logger.Warn("Route status check failed", 
+			"route", route,
+			"status_code", resp.StatusCode)
+	}
+
+	return status
 }

@@ -1457,18 +1457,42 @@ func initializeTelegramManager(logger *slog.Logger, server *httpServer.Server, r
 
 // checkRouteAvailability checks if a main route is available
 func checkRouteAvailability(logger *slog.Logger, route string) bool {
+	// First check if we can get current track info for this route
+	trackInfoURL := fmt.Sprintf("http://localhost:8000/now-playing?route=%s", strings.TrimPrefix(route, "/"))
+	trackClient := &http.Client{Timeout: 5 * time.Second}
+	
+	trackResp, err := trackClient.Get(trackInfoURL)
+	if err == nil {
+		defer trackResp.Body.Close()
+		if trackResp.StatusCode == 200 {
+			var trackData map[string]string
+			if json.NewDecoder(trackResp.Body).Decode(&trackData) == nil {
+				if track, exists := trackData["track"]; exists && track != "" && track != "dummy.mp3" {
+					logger.Debug("Route has valid current track", "route", route, "track", track)
+					// Track exists, now check HTTP stream
+				} else {
+					logger.Debug("Route has no valid current track", "route", route, "track", track)
+					return false
+				}
+			}
+		}
+	}
+	
 	// Make HTTP request to the route
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := fmt.Sprintf("http://localhost:8000%s", route)
 	
-	req, err := http.NewRequest("HEAD", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		logger.Debug("Failed to create request for route check", "route", route, "error", err.Error())
 		return false
 	}
 	
-	// Set Range header to request just a small amount of data
-	req.Header.Set("Range", "bytes=0-1023")
+	// Set headers to mimic a real audio player
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "audio/mpeg, audio/*, */*")
+	req.Header.Set("Range", "bytes=0-1023") // Request only first 1KB to test availability
+	req.Header.Set("Connection", "close")
 	
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1477,8 +1501,50 @@ func checkRouteAvailability(logger *slog.Logger, route string) bool {
 	}
 	defer resp.Body.Close()
 	
-	// Consider 200, 206 (Partial Content), or 416 (Range Not Satisfiable) as success
-	return resp.StatusCode == 200 || resp.StatusCode == 206 || resp.StatusCode == 416
+	// Check response status and content type
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		contentType := resp.Header.Get("Content-Type")
+		
+		// Check if content type looks like audio
+		if strings.Contains(contentType, "audio") || 
+		   strings.Contains(contentType, "mpeg") || 
+		   strings.Contains(contentType, "mp3") ||
+		   strings.Contains(contentType, "ogg") ||
+		   strings.Contains(contentType, "application/octet-stream") ||
+		   contentType == "" { // Some streams don't set content-type
+			
+			// Additional check: try to read some audio data
+			buffer := make([]byte, 1024)
+			n, readErr := resp.Body.Read(buffer)
+			
+			if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+				logger.Debug("Route returns no audio data", "route", route, "read_error", readErr.Error())
+				return false
+			}
+			
+			logger.Debug("Route check successful", "route", route, "status_code", resp.StatusCode, "content_type", contentType, "bytes_read", n)
+			return true
+		}
+		
+		logger.Debug("Route has invalid content type", "route", route, "content_type", contentType)
+		return false
+	} else if resp.StatusCode == 206 {
+		// Partial content is also OK for range requests
+		// Additional check: try to read some audio data
+		buffer := make([]byte, 1024)
+		n, readErr := resp.Body.Read(buffer)
+		
+		if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+			logger.Debug("Route returns no audio data (206)", "route", route, "read_error", readErr.Error())
+			return false
+		}
+		
+		logger.Debug("Route check successful (partial content)", "route", route, "status_code", resp.StatusCode, "bytes_read", n)
+		return true
+	}
+	
+	logger.Debug("Route check failed", "route", route, "status_code", resp.StatusCode)
+	return false
 }
 
 // checkRelayAvailability checks if a relay stream is available

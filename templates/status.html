@@ -52,6 +52,7 @@
         </div>
     </header>
     <div class="container">
+        <button class="refresh-status-button" onclick="refreshStreamStatus()">Refresh Stream Status</button>
         {{range .Streams}}
         <div class="stream-container">
             <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
@@ -71,6 +72,9 @@
                 </div>
             </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="status-info stream-status">
+                Stream Status: <span class="stream-status-indicator checking" data-route="{{.Route}}">Checking...</span>
+            </div>
             <div class="status-info shuffle-info">
                 Shuffle: <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">
                     {{if .ShuffleEnabled}}Enabled{{else}}Disabled{{end}}
@@ -433,6 +437,86 @@
         .shuffle-status.disabled {
             background-color: rgba(149, 165, 166, 0.1);
             color: var(--color-text-secondary);
+        }
+
+        /* Stream status styles */
+        .status-info.stream-status:before {
+            content: '📡';
+        }
+
+        .stream-status-indicator {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            margin-left: 0.5rem;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .stream-status-indicator.online {
+            background-color: rgba(46, 204, 113, 0.1);
+            color: #27ae60;
+        }
+
+        .stream-status-indicator.offline {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+        }
+
+        .stream-status-indicator.checking {
+            background-color: rgba(241, 196, 15, 0.1);
+            color: #f39c12;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .refresh-status-button {
+            background-color: var(--color-primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            min-height: 36px;
+        }
+
+        .refresh-status-button:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .refresh-status-button:active {
+            transform: translateY(0);
+        }
+
+        .refresh-status-button:before {
+            content: '🔄';
+        }
+
+        .refresh-status-button.loading:before {
+            content: '🔄';
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .listeners-count {
@@ -1135,7 +1219,62 @@
         window.addEventListener('DOMContentLoaded', () => {
             // Initial track and time information loading.
             updateAllTrackInfo();
+            // Initial stream status check
+            refreshStreamStatus();
         });
+
+        // NEW FUNCTION: Refresh stream status
+        function refreshStreamStatus() {
+            const refreshButton = document.querySelector('.refresh-status-button');
+            if (refreshButton) {
+                refreshButton.classList.add('loading');
+                refreshButton.disabled = true;
+            }
+
+            // Set all statuses to checking
+            const statusIndicators = document.querySelectorAll('.stream-status-indicator');
+            statusIndicators.forEach(indicator => {
+                indicator.className = 'stream-status-indicator checking';
+                indicator.textContent = 'Checking...';
+            });
+
+            fetch('/routes/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.statuses) {
+                        data.statuses.forEach(status => {
+                            const indicator = document.querySelector(`.stream-status-indicator[data-route="${status.route}"]`);
+                            if (indicator) {
+                                indicator.className = `stream-status-indicator ${status.status}`;
+                                
+                                if (status.status === 'online') {
+                                    indicator.textContent = 'Online';
+                                } else if (status.status === 'offline') {
+                                    indicator.textContent = status.error ? `Offline (${status.error})` : 'Offline';
+                                } else {
+                                    indicator.textContent = 'Checking...';
+                                }
+                            }
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking stream status:', error);
+                    statusIndicators.forEach(indicator => {
+                        indicator.className = 'stream-status-indicator offline';
+                        indicator.textContent = 'Error';
+                    });
+                })
+                .finally(() => {
+                    if (refreshButton) {
+                        refreshButton.classList.remove('loading');
+                        refreshButton.disabled = false;
+                    }
+                });
+        }
+
+        // Auto-refresh stream status every 30 seconds
+        setInterval(refreshStreamStatus, 30000);
     </script>
 </body>
 </html> 
