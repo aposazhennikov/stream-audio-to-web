@@ -1103,7 +1103,8 @@ func (s *Server) statusLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Title": "Login - Audio Stream Status",
+		"Title":    "Login - Audio Stream Status",
+		"Redirect": r.URL.Query().Get("redirect"),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1136,13 +1137,13 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 			HttpOnly: true,
 		})
 
-		// ИСПРАВЛЕНИЕ: Проверяем есть ли сохраненный URL для редиректа
-		redirectURL := r.URL.Query().Get("redirect")
+		// Check if there's a saved redirect URL from the form
+		redirectURL := r.FormValue("redirect")
 		if redirectURL != "" {
 			s.logger.Info("Redirecting to original URL after successful login", slog.String("redirectURL", redirectURL))
 			http.Redirect(w, r, redirectURL, http.StatusFound)
 		} else {
-			// Если нет сохраненного URL, перенаправляем на status-page по умолчанию
+			// If no redirect URL, redirect to status-page by default
 			http.Redirect(w, r, "/status-page", http.StatusFound)
 		}
 		return
@@ -1162,6 +1163,7 @@ func (s *Server) statusLoginSubmitHandler(w http.ResponseWriter, r *http.Request
 	data := map[string]interface{}{
 		"Title":        "Login - Audio Stream Status",
 		"ErrorMessage": "Invalid password",
+		"Redirect":     r.FormValue("redirect"),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

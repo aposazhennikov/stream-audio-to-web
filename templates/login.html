@@ -21,6 +21,10 @@
             {{end}}
             
             <form class="login-form" action="/status" method="post">
+                {{if .Redirect}}
+                <input type="hidden" name="redirect" value="{{.Redirect}}">
+                {{end}}
+                
                 <div class="form-group">
                     <label for="password">Password</label>
                     <input type="password" id="password" name="password" required autocomplete="current-password">

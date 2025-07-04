@@ -35,7 +35,13 @@
         </div>
 
         <div class="relay-streams-container">
-            <h2>Relay Streams</h2>
+            <div class="streams-header">
+                <h2>Relay Streams</h2>
+                <button type="button" class="refresh-status" onclick="refreshStreamStatuses()">
+                    <span class="refresh-icon">🔄</span>
+                    Refresh Status
+                </button>
+            </div>
             {{if .ErrorMessage}}
             <div class="error-message">{{.ErrorMessage}}</div>
             {{end}}
@@ -63,6 +69,7 @@
                         <tr>
                             <th>Index</th>
                             <th>URL</th>
+                            <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -72,6 +79,12 @@
                             <td>{{$index}}</td>
                             <td class="relay-url">
                                 <a href="{{$link}}" target="_blank" rel="noopener noreferrer">{{$link}}</a>
+                            </td>
+                            <td class="stream-status">
+                                <span class="status-indicator checking" id="status-{{$index}}">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </span>
                             </td>
                             <td>
                                 <div class="action-buttons">
@@ -206,6 +219,50 @@
             border-bottom: 2px solid var(--color-primary);
             padding-bottom: 0.5rem;
             display: inline-block;
+        }
+
+        .streams-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .refresh-status {
+            background-color: var(--color-secondary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: var(--transition);
+        }
+
+        .refresh-status:hover {
+            background-color: var(--color-primary);
+            transform: translateY(-2px);
+        }
+
+        .refresh-status:active {
+            transform: translateY(0);
+        }
+
+        .refresh-icon {
+            font-size: 1rem;
+            animation: none;
+        }
+
+        .refresh-status.refreshing .refresh-icon {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         .container {
@@ -420,6 +477,82 @@
             border-radius: var(--border-radius);
         }
 
+        .stream-status {
+            text-align: center;
+            padding: 0.5rem;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 1rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: none;
+        }
+
+        .status-indicator.online {
+            background-color: rgba(39, 174, 96, 0.1);
+            color: #27ae60;
+        }
+
+        .status-indicator.online .status-dot {
+            background-color: #27ae60;
+        }
+
+        .status-indicator.offline {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: #e74c3c;
+        }
+
+        .status-indicator.offline .status-dot {
+            background-color: #e74c3c;
+        }
+
+        .status-indicator.checking {
+            background-color: rgba(241, 196, 15, 0.1);
+            color: #f39c12;
+        }
+
+        .status-indicator.checking .status-dot {
+            background-color: #f39c12;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .status-indicator.unknown {
+            background-color: rgba(149, 165, 166, 0.1);
+            color: #95a5a6;
+        }
+
+        .status-indicator.unknown .status-dot {
+            background-color: #95a5a6;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.5;
+                transform: scale(1.2);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 0 1rem 2rem;
@@ -442,25 +575,83 @@
             }
         }
     </style>
-    {{end}}
+</head>
+<body>
     
-    <script>
-        // Theme toggle functionality.
-        document.addEventListener('DOMContentLoaded', () => {
-            const themeToggle = document.getElementById('theme-toggle');
+    <script type="text/javascript">
+        console.log('Script loaded');
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM ready');
             
-            // Set theme on initial load.
-            const savedTheme = localStorage.getItem('theme') || 'light';
+            // Theme toggle
+            var themeToggle = document.getElementById('theme-toggle');
+            var savedTheme = localStorage.getItem('theme') || 'light';
             document.documentElement.setAttribute('data-theme', savedTheme);
             
             if (themeToggle) {
-            themeToggle.addEventListener('click', () => {
-                const currentTheme = document.documentElement.getAttribute('data-theme');
-                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-                
-                document.documentElement.setAttribute('data-theme', newTheme);
-                localStorage.setItem('theme', newTheme);
-            });
+                themeToggle.addEventListener('click', function() {
+                    var currentTheme = document.documentElement.getAttribute('data-theme');
+                    var newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                });
             }
+
+            // Start status checking immediately
+            setTimeout(function() {
+                console.log('Starting status check');
+                checkStatuses();
+                setInterval(checkStatuses, 30000);
+            }, 500);
         });
-    </script> 
+
+        function checkStatuses() {
+            console.log('Checking statuses...');
+            
+            fetch('/relay/status')
+                .then(function(response) {
+                    console.log('Response:', response.status);
+                    return response.json();
+                })
+                .then(function(data) {
+                    console.log('Data:', data);
+                    if (data && data.statuses) {
+                        updateStatuses(data.statuses);
+                    }
+                })
+                .catch(function(error) {
+                    console.log('Error:', error);
+                });
+        }
+
+        function updateStatuses(statuses) {
+            console.log('Updating statuses:', statuses.length);
+            
+            for (var i = 0; i < statuses.length; i++) {
+                var status = statuses[i];
+                var element = document.getElementById('status-' + status.index);
+                
+                if (element) {
+                    var statusClass = status.status;
+                    var statusText = status.status === 'online' ? 'Online' : 'Offline';
+                    
+                    element.classList.remove('online', 'offline', 'checking', 'unknown');
+                    element.classList.add(statusClass);
+                    
+                    var textElement = element.querySelector('.status-text');
+                    if (textElement) {
+                        textElement.textContent = statusText;
+                    }
+                }
+            }
+        }
+
+        function refreshStreamStatuses() {
+            console.log('Manual refresh');
+            checkStatuses();
+        }
+    </script>
+</body>
+</html>
+{{end}}

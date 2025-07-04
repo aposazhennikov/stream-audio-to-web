@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -327,4 +328,161 @@ func isConnectionClosedError(err error) bool {
 	return strings.Contains(errMsg, "broken pipe") ||
 		strings.Contains(errMsg, "connection reset by peer") ||
 		strings.Contains(errMsg, "use of closed network connection")
+}
+
+// StreamStatus represents the status of a stream.
+type StreamStatus struct {
+	Index  int    `json:"index"`
+	URL    string `json:"url"`
+	Status string `json:"status"` // "online", "offline", "unknown"
+	Error  string `json:"error,omitempty"`
+}
+
+// CheckStreamStatus checks the status of a specific stream by making a GET request with limited data reading.
+func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
+	links := rm.GetLinks()
+	if index < 0 || index >= len(links) {
+		return StreamStatus{
+			Index:  index,
+			URL:    "",
+			Status: "unknown",
+			Error:  "invalid index",
+		}
+	}
+
+	url := links[index]
+	status := StreamStatus{
+		Index:  index,
+		URL:    url,
+		Status: "checking",
+	}
+
+	// Create HTTP client with timeout.
+	client := &http.Client{
+		Timeout: 10 * time.Second, // 10 second timeout
+	}
+
+	// Make GET request to check if stream is available.
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("failed to create request: %v", err)
+		rm.logger.Error("Failed to create request for stream status check", 
+			slog.Int("index", index),
+			slog.String("url", url),
+			slog.String("error", err.Error()))
+		return status
+	}
+
+	// Set headers to mimic a real audio player.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "audio/mpeg, audio/*, */*")
+	req.Header.Set("Range", "bytes=0-1023") // Request only first 1KB to test availability
+	req.Header.Set("Connection", "close")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("request failed: %v", err)
+		rm.logger.Error("Stream status check request failed", 
+			slog.Int("index", index),
+			slog.String("url", url),
+			slog.String("error", err.Error()))
+		return status
+	}
+	defer resp.Body.Close()
+
+	// Read a small amount of data to ensure stream is actually working.
+	buffer := make([]byte, 1024)
+	_, readErr := resp.Body.Read(buffer)
+	if readErr != nil && readErr != io.EOF {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("failed to read stream data: %v", readErr)
+		rm.logger.Error("Failed to read stream data", 
+			slog.Int("index", index),
+			slog.String("url", url),
+			slog.String("error", readErr.Error()))
+		return status
+	}
+
+	// Check response status and content type.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		contentType := resp.Header.Get("Content-Type")
+		
+		// Check if content type looks like audio.
+		if strings.Contains(contentType, "audio") || 
+		   strings.Contains(contentType, "mpeg") || 
+		   strings.Contains(contentType, "mp3") ||
+		   strings.Contains(contentType, "ogg") ||
+		   strings.Contains(contentType, "application/octet-stream") ||
+		   contentType == "" { // Some streams don't set content-type
+			
+			status.Status = "online"
+			rm.logger.Info("Stream status check successful", 
+				slog.Int("index", index),
+				slog.String("url", url),
+				slog.Int("status_code", resp.StatusCode),
+				slog.String("content_type", contentType))
+		} else {
+			status.Status = "offline"
+			status.Error = fmt.Sprintf("invalid content type: %s", contentType)
+			rm.logger.Warn("Stream has invalid content type", 
+				slog.Int("index", index),
+				slog.String("url", url),
+				slog.String("content_type", contentType))
+		}
+	} else if resp.StatusCode == 206 {
+		// Partial content is also OK for range requests.
+		status.Status = "online"
+		rm.logger.Info("Stream status check successful (partial content)", 
+			slog.Int("index", index),
+			slog.String("url", url),
+			slog.Int("status_code", resp.StatusCode))
+	} else {
+		status.Status = "offline"
+		status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		rm.logger.Warn("Stream status check failed", 
+			slog.Int("index", index),
+			slog.String("url", url),
+			slog.Int("status_code", resp.StatusCode))
+	}
+
+	return status
+}
+
+// CheckAllStreamsStatus checks the status of all streams concurrently.
+func (rm *Manager) CheckAllStreamsStatus() []StreamStatus {
+	links := rm.GetLinks()
+	statuses := make([]StreamStatus, len(links))
+
+	if len(links) == 0 {
+		return statuses
+	}
+
+	// Use channels and goroutines for concurrent status checking.
+	type indexedStatus struct {
+		index  int
+		status StreamStatus
+	}
+
+	statusChan := make(chan indexedStatus, len(links))
+
+	// Start goroutines for each stream.
+	for i := range links {
+		go func(index int) {
+			status := rm.CheckStreamStatus(index)
+			statusChan <- indexedStatus{index: index, status: status}
+		}(i)
+	}
+
+	// Collect results.
+	for i := 0; i < len(links); i++ {
+		result := <-statusChan
+		statuses[result.index] = result.status
+	}
+
+	rm.logger.Info("Completed status check for all streams", 
+		slog.Int("total_streams", len(links)))
+
+	return statuses
 }

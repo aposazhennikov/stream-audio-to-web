@@ -3,6 +3,7 @@
 package http
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -42,6 +43,9 @@ func (s *Server) setupRelayRoutes() {
 	// Relay stream
 	s.router.HandleFunc("/relay/stream/{index}", s.relayStreamHandler).Methods("GET")
 
+	// Stream status check
+	s.router.HandleFunc("/relay/status", s.relayStatusHandler).Methods("GET")
+
 	s.logger.Info("Relay routes setup complete")
 }
 
@@ -70,6 +74,9 @@ func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Get stream statuses.
+	streamStatuses := s.relayManager.CheckAllStreamsStatus()
+
 	// Prepare data for the template
 	data := map[string]interface{}{
 		"Title":          "Relay Management",
@@ -77,6 +84,7 @@ func (s *Server) relayManagementHandler(w http.ResponseWriter, r *http.Request) 
 		"RelayActive":    s.relayManager.IsActive(),
 		"SuccessMessage": successMsg,
 		"ErrorMessage":   errorMsg,
+		"StreamStatuses": streamStatuses,
 	}
 
 	// Execute the template
@@ -218,6 +226,42 @@ func (s *Server) toggleRelayHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("Relay functionality toggled", slog.Bool("active", active))
 	http.Redirect(w, r, "/relay-management?success=Relay+"+status, http.StatusSeeOther)
+}
+
+// relayStatusHandler handles requests to check stream status.
+func (s *Server) relayStatusHandler(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if !s.checkAuth(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	s.logger.Info("Checking relay stream statuses")
+
+	// Get stream statuses
+	streamStatuses := s.relayManager.CheckAllStreamsStatus()
+
+	s.logger.Info("Stream status check completed", 
+		slog.Int("total_streams", len(streamStatuses)),
+		slog.String("remote_addr", r.RemoteAddr))
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	// Encode and send response
+	if encodeErr := json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"statuses": streamStatuses,
+	}); encodeErr != nil {
+		s.logger.Error("Failed to encode stream statuses response", slog.String("error", encodeErr.Error()))
+		http.Error(w, "Server error: "+encodeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("Stream statuses response sent successfully")
 }
 
 // relayStreamHandler handles requests to stream audio from a relay source.

@@ -1,12 +1,14 @@
-["http://server.audiopedia.su:8000/ices128", 
-"https://lk.castnow.ru:8100/oldbrief-320.mp3",
-"https://umnoe.amgradio.ru/Umnoe",
-"https://icecast-zvezda.mediacdn.ru/radio/zvezda/zvezda_128", 
-"https://listen6.myradio24.com/55699", 
-"https://c6.radioboss.fm:18096/stream", 
-"https://stream05.pcradio.ru/dan_brown-med", 
-"https://5.restream.one/1465_1", 
-"https://5.restream.one/1464_1", 
-"https://radio-soyuz.ru:1045/stream", 
-"https://storyfm.hostingradio.ru:8031/storyfm128.mp3", 
-"https://stream.cassiopeia-station.ru:5125/stream"]
+[
+  "http://server.audiopedia.su:8000/ices128",
+  "https://lk.castnow.ru:8100/oldbrief-320.mp3",
+  "https://umnoe.amgradio.ru/Umnoe",
+  "https://icecast-zvezda.mediacdn.ru/radio/zvezda/zvezda_128",
+  "https://listen6.myradio24.com/55699",
+  "https://c6.radioboss.fm:18096/stream",
+  "https://stream05.pcradio.ru/dan_brown-med",
+  "https://5.restream.one/1465_1",
+  "https://5.restream.one/1464_1",
+  "https://radio-soyuz.ru:1045/stream",
+  "https://storyfm.hostingradio.ru:8031/storyfm128.mp3",
+  "https://stream.cassiopeia-station.ru:5125/stream"
+]
