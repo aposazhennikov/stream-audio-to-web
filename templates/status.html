@@ -19,15 +19,36 @@
                     {{if .GlobalShuffle}}Enabled{{else}}Disabled{{end}}
                 </span>
             </div>
-            {{if .RelayEnabled}}
             <div class="relay-management-link">
-                <a href="/relay-management" class="relay-link">
+                {{if .RelayActive}}
+                <a href="/relay-management" class="relay-link active">
                     <span class="relay-icon">🔄</span>
                     Relay Management
-                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
+                    <span class="relay-active-badge">Active</span>
                 </a>
+                {{else}}
+                <span class="relay-link inactive">
+                    <span class="relay-icon">🔄</span>
+                    Relay Management
+                    <span class="relay-inactive-badge">Inactive</span>
+                </span>
+                {{end}}
             </div>
-            {{end}}
+            <div class="telegram-alerts-link">
+                {{if .TelegramActive}}
+                <a href="/telegram-alerts" class="telegram-link active">
+                    <span class="telegram-icon">📱</span>
+                    Telegram Alerts
+                    <span class="telegram-active-badge">Active</span>
+                </a>
+                {{else}}
+                <span class="telegram-link inactive">
+                    <span class="telegram-icon">📱</span>
+                    Telegram Alerts
+                    <span class="telegram-inactive-badge">Inactive</span>
+                </span>
+                {{end}}
+            </div>
         </div>
     </header>
     <div class="container">
@@ -179,11 +200,11 @@
             color: var(--color-text-secondary);
         }
 
-        .relay-management-link {
+        .relay-management-link, .telegram-alerts-link {
             display: inline-block;
         }
 
-        .relay-link {
+        .relay-link, .telegram-link {
             display: inline-flex;
             align-items: center;
             background-color: var(--color-surface-accent);
@@ -196,23 +217,40 @@
             box-shadow: var(--box-shadow);
         }
 
-        .relay-link:hover {
+        .relay-link.active:hover, .telegram-link.active:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             background-color: var(--color-primary);
             color: white;
         }
 
-        .relay-icon {
+        .relay-link.inactive, .telegram-link.inactive {
+            background-color: rgba(149, 165, 166, 0.1);
+            color: var(--color-text-secondary);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .relay-icon, .telegram-icon {
             margin-right: 0.5rem;
             font-size: 1.1rem;
         }
 
-        .relay-active-badge {
+        .relay-active-badge, .telegram-active-badge {
             display: inline-block;
             margin-left: 0.5rem;
             background-color: rgba(39, 174, 96, 0.2);
             color: #27ae60;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .relay-inactive-badge, .telegram-inactive-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
             padding: 0.2rem 0.5rem;
             border-radius: 0.75rem;
             font-size: 0.8rem;

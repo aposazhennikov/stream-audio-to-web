@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/user/stream-audio-to-web/audio"
 	"github.com/user/stream-audio-to-web/relay"
+	"github.com/user/stream-audio-to-web/telegram"
 
 	html "html"
 )
@@ -60,6 +61,7 @@ type Server struct {
 	statusPassword    string                                    // Password for accessing /status page.
 	stationManager    interface{ RestartPlayback(string) bool } // Interface for restarting playback.
 	relayManager      *relay.Manager                            // Manager for relay functionality.
+	telegramManager   *telegram.Manager                       // Manager for telegram alerts.
 	globalShuffleConfig bool                                   // Global shuffle configuration.
 	// Prometheus metrics.
 	listenerCount     *prometheus.GaugeVec   // Gauge for tracking active listeners.
@@ -289,6 +291,9 @@ func (s *Server) setupRoutes() {
 
 	// Add relay routes if relay manager is available
 	s.setupRelayRoutes()
+	
+	// Add telegram alert routes
+	s.setupTelegramRoutes()
 
 	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
@@ -1292,11 +1297,13 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams":       streams,
-		"Title":         "Audio Streams Status",
-		"RelayEnabled":  s.relayManager != nil,
-		"RelayActive":   s.relayManager != nil && s.relayManager.IsActive(),
-		"GlobalShuffle": s.getGlobalShuffleStatus(),
+		"Streams":         streams,
+		"Title":           "Audio Streams Status",
+		"RelayEnabled":    true, // Always show relay section
+		"RelayActive":     s.relayManager != nil && s.relayManager.IsActive() && (os.Getenv("RELAY") == "true"),
+		"TelegramEnabled": true, // Always show telegram section  
+		"TelegramActive":  s.telegramManager != nil && s.telegramManager.IsEnabled() && (os.Getenv("TG_ALERT") == "true"),
+		"GlobalShuffle":   s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
@@ -2132,5 +2139,24 @@ func (s *Server) trackHandler(w http.ResponseWriter, r *http.Request) {
 		}); encodeErr != nil {
 			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
 		}
+	}
+}
+
+// SetTelegramManager sets the telegram manager for the server.
+func (s *Server) SetTelegramManager(manager *telegram.Manager) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.telegramManager = manager
+	s.logger.Info("Telegram manager set for HTTP server")
+}
+
+// setupTelegramRoutes sets up the telegram alert routes.
+func (s *Server) setupTelegramRoutes() {
+	// Only setup routes if telegram alerts are enabled
+	if os.Getenv("TG_ALERT") == "true" {
+		s.router.HandleFunc("/telegram-alerts", s.telegramAlertsHandler).Methods("GET")
+		s.router.HandleFunc("/telegram-alerts/update", s.telegramAlertsUpdateHandler).Methods("POST")
+		s.router.HandleFunc("/telegram-alerts/test", s.telegramAlertsTestHandler).Methods("POST")
+		s.logger.Info("Telegram alert routes configured")
 	}
 }

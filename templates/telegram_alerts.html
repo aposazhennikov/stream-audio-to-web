@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+{{template "head" .}}
+<head>
+    <style>
+        /* Same theme variables as other pages */
+        :root[data-theme="light"] {
+            --color-background: #f9f9f9;
+            --color-text: #333333;
+            --color-text-secondary: #666666;
+            --color-primary: #3498db;
+            --color-primary-dark: #2980b9;
+            --color-primary-light: #e3f2fd;
+            --color-secondary: #2c3e50;
+            --color-surface: #ffffff;
+            --color-surface-accent: #f0f4f8;
+            --color-border: #e0e0e0;
+            --color-toggle: #f39c12;
+            --color-input-bg: #ffffff;
+            --color-success: #27ae60;
+            --color-success-dark: #219955;
+            --color-error: #e74c3c;
+            --color-error-dark: #c0392b;
+            --border-radius: 8px;
+            --box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            --transition: all 0.2s ease-in-out;
+        }
+        
+        :root[data-theme="dark"] {
+            --color-background: #121212;
+            --color-text: #e0e0e0;
+            --color-text-secondary: #aaaaaa;
+            --color-primary: #4da6ff;
+            --color-primary-dark: #3182ce;
+            --color-primary-light: #1a365d;
+            --color-secondary: #7f9cf5;
+            --color-surface: #1e1e1e;
+            --color-surface-accent: #252525;
+            --color-border: #333333;
+            --color-toggle: #e67e22;
+            --color-input-bg: #252525;
+            --color-success: #2ecc71;
+            --color-success-dark: #27ae60;
+            --color-error: #f44336;
+            --color-error-dark: #d32f2f;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            --transition: all 0.2s ease-in-out;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--color-background);
+            color: var(--color-text);
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+        }
+        
+        *,
+        *::before,
+        *::after {
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+        }
+
+        input,
+        textarea,
+        [contenteditable="true"] {
+            -webkit-user-select: text !important;
+            -moz-user-select: text !important;
+            -ms-user-select: text !important;
+            user-select: text !important;
+        }
+
+        .theme-toggle-wrapper {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+        }
+
+        .theme-toggle {
+            width: 60px;
+            height: 28px;
+            background-color: var(--color-surface-accent);
+            border-radius: 50px;
+            position: relative;
+            cursor: pointer;
+            box-shadow: var(--box-shadow);
+            display: flex;
+            align-items: center;
+            padding: 0 4px;
+            transition: var(--transition);
+        }
+
+        .toggle-ball {
+            width: 24px;
+            height: 24px;
+            background-color: var(--color-primary);
+            border-radius: 50%;
+            position: absolute;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        :root[data-theme="light"] .toggle-ball {
+            transform: translateX(0);
+        }
+
+        :root[data-theme="dark"] .toggle-ball {
+            transform: translateX(32px);
+        }
+
+        .icon {
+            font-size: 12px;
+            position: absolute;
+            transition: opacity 0.2s ease-in-out;
+        }
+
+        .sun-icon {
+            left: 4px;
+            opacity: 1;
+        }
+
+        .moon-icon {
+            right: 4px;
+            opacity: 0;
+        }
+
+        :root[data-theme="dark"] .sun-icon {
+            opacity: 0;
+        }
+
+        :root[data-theme="dark"] .moon-icon {
+            opacity: 1;
+        }
+
+        .header {
+            text-align: center;
+            padding: 2rem 0;
+            background-color: var(--color-surface);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            margin-bottom: 2rem;
+            position: relative;
+        }
+
+        h1 {
+            color: var(--color-secondary);
+            font-size: 2.2rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 0 0 1rem;
+            position: relative;
+            padding-bottom: 1rem;
+            display: inline-block;
+        }
+
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 4px;
+            background: var(--color-primary);
+            border-radius: 2px;
+        }
+
+        .back-link {
+            margin-top: 0.5rem;
+        }
+
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .back-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background-color: var(--color-primary);
+            color: white;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1.5rem 3rem;
+        }
+
+        .config-section {
+            background-color: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            margin-bottom: 1.5rem;
+            padding: 1.5rem;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--color-text);
+            border-bottom: 2px solid var(--color-primary);
+            padding-bottom: 0.5rem;
+            display: inline-block;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--color-text);
+        }
+
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            background-color: var(--color-input-bg);
+            color: var(--color-text);
+            font-family: inherit;
+            font-size: 1rem;
+            transition: var(--transition);
+        }
+
+        input[type="text"]:focus, input[type="password"]:focus {
+            border-color: var(--color-primary);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            background-color: var(--color-surface-accent);
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+        }
+
+        .checkbox-item:hover {
+            background-color: var(--color-primary-light);
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            margin-right: 0.5rem;
+            width: 18px;
+            height: 18px;
+        }
+
+        .checkbox-item label {
+            margin: 0;
+            font-weight: normal;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .form-hint {
+            font-size: 0.8rem;
+            color: var(--color-text-secondary);
+            margin-top: 0.3rem;
+        }
+
+        button {
+            background-color: var(--color-primary);
+            color: white;
+            border: none;
+            padding: 0.7rem 1.4rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: var(--transition);
+            margin-right: 0.5rem;
+        }
+
+        button:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .test-button {
+            background-color: var(--color-secondary);
+        }
+
+        .test-button:hover {
+            background-color: var(--color-success);
+        }
+
+        .error-message {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-error);
+        }
+
+        .success-message {
+            background-color: rgba(39, 174, 96, 0.1);
+            color: var(--color-success);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--color-success);
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 60px;
+            height: 34px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--color-primary);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <div class="theme-toggle-wrapper">
+            <div class="theme-toggle" id="theme-toggle">
+                <div class="toggle-ball">
+                    <span class="icon sun-icon">☀️</span>
+                    <span class="icon moon-icon">🌙</span>
+                </div>
+            </div>
+        </div>
+        <h1>📱 Telegram Alerts</h1>
+        <div class="back-link">
+            <a href="/status-page" class="back-button">← Back to Status</a>
+        </div>
+    </header>
+
+    <div class="container">
+        {{if .ErrorMessage}}
+        <div class="error-message">{{.ErrorMessage}}</div>
+        {{end}}
+        
+        {{if .SuccessMessage}}
+        <div class="success-message">{{.SuccessMessage}}</div>
+        {{end}}
+
+        <form method="post" action="/telegram-alerts/update">
+            <!-- Basic Configuration -->
+            <div class="config-section">
+                <h2>⚙️ Basic Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="enabled">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enabled" name="enabled" {{if .Config.Enabled}}checked{{end}}>
+                            <span class="slider"></span>
+                        </label>
+                        Enable Telegram Alerts
+                    </label>
+                    <div class="form-hint">Turn on/off telegram alert notifications</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="bot_token">🤖 Bot Token:</label>
+                    <input type="password" id="bot_token" name="bot_token" value="{{.Config.BotToken}}" 
+                           placeholder="1234567890:ABCDEfghIJKLmnoPQRSTuvwxYZ123456789">
+                    <div class="form-hint">Get this from @BotFather on Telegram. Create a new bot with /newbot command.</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="chat_id">💬 Chat ID:</label>
+                    <input type="text" id="chat_id" name="chat_id" value="{{.Config.ChatID}}" 
+                           placeholder="-1001234567890 or 1234567890">
+                    <div class="form-hint">
+                        <strong>Setup steps:</strong><br>
+                        1. Send /start to your bot first<br>
+                        2. Use @userinfobot to get your chat ID<br>
+                        3. For groups: add "-" before chat ID (e.g., -1001234567890)<br>
+                        4. For groups: add your bot to the group
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stream Monitoring -->
+            <div class="config-section">
+                <h2>📻 Main Streams Monitoring</h2>
+                <div class="checkbox-group">
+                    {{range .AvailableRoutes}}
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="route_{{.ID}}" 
+                               name="route_{{.ID}}" 
+                               {{if index $.Config.Routes .Route}}checked{{end}}>
+                        <label for="route_{{.ID}}">{{.Route}}</label>
+                    </div>
+                    {{end}}
+                </div>
+                <div class="form-hint">Select which main audio streams to monitor</div>
+            </div>
+
+            <!-- Relay Monitoring -->
+            {{if .AvailableRelayRoutes}}
+            <div class="config-section">
+                <h2>🌐 Relay Streams Monitoring</h2>
+                <div class="checkbox-group">
+                    {{range .AvailableRelayRoutes}}
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="relay_{{.}}" 
+                               name="relay_{{.}}" 
+                               {{if index $.Config.RelayRoutes .}}checked{{end}}>
+                        <label for="relay_{{.}}">Relay Stream {{.}}</label>
+                    </div>
+                    {{end}}
+                </div>
+                <div class="form-hint">Select which relay streams to monitor</div>
+            </div>
+            {{end}}
+
+            <!-- Action Buttons -->
+            <div class="config-section">
+                <button type="submit">💾 Save Configuration</button>
+                <button type="button" class="test-button" onclick="testTelegramBot()">🧪 Test Bot</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Theme toggle functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeToggle = document.getElementById('theme-toggle');
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            
+            if (themeToggle) {
+                themeToggle.addEventListener('click', function() {
+                    const currentTheme = document.documentElement.getAttribute('data-theme');
+                    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                });
+            }
+        });
+
+        // Test telegram bot function
+        function testTelegramBot() {
+            const botToken = document.getElementById('bot_token').value;
+            const chatId = document.getElementById('chat_id').value;
+            
+            if (!botToken || !chatId) {
+                alert('Please enter both Bot Token and Chat ID before testing');
+                return;
+            }
+            
+            const testButton = event.target;
+            const originalText = testButton.textContent;
+            testButton.textContent = '🔄 Testing...';
+            testButton.disabled = true;
+            
+            fetch('/telegram-alerts/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    bot_token: botToken,
+                    chat_id: chatId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Test message sent successfully! Check your Telegram.');
+                } else {
+                    // Format error message with line breaks
+                    const errorMsg = data.error.replace(/\\n/g, '\n');
+                    alert('❌ Test failed:\n\n' + errorMsg);
+                }
+            })
+            .catch(error => {
+                alert('❌ Test failed: ' + error.message);
+            })
+            .finally(() => {
+                testButton.textContent = originalText;
+                testButton.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html> 
