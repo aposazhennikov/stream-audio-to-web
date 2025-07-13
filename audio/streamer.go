@@ -16,7 +16,7 @@ import (
 
 	"errors"
 
-	sentry "github.com/getsentry/sentry-go"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -63,6 +63,7 @@ type Streamer struct {
 	trackSecondsMetric *prometheus.CounterVec // Метрика для подсчета времени воспроизведения трека.
 	metricMutex        sync.RWMutex           // Мьютекс для защиты метрики.
 	logger             *slog.Logger           // Logger for streamer operations
+	sentryHelper       *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
 	streamingStopped   chan struct{}          // НОВЫЙ канал для синхронизации остановки стриминга
 	isStreaming        int32                  // НОВЫЙ атомарный флаг состояния стриминга
 	trackStartTime     time.Time              // НОВЫЙ: время начала воспроизведения текущего трека
@@ -72,9 +73,13 @@ type Streamer struct {
 }
 
 // NewStreamer creates a new audio streamer.
-func NewStreamer(bufferSize, maxClients int, bitrate int) *Streamer {
+func NewStreamer(bufferSize, maxClients int, bitrate int, logger *slog.Logger, sentryHelper *sentryhelper.SentryHelper) *Streamer {
 	if bufferSize <= 0 {
 		bufferSize = defaultBufferSize
+	}
+	
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	return &Streamer{
@@ -98,7 +103,8 @@ func NewStreamer(bufferSize, maxClients int, bitrate int) *Streamer {
 		lastDelayLogTime:   time.Time{},
 		trackSecondsMetric: nil,
 		metricMutex:        sync.RWMutex{},
-		logger:             slog.Default(),
+		logger:             logger,
+		sentryHelper:       sentryHelper,
 		streamingStopped:   make(chan struct{}),
 		isStreaming:        0,
 		trackStartTime:     time.Time{},
@@ -213,7 +219,7 @@ func (s *Streamer) StopCurrentTrack() {
 				s.logger.Error("CRITICAL: Track stop timeout after 1 second",
 					"isStreaming", atomic.LoadInt32(&s.isStreaming))
 			}
-			sentry.CaptureException(criticalErr)
+			s.sentryHelper.CaptureError(criticalErr, "audio", "streaming")
 		}
 	} else {
 		if isFloydStream {
@@ -261,7 +267,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	// Check for empty path.
 	if trackPath == "" {
 		sentryErr := errors.New("empty audio file path")
-		sentry.CaptureException(sentryErr)
+		s.sentryHelper.CaptureError(sentryErr, "audio", "stream_track")
 		return sentryErr
 	}
 
@@ -296,7 +302,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 				"error", statErr.Error())
 		}
 		sentryErr := errors.New("error checking file")
-		sentry.CaptureException(sentryErr)
+		s.sentryHelper.CaptureError(sentryErr, "audio", "file_check")
 		return sentryErr
 	}
 
@@ -315,7 +321,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	// Check that it's not a directory.
 	if fileInfo.IsDir() {
 		sentryErr := fmt.Errorf("specified path %s is a directory, not a file", trackPath)
-		sentry.CaptureException(sentryErr)
+		s.sentryHelper.CaptureError(sentryErr, "audio", "file_validation")
 		return sentryErr
 	}
 
@@ -337,7 +343,7 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 				"error", openErr.Error())
 		}
 		sentryErr := errors.New("error opening file")
-		sentry.CaptureException(sentryErr)
+		s.sentryHelper.CaptureError(sentryErr, "audio", "file_open")
 		return openErr
 	}
 	defer file.Close()
@@ -495,7 +501,7 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 	// Process audio streaming.
 	bytesRead, err := s.streamFromPipe(pr, trackPath)
 	if err != nil {
-		sentry.CaptureException(fmt.Errorf("CRITICAL: Audio streaming failed for track %s: %w", trackPath, err))
+		s.sentryHelper.CaptureError(fmt.Errorf("CRITICAL: Audio streaming failed for track %s: %w", trackPath, err), "audio", "streaming")
 		s.logger.Error("CRITICAL: Audio streaming failed",
 			"trackPath", trackPath,
 			"error", err.Error(),
@@ -514,7 +520,7 @@ func (s *Streamer) processNormalizedAudio(file *os.File, trackPath string, start
 	// CRITICAL CHECK: Detect if track played too quickly (< 1 second) 
 	if duration.Seconds() < 1.0 && bytesRead < 1000 {
 		criticalErr := fmt.Errorf("CRITICAL: Track played too quickly - possible normalization failure")
-		sentry.CaptureException(criticalErr)
+		s.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 		s.logger.Error("CRITICAL: Track played too quickly - possible normalization failure",
 			"trackPath", trackPath,
 			"duration", duration.Seconds(),
@@ -544,7 +550,7 @@ func (s *Streamer) runNormalization(file *os.File, writer *io.PipeWriter, route 
 			s.logger.Error("CRITICAL: Audio normalization failed",
 				"error", normErr.Error(),
 				"route", route)
-			sentry.CaptureException(criticalErr)
+			s.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 		}
 	}
 }
@@ -561,7 +567,7 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 		s.logger.Error("CRITICAL: Buffer pool returned invalid type", 
 			"expected", "[]byte", 
 			"got", fmt.Sprintf("%T", bufferInterface))
-		sentry.CaptureException(bufferErr)
+		s.sentryHelper.CaptureError(bufferErr, "audio", "streaming")
 	}
 	defer s.bufferPool.Put(buffer) // Put back buffer, not pointer to buffer
 
@@ -588,7 +594,7 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 					s.logger.Error("CRITICAL: EOF reached but no audio data was read",
 						"trackPath", trackPath,
 						"bytesRead", bytesRead)
-					sentry.CaptureException(criticalErr)
+					s.sentryHelper.CaptureError(criticalErr, "audio", "streaming")
 				}
 				break
 			}
@@ -604,7 +610,7 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 				"error", readErr.Error(),
 				"trackPath", trackPath,
 				"bytesRead", bytesRead)
-			sentry.CaptureException(criticalErr)
+			s.sentryHelper.CaptureError(criticalErr, "audio", "streaming")
 			return bytesRead, fmt.Errorf("error reading normalized audio data: %w", readErr)
 		}
 
@@ -614,7 +620,7 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 			s.logger.Error("CRITICAL: Read returned 0 bytes without error",
 				"trackPath", trackPath,
 				"bytesRead", bytesRead)
-			sentry.CaptureException(criticalErr)
+			s.sentryHelper.CaptureError(criticalErr, "audio", "streaming")
 			break
 		}
 
@@ -753,7 +759,7 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 		}
 		if atomic.LoadInt32(&s.clientCounter) >= int32(s.maxClients) {
 			err := fmt.Errorf("maximum number of clients exceeded (%d)", s.maxClients)
-			sentry.CaptureException(err) // This is an error, send to Sentry
+			s.sentryHelper.CaptureError(err, "audio", "streaming") // This is an error, send to Sentry
 			return nil, 0, err
 		}
 	}
@@ -1189,7 +1195,7 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 			} else {
 				s.logger.Info("DIAGNOSTICS: ERROR reading data", "error", readErr.Error())
 			}
-			sentry.CaptureException(readErr)
+			s.sentryHelper.CaptureError(readErr, "audio", "streaming")
 			return fmt.Errorf("error reading data: %w", readErr)
 		}
 

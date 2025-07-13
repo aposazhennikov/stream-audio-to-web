@@ -19,16 +19,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/stream-audio-to-web/audio"
-	httpServer "github.com/user/stream-audio-to-web/http"
-	"github.com/user/stream-audio-to-web/playlist"
-	"github.com/user/stream-audio-to-web/radio"
-	"github.com/user/stream-audio-to-web/relay"
-	"github.com/user/stream-audio-to-web/telegram"
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
+	"github.com/aposazhennikov/stream-audio-to-web/playlist"
+	"github.com/aposazhennikov/stream-audio-to-web/radio"
+	"github.com/aposazhennikov/stream-audio-to-web/relay"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+
 
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 )
+
+// Global Sentry helper for use in functions without config access.
+var globalSentryHelper *sentryhelper.SentryHelper
 
 // Default configuration.
 const (
@@ -70,6 +74,7 @@ type Config struct {
 	EnableRelay            bool            // Enable relay functionality
 	RelayConfigFile        string          // Path to relay configuration file
 	SentryDSN              string          // DSN для Sentry
+	SentryHelper           *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
 
 func main() {
@@ -77,7 +82,9 @@ func main() {
 	defer func() {
 		if r := recover(); r != nil {
 			// Логируем panic в Sentry
-			sentry.CaptureException(fmt.Errorf("PANIC: %v", r))
+			if globalSentryHelper != nil {
+				globalSentryHelper.CaptureError(fmt.Errorf("PANIC: %v", r), "main", "panic")
+			}
 			sentry.Flush(time.Second * 5)
 			panic(r) // Re-panic после логирования
 		}
@@ -94,8 +101,9 @@ func main() {
 
 	// Initialize Sentry.
 	logger.Info("APPLICATION STARTUP: Initializing Sentry...")
-	initSentry(logger)
-	logger.Info("APPLICATION STARTUP: Sentry initialized")
+	config.SentryHelper = initSentry(logger)
+	globalSentryHelper = config.SentryHelper // Записываем в глобальную переменную для использования в других функциях
+	logger.Info("APPLICATION STARTUP: Sentry initialized", "enabled", config.SentryHelper.IsEnabled())
 
 	// Log application configuration.
 	logConfiguration(logger, config)
@@ -177,13 +185,13 @@ func setupLogger() *slog.Logger {
 	return logger
 }
 
-// initSentry initializes Sentry for error tracking.
-func initSentry(logger *slog.Logger) {
+// initSentry initializes Sentry for error tracking and returns SentryHelper.
+func initSentry(logger *slog.Logger) *sentryhelper.SentryHelper {
 	// Get DSN from environment.
 	sentryDSN := strings.TrimSpace(os.Getenv("SENTRY_DSN"))
 	if sentryDSN == "" {
 		logger.Info("Sentry monitoring disabled (SENTRY_DSN not set or empty)")
-		return
+		return sentryhelper.NewSentryHelper(false, logger)
 	}
 
 	logger.Info("Initializing Sentry with DSN", "dsn_length", len(sentryDSN))
@@ -192,7 +200,11 @@ func initSentry(logger *slog.Logger) {
 	err := initSentryWithDSN(logger, sentryDSN)
 	if err == nil {
 		logger.Info("Sentry initialization succeeded")
+		return sentryhelper.NewSentryHelper(true, logger)
 	}
+
+	// If initialization failed, return disabled helper.
+	return sentryhelper.NewSentryHelper(false, logger)
 }
 
 // initSentryWithDSN attempts to initialize Sentry with the given DSN.
@@ -282,7 +294,7 @@ func initializeComponents(
 ) (*httpServer.Server, *radio.StationManager, *relay.Manager, *telegram.Manager) {
 	// Create HTTP server.
 	logger.Info("Creating HTTP server...")
-	server := httpServer.NewServer(config.MaxClients)
+	server := httpServer.NewServer(config.MaxClients, logger, config.SentryHelper)
 	logger.Info("HTTP server created")
 	
 	// Set global shuffle configuration.
@@ -316,7 +328,7 @@ func initializeComponents(
 
 	// Create radio station manager.
 	logger.Info("Creating radio station manager...")
-	stationManager := radio.NewRadioStationManager(logger)
+	stationManager := radio.NewRadioStationManager(logger, config.SentryHelper)
 	logger.Info("Radio station manager created")
 
 	// Set radio station manager for HTTP server.
@@ -397,7 +409,7 @@ func startHTTPServer(logger *slog.Logger, port int, handler http.Handler) *http.
 		logger.Info("Starting HTTP server", "address", fmt.Sprintf("0.0.0.0:%d", port))
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("Server start error", "error", err)
-			sentry.CaptureException(err)
+			if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		}
 	}()
 
@@ -453,7 +465,7 @@ func configureRootHandler(logger *slog.Logger, server *httpServer.Server, redire
 	if routeHandlerErr := routeHandler.GetError(); routeHandlerErr != nil {
 		routeErr = routeHandlerErr
 		logger.Error("Failed to register root handler", "error", routeErr)
-		sentry.CaptureException(routeErr)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(routeErr, "main", "route_config") }
 	}
 
 	if routeErr != nil {
@@ -479,7 +491,7 @@ func configureAudioRoutes(
 	if len(config.DirectoryRoutes) == 0 {
 		criticalErr := fmt.Errorf("CRITICAL: No directory routes configured")
 		logger.Error("CRITICAL: No directory routes configured! Check DIRECTORY_ROUTES environment variable.")
-		sentry.CaptureException(criticalErr)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
 		return
 	}
 
@@ -491,7 +503,7 @@ func configureAudioRoutes(
 			"normalizeVolume", config.NormalizeVolume,
 			"normalizeRuntime", config.NormalizeRuntime,
 			"expected", "> 0")
-		sentry.CaptureException(criticalErr)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
 		// This is a critical configuration error - don't start audio streams
 		return
 	}
@@ -523,7 +535,7 @@ func configureAudioRoutes(
 			} else {
 				criticalErr := fmt.Errorf("CRITICAL: Route configuration failed for %s", r)
 				logger.Error("CRITICAL: Route configuration failed", slog.String("route", r))
-				sentry.CaptureException(criticalErr)
+				if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
 			}
 		}(routeCopy, dirCopy)
 	}
@@ -588,7 +600,7 @@ func handleShutdownSignal(
 
 	if shutdownErr := httpSrv.Shutdown(ctx); shutdownErr != nil {
 		logger.Error("Server shutdown error", "error", shutdownErr)
-		sentry.CaptureException(shutdownErr)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(shutdownErr, "main", "shutdown") }
 	}
 	logger.Info("Server successfully stopped")
 
@@ -629,7 +641,7 @@ func configureSyncRoute(
 		if r := recover(); r != nil {
 			err := fmt.Errorf("PANIC in configureSyncRoute for route %s: %v", route, r)
 			logger.Error("PANIC in route configuration", "route", route, "panic", r)
-			sentry.CaptureException(err)
+			if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		}
 	}()
 
@@ -639,7 +651,7 @@ func configureSyncRoute(
 	if !ensureDirectoryExists(logger, dir, route) {
 		err := fmt.Errorf("directory check failed for route %s: %s", route, dir)
 		logger.Error("Directory check failed", "route", route, "directory", dir)
-		sentry.CaptureException(err)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		return false
 	}
 
@@ -647,7 +659,7 @@ func configureSyncRoute(
 	if !checkAudioFiles(logger, dir, route) {
 		err := fmt.Errorf("audio files check failed for route %s: %s", route, dir)
 		logger.Error("Audio files check failed", "route", route, "directory", dir)
-		sentry.CaptureException(err)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		return false
 	}
 
@@ -655,7 +667,7 @@ func configureSyncRoute(
 	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
 		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
 		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
-		sentry.CaptureException(err)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		return false
 	}
 
@@ -664,7 +676,7 @@ func configureSyncRoute(
 	if pl == nil {
 		err := fmt.Errorf("playlist creation failed for route %s: %s", route, dir)
 		logger.Error("Playlist creation failed", "route", route, "directory", dir)
-		sentry.CaptureException(err)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		return false
 	}
 
@@ -673,7 +685,7 @@ func configureSyncRoute(
 	if streamer == nil {
 		err := fmt.Errorf("streamer creation failed for route %s", route)
 		logger.Error("Streamer creation failed", "route", route)
-		sentry.CaptureException(err)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
 		return false
 	}
 
@@ -687,7 +699,9 @@ func configureSyncRoute(
 
 	if !server.IsStreamRegistered(route) {
 		logger.Error("CRITICAL ERROR: Stream not registered after all operations", slog.String("route", route))
-		sentry.CaptureMessage(fmt.Sprintf("Stream %s not registered after all operations", route))
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureInfo(fmt.Sprintf("Stream %s not registered after all operations", route), "main", "stream_registration")
+		}
 		return false
 	}
 
@@ -719,7 +733,9 @@ func ensureDirectoryExists(logger *slog.Logger, dir, route string) bool {
 				"directory", dir,
 				"error", mkdirErr,
 			)
-			sentry.CaptureException(fmt.Errorf("error creating directory %s: %w", dir, mkdirErr))
+			if globalSentryHelper != nil {
+				globalSentryHelper.CaptureError(fmt.Errorf("error creating directory %s: %w", dir, mkdirErr), "main", "directory_creation")
+			}
 			return false
 		}
 	}
@@ -736,7 +752,9 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 			"directory", dir,
 			"error", readErr,
 		)
-		sentry.CaptureException(fmt.Errorf("error reading directory %s: %w", dir, readErr))
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(fmt.Errorf("error reading directory %s: %w", dir, readErr), "main", "directory_read")
+		}
 		return false
 	}
 
@@ -795,7 +813,9 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 			slog.String("route", route))
 
 		// Только записываем сообщение в Sentry, но не считаем это ошибкой
-		sentry.CaptureMessage(fmt.Sprintf("No audio files in directory %s, but stream will be configured anyway", dir))
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureInfo(fmt.Sprintf("No audio files in directory %s, but stream will be configured anyway", dir), "main", "empty_directory")
+		}
 
 		// Возвращаем true, чтобы разрешить конфигурацию маршрута даже без файлов
 		return true
@@ -811,10 +831,10 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 	} else {
 		logger.Info("Using global shuffle setting for route", slog.String("route", route))
 	}
-	pl, playlistErr := playlist.NewPlaylist(dir, nil, shuffleSetting, logger)
+	pl, playlistErr := playlist.NewPlaylist(dir, nil, shuffleSetting, logger, config.SentryHelper)
 	if playlistErr != nil {
 		logger.Error("ERROR creating playlist", "error", playlistErr)
-		sentry.CaptureException(fmt.Errorf("error creating playlist: %w", playlistErr))
+		config.SentryHelper.CaptureError(fmt.Errorf("error creating playlist: %w", playlistErr), "main", "playlist_creation")
 		return nil
 	}
 	logger.Info("Playlist for route successfully created", slog.String("route", route))
@@ -823,7 +843,7 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 
 func createStreamer(logger *slog.Logger, config *Config, route string) *audio.Streamer {
 	logger.Info("Creating audio streamer for route", slog.String("route", route))
-	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.Bitrate)
+	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.Bitrate, logger, config.SentryHelper)
 	streamer.SetVolumeNormalization(config.NormalizeVolume)
 	logger.Info("Audio streamer for route successfully created", slog.String("route", route))
 	return streamer
@@ -1196,7 +1216,7 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 				logger.Error("Error reloading playlist",
 					slog.String("route", path),
 					slog.String("error", reloadErr.Error()))
-				sentry.CaptureException(reloadErr)
+				if globalSentryHelper != nil { globalSentryHelper.CaptureError(reloadErr, "main", "reload") }
 			} else {
 				logger.Info("Playlist successfully reloaded", slog.String("route", path))
 			}
@@ -1206,7 +1226,7 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 	}); walkErr != nil {
 		logger.Error("Error walking routes for playlist reload",
 			slog.String("error", walkErr.Error()))
-		sentry.CaptureException(walkErr)
+		if globalSentryHelper != nil { globalSentryHelper.CaptureError(walkErr, "main", "file_walk") }
 	}
 
 	logger.Info("Playlist reload complete")
@@ -1268,7 +1288,9 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 			"directory", dir,
 			"error", readErr,
 		)
-		sentry.CaptureException(fmt.Errorf("error reading directory %s for bitrate conversion: %w", dir, readErr))
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(fmt.Errorf("error reading directory %s for bitrate conversion: %w", dir, readErr), "main", "bitrate_conversion")
+		}
 		return false
 	}
 

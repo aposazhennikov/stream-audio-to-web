@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	sentry "github.com/getsentry/sentry-go"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 const (
@@ -46,12 +46,13 @@ type Station struct {
 	waitGroup    sync.WaitGroup
 	mutex        sync.Mutex // Mutex for synchronizing access to channels
 	logger       *slog.Logger
+	sentryHelper *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry.
 	manualTrackSwitch bool  // НОВЫЙ флаг для отслеживания ручного переключения треков
 	switchMutex  sync.RWMutex // НОВЫЙ мьютекс для защиты флага
 }
 
 // NewRadioStation creates a new radio station.
-func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistManager, logger *slog.Logger) *Station {
+func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistManager, logger *slog.Logger, sentryHelper *sentryhelper.SentryHelper) *Station {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -63,6 +64,7 @@ func NewRadioStation(route string, streamer AudioStreamer, playlist PlaylistMana
 		restart:           make(chan struct{}, 1), // Buffered channel for restart
 		currentTrack:      make(chan struct{}),    // Channel for interrupting current track
 		logger:            logger,
+		sentryHelper:      sentryHelper,
 		manualTrackSwitch: false, // НОВЫЙ флаг инициализирован как false
 	}
 }
@@ -399,8 +401,9 @@ func (rs *Station) validateTrack(track interface{}, isRestartRequested bool) str
 
 	if trackPath == "" {
 		rs.logger.Error("Unable to get track path for station", slog.String("route", rs.route))
-		sentry.CaptureMessage(
+		rs.sentryHelper.CaptureInfo(
 			fmt.Sprintf("Unable to get track path for station %s", rs.route),
+			"radio", "track_path",
 		)
 		
 		// Only call NextTrack if this is not a manual restart.
@@ -594,7 +597,7 @@ func (rs *Station) handleTrackCompletion(err error, trackPath string, isRestartR
 				slog.String("trackPath", trackPath),
 				slog.String("error", err.Error()))
 		}
-		sentry.CaptureException(fmt.Errorf("error playing track %s: %w", trackPath, err))
+		rs.sentryHelper.CaptureError(fmt.Errorf("error playing track %s: %w", trackPath, err), "radio", "track_playback")
 		
 		// On error, skip track and move to next only if not a manual restart and not manual switch.
 		if !isRestartRequested && !isManualSwitch {
@@ -697,19 +700,21 @@ func (rs *Station) handleTrackCompletion(err error, trackPath string, isRestartR
 
 // StationManager manages multiple radio stations.
 type StationManager struct {
-	stations map[string]*Station
-	mutex    sync.RWMutex
-	logger   *slog.Logger
+	stations     map[string]*Station
+	mutex        sync.RWMutex
+	logger       *slog.Logger
+	sentryHelper *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry.
 }
 
 // NewRadioStationManager creates a new radio station manager.
-func NewRadioStationManager(logger *slog.Logger) *StationManager {
+func NewRadioStationManager(logger *slog.Logger, sentryHelper *sentryhelper.SentryHelper) *StationManager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &StationManager{
-		stations: make(map[string]*Station),
-		logger:   logger,
+		stations:     make(map[string]*Station),
+		logger:       logger,
+		sentryHelper: sentryHelper,
 	}
 }
 
@@ -729,7 +734,7 @@ func (rm *StationManager) AddStation(route string, streamer AudioStreamer, playl
 
 	// Create new station.
 	rm.logger.Info("DIAGNOSTICS: Creating new radio station...", slog.String("route", route))
-	station := NewRadioStation(route, streamer, playlist, rm.logger)
+	station := NewRadioStation(route, streamer, playlist, rm.logger, rm.sentryHelper)
 	rm.stations[route] = station
 
 	// Launch station asynchronously to avoid blocking main thread.
@@ -810,6 +815,6 @@ func getTrackPath(track interface{}) string {
 	}
 
 	slog.Default().Error("Unknown track type", slog.Any("track", track))
-	sentry.CaptureMessage(fmt.Sprintf("Unknown track type: %T", track)) // This is an error, send to Sentry
+	// TODO: Add Sentry logging when sentryHelper is available
 	return ""
 }

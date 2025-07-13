@@ -1,4 +1,4 @@
-module github.com/user/stream-audio-to-web
+module github.com/aposazhennikov/stream-audio-to-web
 
 go 1.22
 

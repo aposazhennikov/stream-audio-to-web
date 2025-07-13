@@ -19,7 +19,7 @@ import (
 
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/effects"
-	sentry "github.com/getsentry/sentry-go"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	mp3 "github.com/hajimehoshi/go-mp3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -119,6 +119,8 @@ type NormalizerConfig struct {
 	Cache *VolumeCache
 	// Logger for normalizer operations.
 	logger *slog.Logger
+	// Helper for safe Sentry operations.
+	sentryHelper *sentryhelper.SentryHelper
 	// Metrics for monitoring normalization.
 	Metrics struct {
 		NormalizeGainMetric    *prometheus.GaugeVec
@@ -654,7 +656,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	if file == nil {
 		criticalErr := fmt.Errorf("CRITICAL: NormalizeMP3Stream called with nil file")
 		config.logger.Error("CRITICAL: NormalizeMP3Stream called with nil file", "route", route)
-		sentry.CaptureException(criticalErr)
+		config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 		return criticalErr
 	}
 
@@ -676,7 +678,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 			config.logger.Error("CRITICAL: File already closed during seek in normalization",
 				"filePath", filePath,
 				"error", seekErr.Error())
-			sentry.CaptureException(criticalErr)
+			config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 			return criticalErr
 		}
 		return fmt.Errorf("error seeking to start: %w", seekErr)
@@ -691,14 +693,14 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 			config.logger.Error("CRITICAL: File already closed during decoder creation",
 				"filePath", filePath,
 				"error", decodeErr.Error())
-			sentry.CaptureException(criticalErr)
+			config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 			return criticalErr
 		}
 		criticalErr := fmt.Errorf("CRITICAL: Failed to create MP3 decoder: %w", decodeErr)
 		config.logger.Error("CRITICAL: Failed to create MP3 decoder",
 			"filePath", filePath,
 			"error", decodeErr.Error())
-		sentry.CaptureException(criticalErr)
+		config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 		return criticalErr
 	}
 
@@ -718,7 +720,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 				"route", route,
 				"error", streamErr.Error(),
 				"bytesStreamed", n)
-			sentry.CaptureException(criticalErr)
+			config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 			return criticalErr
 		}
 	}
@@ -730,7 +732,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 			"filePath", filePath,
 			"route", route,
 			"gainFactor", gainFactor)
-		sentry.CaptureException(criticalErr)
+		config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 		return criticalErr
 	}
 
@@ -752,7 +754,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 				"route", route,
 				"bytesToWrite", n,
 				"error", writeErr.Error())
-			sentry.CaptureException(criticalErr)
+			config.sentryHelper.CaptureError(criticalErr, "audio", "normalization")
 			return criticalErr
 		}
 	}

@@ -16,13 +16,14 @@ import (
 	"sync"
 	"time"
 
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/user/stream-audio-to-web/audio"
-	"github.com/user/stream-audio-to-web/relay"
-	"github.com/user/stream-audio-to-web/telegram"
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	"github.com/aposazhennikov/stream-audio-to-web/relay"
+
 
 	html "html"
 )
@@ -68,6 +69,7 @@ type Server struct {
 	bytesSent         *prometheus.CounterVec // Counter for bytes sent.
 	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time.
 	logger            *slog.Logger           // Logger for server operations.
+	sentryHelper      *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
@@ -85,7 +87,7 @@ const (
 )
 
 // NewServer creates a new HTTP server.
-func NewServer(maxClients int) *Server {
+func NewServer(maxClients int, logger *slog.Logger, sentryHelper *sentryhelper.SentryHelper) *Server {
 	// Get password for status page from environment variable.
 	statusPassword := getEnvOrDefault("STATUS_PASSWORD", defaultStatusPassword)
 
@@ -119,8 +121,10 @@ func NewServer(maxClients int) *Server {
 	prometheus.MustRegister(bytesSent)
 	prometheus.MustRegister(trackSecondsTotal)
 
-	// Create logger.
-	logger := slog.Default()
+	// Use provided logger or default.
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	server := &Server{
 		router:            mux.NewRouter(),
@@ -133,6 +137,7 @@ func NewServer(maxClients int) *Server {
 		bytesSent:         bytesSent,
 		trackSecondsTotal: trackSecondsTotal,
 		logger:            logger,
+		sentryHelper:      sentryHelper,
 	}
 
 	// Setup routes.
@@ -520,7 +525,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 		for _, playlist := range playlists {
 			if reloadErr := playlist.Reload(); reloadErr != nil {
 				errorMsg := fmt.Sprintf("Error reloading playlist: %s", reloadErr)
-				sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", reloadErr))
+				s.sentryHelper.CaptureError(fmt.Errorf("error reloading playlist: %w", reloadErr), "http", "reload_playlist")
 				http.Error(w, errorMsg, http.StatusInternalServerError)
 				return
 			}
@@ -542,7 +547,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
 		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
-		sentry.CaptureMessage(errorMsg)
+		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler")
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return
 	}
@@ -550,7 +555,7 @@ func (s *Server) reloadPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 	if reloadErr := playlist.Reload(); reloadErr != nil {
 		errorMsg := fmt.Sprintf("Error reloading playlist: %s", reloadErr)
 		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", reloadErr.Error()))
-		sentry.CaptureException(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr))
+		s.sentryHelper.CaptureError(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr), "http", "reload_playlist")
 		http.Error(w, errorMsg, http.StatusInternalServerError)
 		return
 	}
@@ -597,7 +602,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
 		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
-		sentry.CaptureMessage(errorMsg)
+		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler")
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return
 	}
@@ -828,7 +833,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		if !ok {
 			errorMsg := "Streaming not supported"
 			s.logger.Error("ERROR: Streaming not supported")
-			sentry.CaptureMessage(errorMsg) // Save as this is an error
+			s.sentryHelper.CaptureInfo(errorMsg, "http", "handler") // Save as this is an error
 			http.Error(w, errorMsg, http.StatusInternalServerError)
 			return
 		}
@@ -864,7 +869,7 @@ func (s *Server) getStream(route string, w http.ResponseWriter) (StreamHandler, 
 	if !exists {
 		errorMsg := fmt.Sprintf("Stream %s not found", route)
 		s.logger.Error("ERROR: Stream not found", slog.String("route", route))
-		sentry.CaptureMessage(errorMsg) // Save as this is an error
+		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler") // Save as this is an error
 		http.Error(w, errorMsg, http.StatusNotFound)
 		return nil, false
 	}
@@ -906,7 +911,7 @@ func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr s
 			slog.String("route", route),
 			slog.String("error", addErr.Error()),
 		)
-		sentry.CaptureException(addErr) // Save as this is an error
+		s.sentryHelper.CaptureError(addErr, "http", "handler") // Save as this is an error
 		return nil, addErr
 	}
 
@@ -1002,7 +1007,7 @@ func (s *Server) sendDataToClient(
 				slog.Int("clientID", clientData.clientID),
 				slog.String("error", writeErr.Error()),
 				slog.Int64("totalBytesSent", *totalBytesSent))
-			sentry.CaptureException(fmt.Errorf("error sending data to client %d: %w", clientData.clientID, writeErr))
+			s.sentryHelper.CaptureError(fmt.Errorf("error sending data to client %d: %w", clientData.clientID, writeErr), "http", "send_data")
 		}
 		return writeErr
 	}
@@ -1036,7 +1041,7 @@ func (s *Server) ReloadAllPlaylists() error {
 				slog.String("route", route),
 				slog.String("error", reloadErr.Error()),
 			)
-			sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", reloadErr))
+			s.sentryHelper.CaptureError(fmt.Errorf("error reloading playlist: %w", reloadErr), "http", "reload_all")
 		}
 	}
 
@@ -1058,7 +1063,7 @@ func (s *Server) ReloadPlaylist(route string) error {
 	if err != nil {
 		errorMsg := fmt.Sprintf("Failed to reload playlist for %s: %v", route, err)
 		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", err.Error()))
-		sentry.CaptureMessage(errorMsg)
+		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler")
 		return err
 	}
 
@@ -1071,7 +1076,7 @@ func (s *Server) reloadPlaylistInternal(route string) error {
 	playlist, exists := s.playlists[route]
 	if !exists {
 		s.logger.Error("Playlist not found", slog.String("route", route))
-		sentry.CaptureMessage(fmt.Sprintf("Playlist for %s not found", route))
+		s.sentryHelper.CaptureInfo(fmt.Sprintf("Playlist for %s not found", route), "http", "playlist_not_found")
 		return fmt.Errorf("playlist for %s not found", route)
 	}
 
@@ -1079,7 +1084,7 @@ func (s *Server) reloadPlaylistInternal(route string) error {
 	reloadErr := playlist.Reload()
 	if reloadErr != nil {
 		s.logger.Error("Error reloading playlist", slog.String("route", route), slog.String("error", reloadErr.Error()))
-		sentry.CaptureException(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr))
+		s.sentryHelper.CaptureError(fmt.Errorf("error reloading playlist for %s: %w", route, reloadErr), "http", "reload_internal")
 		return reloadErr
 	}
 
@@ -2069,7 +2074,7 @@ func (s *Server) logNormalizationError(err error, filePath string) {
 			// Для более серьезных ошибок и логируем, и отправляем в Sentry.
 			errMsg := fmt.Sprintf("ERROR during audio normalization error=%q", err.Error())
 			s.logger.Error(errMsg)
-			sentry.CaptureMessage(errMsg)
+			s.sentryHelper.CaptureInfo(errMsg, "http", "handler")
 		}
 	}
 }

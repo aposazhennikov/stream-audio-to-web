@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/user/stream-audio-to-web/relay"
-	"github.com/user/stream-audio-to-web/slog"
+	"github.com/aposazhennikov/stream-audio-to-web/relay"
+	"github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 func TestNewRelayManager(t *testing.T) {

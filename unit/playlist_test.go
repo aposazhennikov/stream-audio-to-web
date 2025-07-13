@@ -1,15 +1,18 @@
+
 package unit_test
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/user/stream-audio-to-web/playlist"
-	"github.com/user/stream-audio-to-web/slog"
-	"github.com/user/stream-audio-to-web/unit/testdata"
+	"github.com/aposazhennikov/stream-audio-to-web/playlist"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 )
+
 
 // Creating different audio file types for testing.
 func createTestFiles(_ *testing.T, dir string) error {
@@ -64,7 +67,7 @@ func TestPlaylist_GetCurrentTrack(t *testing.T) {
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	// Initialize playlist.
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -208,7 +211,7 @@ func setupNextTrackTest(t *testing.T) *playlist.Playlist {
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	// Initialize playlist.
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -357,7 +360,7 @@ func TestPlaylist_PreviousTrack(t *testing.T) {
 	t.Setenv("TEST_ENVIRONMENT", "1")
 
 	// Initialize playlist.
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -550,7 +553,7 @@ func setupShuffleTestFiles(t *testing.T) string {
 // getRegularPlaylistTracks получает треки из обычного плейлиста (без перемешивания).
 func getRegularPlaylistTracks(t *testing.T, tmpDir string) (*playlist.Playlist, []string) {
 	// Инициализируем плейлист без перемешивания, чтобы сохранить исходный порядок.
-	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+	regularPl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		t.Fatalf("Failed to create regular playlist: %v", err)
 	}
@@ -567,7 +570,7 @@ func getRegularPlaylistTracks(t *testing.T, tmpDir string) (*playlist.Playlist, 
 // getShuffledPlaylistTracks получает треки из перемешанного плейлиста.
 func getShuffledPlaylistTracks(t *testing.T, tmpDir string) []string {
 	// Вручную создаем плейлист с перемешиванием вместо использования конструктора с shuffle=true.
-	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+	shufflePl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		t.Fatalf("Failed to create shuffle playlist: %v", err)
 	}
