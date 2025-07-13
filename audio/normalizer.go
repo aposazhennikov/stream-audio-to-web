@@ -217,7 +217,7 @@ func (vc *VolumeCache) Get(filePath string) (float64, bool) {
 	fileHash := generateFileHash(filePath)
 	gain, exists := vc.cache[fileHash]
 	if exists {
-		config.logger.Info("DIAGNOSTICS: Using cached gain factor", "gain", gain, "filePath", filePath)
+		config.logger.Debug("DIAGNOSTICS: Using cached gain factor", "gain", gain, "filePath", filePath)
 	}
 	return gain, exists
 }
@@ -230,7 +230,7 @@ func (vc *VolumeCache) Set(filePath string, gain float64) {
 	config := GetNormalizerConfig()
 	fileHash := generateFileHash(filePath)
 	vc.cache[fileHash] = gain
-	config.logger.Info("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
+	config.logger.Debug("DIAGNOSTICS: Stored gain factor", "gain", gain, "filePath", filePath)
 }
 
 // generateFileHash creates a hash based on file path and modification time to detect changes.
@@ -288,7 +288,7 @@ func CalculateGain(filePath string, route string) (float64, error) {
 			return 1.0, analysisErr
 		}
 	case <-time.After(time.Duration(analysisTimeoutMs) * time.Millisecond):
-		config.logger.Info("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
+		config.logger.Debug("DIAGNOSTICS: Analysis timeout for", "filePath", filePath, "using gain", 1.0)
 		config.Metrics.NormalizeSlowTotal.Inc()
 		return 1.0, errors.New("analysis timeout")
 	}
@@ -299,7 +299,7 @@ func CalculateGain(filePath string, route string) (float64, error) {
 	// Update metric.
 	config.Metrics.NormalizeGainMetric.WithLabelValues(route, filePath).Set(gain)
 
-	config.logger.Info("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
+	config.logger.Debug("DIAGNOSTICS: Calculated gain factor", "gain", gain, "filePath", filePath)
 	return gain, nil
 }
 
@@ -391,7 +391,7 @@ func performWindowAnalysis(
 		// Check for timeout.
 		select {
 		case <-analysisTimeout:
-			config.logger.Info("DIAGNOSTICS: Analysis timeout after", "windowCount", result.windowCount)
+			config.logger.Debug("DIAGNOSTICS: Analysis timeout after", "windowCount", result.windowCount)
 			return nil, errors.New("analysis timeout")
 		default:
 			// Continue analysis.
@@ -663,7 +663,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 	// Calculate gain factor.
 	gainFactor, gainErr := CalculateGain(filePath, route)
 	if gainErr != nil {
-		config.logger.Info("DIAGNOSTICS: Error calculating gain for",
+		config.logger.Debug("DIAGNOSTICS: Error calculating gain for",
 			"filePath", filePath,
 			"error", gainErr.Error(),
 			"action", "using raw stream")
@@ -743,7 +743,7 @@ func NormalizeMP3Stream(file *os.File, writer io.Writer, route string) error {
 			if errors.Is(writeErr, io.ErrClosedPipe) || 
 			   strings.Contains(writeErr.Error(), "closed pipe") ||
 			   strings.Contains(writeErr.Error(), "broken pipe") {
-				config.logger.Info("DIAGNOSTICS: Pipe closed during normalization write",
+				config.logger.Debug("DIAGNOSTICS: Pipe closed during normalization write",
 					"filePath", filePath,
 					"error", writeErr.Error())
 				return nil // Not an error, just pipe was closed
@@ -777,7 +777,7 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
 		if strings.Contains(seekErr.Error(), "file already closed") || 
 		   strings.Contains(seekErr.Error(), "closed") {
-			config.logger.Info("DIAGNOSTICS: File already closed during raw stream seek",
+			config.logger.Debug("DIAGNOSTICS: File already closed during raw stream seek",
 				"filePath", filePath,
 				"error", seekErr.Error())
 			return fmt.Errorf("file already closed during raw stream seek: %w", seekErr)
@@ -789,7 +789,7 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 	reader := bufio.NewReader(file)
 	buffer := make([]byte, rawStreamBufferSize) // 4KB buffer.
 
-	config.logger.Info("DIAGNOSTICS: Streaming raw MP3 data from", "filePath", filePath)
+	config.logger.Debug("DIAGNOSTICS: Streaming raw MP3 data from", "filePath", filePath)
 
 	for {
 		n, readErr := reader.Read(buffer)
@@ -800,7 +800,7 @@ func StreamRawMP3(file *os.File, writer io.Writer) error {
 			// Check for file closed errors
 			if strings.Contains(readErr.Error(), "file already closed") || 
 			   strings.Contains(readErr.Error(), "closed") {
-				config.logger.Info("DIAGNOSTICS: File already closed during raw stream read",
+				config.logger.Debug("DIAGNOSTICS: File already closed during raw stream read",
 					"filePath", filePath,
 					"error", readErr.Error())
 				return fmt.Errorf("file already closed during raw stream read: %w", readErr)
@@ -908,7 +908,7 @@ func analyzeFileContent(file *os.File, filePath string) (float64, error) {
 	// Если декодирование не удалось, обрабатываем это отдельно.
 	if decodeErr != nil {
 		// If MP3 decoding failed, treat as raw audio.
-		config.logger.Info("DIAGNOSTICS: Failed to decode as MP3",
+		config.logger.Debug("DIAGNOSTICS: Failed to decode as MP3",
 			"error", decodeErr.Error(),
 			"action", "treating as raw audio")
 

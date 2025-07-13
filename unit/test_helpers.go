@@ -1,4 +1,4 @@
-package unit_test
+package unit
 
 import (
 	"log/slog"
@@ -9,4 +9,4 @@ import (
 // Helper function to create SentryHelper for tests.
 func createTestSentryHelper() *sentryhelper.SentryHelper {
 	return sentryhelper.NewSentryHelper(false, slog.Default())
-} 
+}

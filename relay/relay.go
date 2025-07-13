@@ -367,7 +367,7 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 	if err != nil {
 		status.Status = "offline"
 		status.Error = fmt.Sprintf("failed to create request: %v", err)
-		rm.logger.Error("Failed to create request for stream status check", 
+		rm.logger.Error("Failed to create request for stream status check",
 			slog.Int("index", index),
 			slog.String("url", url),
 			slog.String("error", err.Error()))
@@ -384,7 +384,7 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 	if err != nil {
 		status.Status = "offline"
 		status.Error = fmt.Sprintf("request failed: %v", err)
-		rm.logger.Error("Stream status check request failed", 
+		rm.logger.Error("Stream status check request failed",
 			slog.Int("index", index),
 			slog.String("url", url),
 			slog.String("error", err.Error()))
@@ -398,7 +398,7 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 	if readErr != nil && readErr != io.EOF {
 		status.Status = "offline"
 		status.Error = fmt.Sprintf("failed to read stream data: %v", readErr)
-		rm.logger.Error("Failed to read stream data", 
+		rm.logger.Error("Failed to read stream data",
 			slog.Int("index", index),
 			slog.String("url", url),
 			slog.String("error", readErr.Error()))
@@ -408,17 +408,17 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 	// Check response status and content type.
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		contentType := resp.Header.Get("Content-Type")
-		
+
 		// Check if content type looks like audio.
-		if strings.Contains(contentType, "audio") || 
-		   strings.Contains(contentType, "mpeg") || 
-		   strings.Contains(contentType, "mp3") ||
-		   strings.Contains(contentType, "ogg") ||
-		   strings.Contains(contentType, "application/octet-stream") ||
-		   contentType == "" { // Some streams don't set content-type
-			
+		if strings.Contains(contentType, "audio") ||
+			strings.Contains(contentType, "mpeg") ||
+			strings.Contains(contentType, "mp3") ||
+			strings.Contains(contentType, "ogg") ||
+			strings.Contains(contentType, "application/octet-stream") ||
+			contentType == "" { // Some streams don't set content-type
+
 			status.Status = "online"
-			rm.logger.Info("Stream status check successful", 
+			rm.logger.Info("Stream status check successful",
 				slog.Int("index", index),
 				slog.String("url", url),
 				slog.Int("status_code", resp.StatusCode),
@@ -426,7 +426,7 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 		} else {
 			status.Status = "offline"
 			status.Error = fmt.Sprintf("invalid content type: %s", contentType)
-			rm.logger.Warn("Stream has invalid content type", 
+			rm.logger.Warn("Stream has invalid content type",
 				slog.Int("index", index),
 				slog.String("url", url),
 				slog.String("content_type", contentType))
@@ -434,14 +434,14 @@ func (rm *Manager) CheckStreamStatus(index int) StreamStatus {
 	} else if resp.StatusCode == 206 {
 		// Partial content is also OK for range requests.
 		status.Status = "online"
-		rm.logger.Info("Stream status check successful (partial content)", 
+		rm.logger.Info("Stream status check successful (partial content)",
 			slog.Int("index", index),
 			slog.String("url", url),
 			slog.Int("status_code", resp.StatusCode))
 	} else {
 		status.Status = "offline"
 		status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		rm.logger.Warn("Stream status check failed", 
+		rm.logger.Warn("Stream status check failed",
 			slog.Int("index", index),
 			slog.String("url", url),
 			slog.Int("status_code", resp.StatusCode))
@@ -481,7 +481,7 @@ func (rm *Manager) CheckAllStreamsStatus() []StreamStatus {
 		statuses[result.index] = result.status
 	}
 
-	rm.logger.Info("Completed status check for all streams", 
+	rm.logger.Info("Completed status check for all streams",
 		slog.Int("total_streams", len(links)))
 
 	return statuses

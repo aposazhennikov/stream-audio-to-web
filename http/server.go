@@ -24,7 +24,6 @@ import (
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 
-
 	html "html"
 )
 
@@ -62,7 +61,6 @@ type Server struct {
 	statusPassword    string                                    // Password for accessing /status page.
 	stationManager    interface{ RestartPlayback(string) bool } // Interface for restarting playback.
 	relayManager      *relay.Manager                            // Manager for relay functionality.
-	telegramManager   *telegram.Manager                       // Manager for telegram alerts.
 	globalShuffleConfig bool                                   // Global shuffle configuration.
 	// Prometheus metrics.
 	listenerCount     *prometheus.GaugeVec   // Gauge for tracking active listeners.
@@ -76,7 +74,6 @@ const xmlHTTPRequestHeader = "X-Requested-With"
 
 const (
 	defaultStatusPassword     = "1234554321"
-	defaultStreamsSortTimeout = 1 * time.Second
 	asciiMax                  = 127
 	shortSleepMs              = 50
 	kb                        = 1024
@@ -165,7 +162,7 @@ func (s *Server) Handler() http.Handler {
 
 // RegisterStream registers a new audio stream.
 func (s *Server) RegisterStream(route string, stream StreamHandler, playlist PlaylistManager) {
-	s.logger.Info("DIAGNOSTICS: Starting audio stream registration", slog.String("route", route))
+	s.logger.Debug("Starting audio stream registration", slog.String("route", route))
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -176,33 +173,33 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 		s.logger.Info("Fixed route during registration", slog.String("route", route))
 	}
 
-	s.logger.Info("DIAGNOSTICS: Adding stream to streams map", slog.String("route", route))
+	s.logger.Debug("Adding stream to streams map", slog.String("route", route))
 	s.streams[route] = stream
-	s.logger.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
+	s.logger.Debug("Adding playlist to playlists map", slog.String("route", route))
 	s.playlists[route] = playlist
 
 	// Set trackSecondsTotal metric directly to stream.
 	if streamer, ok := stream.(*audio.Streamer); ok {
 		streamer.SetTrackSecondsMetric(s.trackSecondsTotal)
-		s.logger.Info("DIAGNOSTICS: trackSecondsTotal metric set for streamer", slog.String("route", route))
+		s.logger.Debug("trackSecondsTotal metric set for streamer", slog.String("route", route))
 	}
 
 	// Check if stream was added.
 	if _, exists := s.streams[route]; exists {
-		s.logger.Info("DIAGNOSTICS: Stream for route successfully added to streams map", slog.String("route", route))
+		s.logger.Debug("Stream for route successfully added to streams map", slog.String("route", route))
 	} else {
 		s.logger.Error("ERROR: Stream for route was not added to streams map!", slog.String("route", route))
 	}
 
 	// IMPORTANT: Register route handler in router for GET and HEAD requests.
 	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET", "HEAD")
-	s.logger.Info("DIAGNOSTICS: HTTP handler registered for route", slog.String("route", route))
+	s.logger.Debug("HTTP handler registered for route", slog.String("route", route))
 
 	// Start goroutine to track current track.
-	s.logger.Info("DIAGNOSTICS: Starting goroutine to track current track", slog.String("route", route))
+	s.logger.Debug("Starting goroutine to track current track", slog.String("route", route))
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	s.logger.Info("DIAGNOSTICS: Audio stream for route successfully registered", slog.String("route", route))
+	s.logger.Debug("Audio stream for route successfully registered", slog.String("route", route))
 }
 
 // IsStreamRegistered checks if stream with specified route is registered.
@@ -294,14 +291,8 @@ func (s *Server) setupRoutes() {
 	// Endpoint to clear track history for specific stream.
 	s.router.HandleFunc("/clear-history/{route}", s.handleClearHistory).Methods("POST")
 
-	// Endpoint to check status of main routes/streams
-	s.router.HandleFunc("/routes/status", s.checkRoutesStatusHandler).Methods("GET")
-
 	// Add relay routes if relay manager is available
 	s.setupRelayRoutes()
-	
-	// Add telegram alert routes
-	s.setupTelegramRoutes()
 
 	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
@@ -322,12 +313,7 @@ func (s *Server) setupRoutes() {
 
 // healthzHandler returns 200 OK if server is running.
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
-	// Log healthz request.
-	s.logger.Info(
-		"Received healthz request",
-		slog.String("method", r.Method),
-		slog.String("remote_addr", r.RemoteAddr),
-	)
+	// Healthz requests are frequent (Docker healthchecks), no need to log them in DEBUG.
 
 	// Check for registered streams.
 	s.mutex.RLock()
@@ -338,12 +324,11 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mutex.RUnlock()
 
-	// Log status.
+	// Log only if no streams registered (potential issue).
 	if streamsCount == 0 {
 		s.logger.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
-	} else {
-		s.logger.Info("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
 	}
+	// Normal healthz status is not logged to avoid spam from frequent Docker healthchecks.
 
 	// Add headers to prevent caching.
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -367,8 +352,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Additional logging of successful response.
-	s.logger.Info("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	// Successful healthz response sent (no logging to avoid Docker healthcheck spam).
 }
 
 // readyzHandler checks readiness.
@@ -576,8 +560,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверка на пустой маршрут.
 	if route == "" {
 		// Для отсутствующего параметра route возвращаем информацию по всем маршрутам
-		// вместо ошибки, и используем уровень DEBUG для логов
-		s.logger.Debug("No route parameter provided, returning all tracks info")
+		// вместо ошибки. Убираем DEBUG лог так как он вызывается каждую секунду.
 
 		// Подготовим карту со всеми текущими треками
 		s.trackMutex.RLock()
@@ -953,11 +936,11 @@ func (s *Server) streamDataToClient(
 		select {
 		case <-clientClosed:
 			// Client disconnected.
-			s.logger.Info("Client disconnected from stream",
-				slog.String("route", route),
-				slog.String("remoteAddr", clientData.remoteAddr),
-				slog.Int("clientID", clientData.clientID),
-				slog.Int64("totalBytesSent", totalBytesSent))
+					s.logger.Debug("Client disconnected from stream",
+			slog.String("route", route),
+			slog.String("remoteAddr", clientData.remoteAddr),
+			slog.Int("clientID", clientData.clientID),
+			slog.Int64("totalBytesSent", totalBytesSent))
 			return
 		case data, ok := <-clientData.clientCh:
 			if !ok {
@@ -997,7 +980,7 @@ func (s *Server) sendDataToClient(
 	if writeErr != nil {
 		if isConnectionClosedError(writeErr) {
 			// Just log, don't send to Sentry.
-			s.logger.Info("Client disconnected",
+			s.logger.Debug("Client disconnected",
 				slog.Int("clientID", clientData.clientID),
 				slog.String("error", writeErr.Error()),
 				slog.Int64("totalBytesSent", *totalBytesSent))
@@ -1019,10 +1002,10 @@ func (s *Server) sendDataToClient(
 // logDataTransfer logs information about data transfer periodically.
 func (s *Server) logDataTransfer(clientData *clientStreamData, totalBytesSent *int64, lastLogTime *time.Time) {
 	if *totalBytesSent >= logEveryBytes && time.Since(*lastLogTime) > logIntervalSec*time.Second {
-		s.logger.Info("Sent data to client",
-			slog.Int("mbytes", int(*totalBytesSent/mb)),
-			slog.Int("clientID", clientData.clientID),
-			slog.String("remoteAddr", clientData.remoteAddr))
+			s.logger.Debug("Sent data to client",
+		slog.Int("mbytes", int(*totalBytesSent/mb)),
+		slog.Int("clientID", clientData.clientID),
+		slog.String("remoteAddr", clientData.remoteAddr))
 		*lastLogTime = time.Now()
 	}
 }
@@ -1305,13 +1288,11 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams":         streams,
-		"Title":           "Audio Streams Status",
-		"RelayEnabled":    true, // Always show relay section
-		"RelayActive":     s.relayManager != nil && s.relayManager.IsActive() && (os.Getenv("RELAY") == "true"),
-		"TelegramEnabled": true, // Always show telegram section  
-		"TelegramActive":  s.telegramManager != nil && s.telegramManager.IsEnabled() && (os.Getenv("TG_ALERT") == "true"),
-		"GlobalShuffle":   s.getGlobalShuffleStatus(),
+		"Streams":       streams,
+		"Title":         "Audio Streams Status",
+		"RelayEnabled":  s.relayManager != nil,
+		"RelayActive":   s.relayManager != nil && s.relayManager.IsActive(),
+		"GlobalShuffle": s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
@@ -1327,7 +1308,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	isFloydRoute := strings.Contains(route, "floyd")
 	
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: HTTP handleTrackSwitchHandler called", 
+		s.logger.Debug("HTTP handleTrackSwitchHandler called", 
 			slog.String("direction", direction),
 			slog.String("route", route),
 			slog.String("method", r.Method),
@@ -1346,7 +1327,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	// Check authentication.
 	if !s.checkAuth(r) {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Authentication failed")
+			s.logger.Debug("Authentication failed")
 		} else {
 			s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
 		}
@@ -1358,14 +1339,14 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	playlist, exists := s.getPlaylistForRoute(route)
 	if !exists {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Playlist not found", slog.String("route", route))
+			s.logger.Debug("Playlist not found", slog.String("route", route))
 		}
 		s.handlePlaylistNotFound(w, r, route)
 		return
 	}
 
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: About to get track for direction", 
+		s.logger.Debug("About to get track for direction", 
 			slog.String("direction", direction), 
 			slog.String("route", route))
 	}
@@ -1374,7 +1355,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	track := s.getTrackForDirection(playlist, direction)
 	if track == nil {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Track not found", 
+			s.logger.Debug("Track not found", 
 				slog.String("direction", direction), 
 				slog.String("route", route))
 		}
@@ -1383,7 +1364,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: Manual track switch proceeding", 
+		s.logger.Debug("Manual track switch proceeding", 
 			slog.String("direction", direction), 
 			slog.String("route", route))
 	} else {
@@ -2148,239 +2129,4 @@ func (s *Server) trackHandler(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
 		}
 	}
-}
-
-// SetTelegramManager sets the telegram manager for the server.
-func (s *Server) SetTelegramManager(manager *telegram.Manager) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.telegramManager = manager
-	s.logger.Info("Telegram manager set for HTTP server")
-}
-
-// setupTelegramRoutes sets up the telegram alert routes.
-func (s *Server) setupTelegramRoutes() {
-	// Only setup routes if telegram alerts are enabled
-	if os.Getenv("TG_ALERT") == "true" {
-		s.router.HandleFunc("/telegram-alerts", s.telegramAlertsHandler).Methods("GET")
-		s.router.HandleFunc("/telegram-alerts/update", s.telegramAlertsUpdateHandler).Methods("POST")
-		s.router.HandleFunc("/telegram-alerts/test", s.telegramAlertsTestHandler).Methods("POST")
-		s.logger.Info("Telegram alert routes configured")
-	}
-	
-	// Add temporary debug endpoint.
-	s.router.HandleFunc("/debug-telegram", s.debugTelegramHandler).Methods("GET")
-}
-
-// debugTelegramHandler provides debug information about Telegram manager status.
-func (s *Server) debugTelegramHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	
-	debug := map[string]interface{}{
-		"tg_alert_env":        os.Getenv("TG_ALERT"),
-		"manager_not_nil":     s.telegramManager != nil,
-		"manager_is_enabled":  false,
-		"telegram_active":     false,
-	}
-	
-	if s.telegramManager != nil {
-		debug["manager_is_enabled"] = s.telegramManager.IsEnabled()
-		debug["telegram_active"] = s.telegramManager != nil && s.telegramManager.IsEnabled() && (os.Getenv("TG_ALERT") == "true")
-	}
-	
-	json.NewEncoder(w).Encode(debug)
-}
-
-// RouteStatus represents the status of a main route/stream
-type RouteStatus struct {
-	Route  string `json:"route"`
-	Status string `json:"status"` // "online", "offline", "checking"
-	Error  string `json:"error,omitempty"`
-}
-
-// checkRoutesStatusHandler checks the status of all main routes/streams
-func (s *Server) checkRoutesStatusHandler(w http.ResponseWriter, r *http.Request) {
-	// Check authentication
-	if !s.checkAuth(r) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "Authentication required",
-		})
-		return
-	}
-
-	s.mutex.RLock()
-	routes := make([]string, 0, len(s.streams))
-	for route := range s.streams {
-		routes = append(routes, route)
-	}
-	s.mutex.RUnlock()
-
-	statuses := s.checkAllRoutesStatus(routes)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"statuses": statuses,
-	})
-}
-
-// checkAllRoutesStatus checks the status of all main routes concurrently
-func (s *Server) checkAllRoutesStatus(routes []string) []RouteStatus {
-	statuses := make([]RouteStatus, len(routes))
-
-	if len(routes) == 0 {
-		return statuses
-	}
-
-	// Use channels and goroutines for concurrent status checking
-	type indexedStatus struct {
-		index  int
-		status RouteStatus
-	}
-
-	statusChan := make(chan indexedStatus, len(routes))
-
-	// Start goroutines for each route
-	for i, route := range routes {
-		go func(index int, routePath string) {
-			status := s.checkRouteStatus(routePath)
-			statusChan <- indexedStatus{index: index, status: status}
-		}(i, route)
-	}
-
-	// Collect results
-	for i := 0; i < len(routes); i++ {
-		result := <-statusChan
-		statuses[result.index] = result.status
-	}
-
-	s.logger.Info("Completed status check for all routes", 
-		"total_routes", len(routes))
-
-	return statuses
-}
-
-// checkRouteStatus checks the status of a specific route by validating current track and HTTP response
-func (s *Server) checkRouteStatus(route string) RouteStatus {
-	status := RouteStatus{
-		Route:  route,
-		Status: "checking",
-	}
-
-	// First check if stream is registered and has a current track
-	s.trackMutex.RLock()
-	currentTrack, hasTrack := s.currentTracks[route]
-	s.trackMutex.RUnlock()
-
-	// If no current track, the stream is likely not working properly
-	if !hasTrack || currentTrack == "" || currentTrack == "dummy.mp3" {
-		status.Status = "offline"
-		status.Error = "no audio track playing"
-		s.logger.Warn("Route has no current track", "route", route, "track", currentTrack)
-		return status
-	}
-
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	// Make GET request to check if route is available and serving audio
-	url := fmt.Sprintf("http://localhost:8000%s", route)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		status.Status = "offline"
-		status.Error = fmt.Sprintf("failed to create request: %v", err)
-		s.logger.Error("Failed to create request for route status check", 
-			"route", route,
-			"error", err.Error())
-		return status
-	}
-
-	// Set headers to mimic a real audio player
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Accept", "audio/mpeg, audio/*, */*")
-	req.Header.Set("Range", "bytes=0-1023") // Request only first 1KB to test availability
-	req.Header.Set("Connection", "close")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		status.Status = "offline"
-		status.Error = fmt.Sprintf("request failed: %v", err)
-		s.logger.Error("Route status check request failed", 
-			"route", route,
-			"error", err.Error())
-		return status
-	}
-	defer resp.Body.Close()
-
-	// Check response status and content type
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		contentType := resp.Header.Get("Content-Type")
-		
-		// Check if content type looks like audio
-		if strings.Contains(contentType, "audio") || 
-		   strings.Contains(contentType, "mpeg") || 
-		   strings.Contains(contentType, "mp3") ||
-		   strings.Contains(contentType, "ogg") ||
-		   strings.Contains(contentType, "application/octet-stream") ||
-		   contentType == "" { // Some streams don't set content-type
-			
-			// Additional check: try to read some audio data
-			buffer := make([]byte, 1024)
-			n, readErr := resp.Body.Read(buffer)
-			
-			if readErr != nil && readErr.Error() != "EOF" && n == 0 {
-				status.Status = "offline"
-				status.Error = "no audio data received"
-				s.logger.Warn("Route returns no audio data", 
-					"route", route,
-					"read_error", readErr.Error())
-			} else {
-				status.Status = "online"
-				s.logger.Info("Route status check successful", 
-					"route", route,
-					"status_code", resp.StatusCode,
-					"content_type", contentType,
-					"bytes_read", n,
-					"current_track", currentTrack)
-			}
-		} else {
-			status.Status = "offline"
-			status.Error = fmt.Sprintf("invalid content type: %s", contentType)
-			s.logger.Warn("Route has invalid content type", 
-				"route", route,
-				"content_type", contentType)
-		}
-	} else if resp.StatusCode == 206 {
-		// Partial content is also OK for range requests
-		// Additional check: try to read some audio data
-		buffer := make([]byte, 1024)
-		n, readErr := resp.Body.Read(buffer)
-		
-		if readErr != nil && readErr.Error() != "EOF" && n == 0 {
-			status.Status = "offline"
-			status.Error = "no audio data received"
-			s.logger.Warn("Route returns no audio data (206)", 
-				"route", route,
-				"read_error", readErr.Error())
-		} else {
-			status.Status = "online"
-			s.logger.Info("Route status check successful (partial content)", 
-				"route", route,
-				"status_code", resp.StatusCode,
-				"bytes_read", n,
-				"current_track", currentTrack)
-		}
-	} else {
-		status.Status = "offline"
-		status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		s.logger.Warn("Route status check failed", 
-			"route", route,
-			"status_code", resp.StatusCode)
-	}
-
-	return status
 }

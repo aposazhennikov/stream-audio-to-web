@@ -1,4 +1,3 @@
-
 package unit_test
 
 import (
@@ -9,10 +8,8 @@ import (
 	"time"
 
 	"github.com/aposazhennikov/stream-audio-to-web/playlist"
-	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 )
-
 
 // Creating different audio file types for testing.
 func createTestFiles(_ *testing.T, dir string) error {

@@ -9,9 +9,7 @@ import (
 	"time"
 
 	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
-	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
-
 
 // Синглтон для тестового HTTP сервера.
 
