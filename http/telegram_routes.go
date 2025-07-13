@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/stream-audio-to-web/telegram"
+	"github.com/aposazhennikov/stream-audio-to-web/telegram"
 )
 
 // getTimeInTimezone returns current time in the configured timezone

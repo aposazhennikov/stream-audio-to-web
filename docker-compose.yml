@@ -18,6 +18,7 @@ services:
       #- /home/troshin:/app/troshin
       #- /home/test_audio:/app/test_audio
       - ./relay_data:/app/relay_data:rw
+      - ./telegram_alerts.json:/app/telegram_alerts.json:rw
     env_file:
       - .env
     environment:
@@ -35,7 +36,8 @@ services:
       - SENTRY_DSN=${SENTRY_DSN:-https://f5dbf565496b75215d81c2286cf0dc9c@o4508953992101888.ingest.de.sentry.io/4509243323908176}
       - RELAY=${RELAY:-true}
       - RELAY_CONFIG_FILE=${RELAY_CONFIG_FILE:-/app/relay_data/relay_list.json}
-      
+      - TG_ALERT=${TG_ALERT:-false}
+      - TG_ALERT_CONFIG_FILE=${TG_ALERT_CONFIG_FILE:-/app/telegram_alerts.json}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s

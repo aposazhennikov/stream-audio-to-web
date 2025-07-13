@@ -25,6 +25,7 @@ import (
 	"github.com/aposazhennikov/stream-audio-to-web/radio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+	"github.com/aposazhennikov/stream-audio-to-web/telegram"
 
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
@@ -69,6 +70,8 @@ type Config struct {
 	NormalizeSampleMs      int                        // Duration of each analysis window in milliseconds
 	EnableRelay            bool                       // Enable relay functionality
 	RelayConfigFile        string                     // Path to relay configuration file
+	EnableTelegramAlerts   bool                       // Enable telegram alerts functionality
+	TelegramAlertsConfig   string                     // Path to telegram alerts configuration file
 	SentryDSN              string                     // DSN для Sentry
 	SentryHelper           *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
@@ -373,6 +376,15 @@ func initializeComponents(
 		logger.Info("Relay functionality is disabled")
 	}
 
+	// Create telegram manager (always create, but may be inactive).
+	logger.Debug("Initializing telegram manager...")
+	_ = initializeTelegramManager(logger, config, server, relayManager)
+	if config.EnableTelegramAlerts {
+		logger.Debug("Telegram alerts enabled and active")
+	} else {
+		logger.Info("Telegram alerts functionality is disabled (inactive)")
+	}
+
 	// Create minimal dummy streams for /healthz to immediately find at least one route.
 	logger.Debug("Creating initial dummy streams...")
 	createInitialDummyStreams(logger, server)
@@ -398,6 +410,45 @@ func initializeRelayManager(logger *slog.Logger, config *Config, server *httpSer
 	logger.Info("Relay manager initialized and set for HTTP server")
 
 	return relayManager
+}
+
+// initializeTelegramManager creates and initializes the telegram manager.
+func initializeTelegramManager(logger *slog.Logger, config *Config, server *httpServer.Server, relayManager *relay.Manager) *telegram.Manager {
+	logger.Info("Initializing telegram manager", "config_file", config.TelegramAlertsConfig)
+	telegramManager := telegram.NewManager(config.TelegramAlertsConfig, logger)
+
+	// Load configuration from file.
+	if err := telegramManager.LoadConfig(); err != nil {
+		logger.Error("Failed to load telegram config", "error", err)
+		// Continue with default config
+	}
+
+	// Set telegram manager for HTTP server.
+	server.SetTelegramManager(telegramManager)
+	server.SetTelegramFunctionalityEnabled(config.EnableTelegramAlerts)
+
+	// Setup route check function for main streams.
+	telegramManager.SetRouteCheckFunc(func(route string) bool {
+		return server.IsStreamAvailable(route)
+	})
+
+	// Setup relay check function if relay manager is available.
+	if relayManager != nil {
+		telegramManager.SetRelayCheckFunc(func(relayIndex string) bool {
+			return relayManager.IsStreamAvailable(relayIndex)
+		})
+	}
+
+	// CRITICAL: Setup telegram routes AFTER telegram manager is set
+	server.SetupTelegramRoutes()
+	
+	// Start monitoring if alerts are enabled
+	if config.EnableTelegramAlerts && telegramManager.IsEnabled() {
+		telegramManager.Start()
+	}
+
+	logger.Info("Telegram manager initialized and set for HTTP server")
+	return telegramManager
 }
 
 // createInitialDummyStreams creates placeholder streams for fast health checks.
@@ -949,6 +1000,7 @@ func loadConfigFromEnv(config *Config) {
 	loadGenericConfig(config)
 	loadNormalizationConfig(config)
 	loadRelayConfig(config)
+	loadTelegramConfig(config)
 	loadStreamConfig(config)
 
 	// Load directory routes from environment.
@@ -1019,6 +1071,27 @@ func loadRelayConfig(config *Config) {
 
 	if relayConfigFile := os.Getenv("RELAY_CONFIG_FILE"); relayConfigFile != "" {
 		config.RelayConfigFile = relayConfigFile
+	}
+}
+
+// loadTelegramConfig загружает параметры телеграм-алертов из переменных окружения.
+func loadTelegramConfig(config *Config) {
+	// Проверяем переменную TG_ALERT для включения/выключения telegram alerts функциональности
+	if telegramAlertsEnabledStr := os.Getenv("TG_ALERT"); telegramAlertsEnabledStr != "" {
+		config.EnableTelegramAlerts = strings.ToLower(telegramAlertsEnabledStr) == strTrue
+	}
+
+	// Для обратной совместимости также проверяем старое имя переменной TG_ALERTS
+	if telegramAlertsEnabledStr := os.Getenv("TG_ALERTS"); telegramAlertsEnabledStr != "" && os.Getenv("TG_ALERT") == "" {
+		config.EnableTelegramAlerts = strings.ToLower(telegramAlertsEnabledStr) == strTrue
+	}
+
+	// Путь к файлу конфигурации телеграм-алертов
+	if telegramAlertsConfigFile := os.Getenv("TG_ALERT_CONFIG_FILE"); telegramAlertsConfigFile != "" {
+		config.TelegramAlertsConfig = telegramAlertsConfigFile
+	} else {
+		// Значение по умолчанию
+		config.TelegramAlertsConfig = "./telegram_alerts.json"
 	}
 }
 

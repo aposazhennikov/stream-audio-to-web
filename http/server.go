@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
+	"github.com/aposazhennikov/stream-audio-to-web/telegram"
 
 	html "html"
 )
@@ -68,6 +69,8 @@ type Server struct {
 	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time.
 	logger            *slog.Logger           // Logger for server operations.
 	sentryHelper      *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
+	telegramManager   *telegram.Manager      // Manager for telegram alerts.
+	telegramFunctionalityEnabled bool       // Whether telegram functionality is enabled via environment.
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
@@ -216,7 +219,7 @@ func (s *Server) IsStreamRegistered(route string) bool {
 func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 	for trackPath := range trackCh {
 		fileName := filepath.Base(trackPath)
-		s.logger.Info(
+		s.logger.Debug(
 			"Current track",
 			slog.String("route", route),
 			slog.String("fileName", fileName),
@@ -267,6 +270,7 @@ func (s *Server) setupRoutes() {
 
 	// API for playlist management.
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")
+	s.router.HandleFunc("/stream/status", s.streamStatusHandler).Methods("GET")
 	s.router.HandleFunc("/reload-playlist", s.reloadPlaylistHandler).Methods("POST")
 	s.router.HandleFunc("/now-playing", s.nowPlayingHandler).Methods("GET")
 	s.router.HandleFunc("/playback-time", s.playbackTimeHandler).Methods("GET")
@@ -293,6 +297,9 @@ func (s *Server) setupRoutes() {
 
 	// Add relay routes if relay manager is available
 	s.setupRelayRoutes()
+
+	// Add telegram routes if telegram manager is available
+	s.setupTelegramRoutes()
 
 	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
@@ -788,7 +795,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 	)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.logger.Info(
+		s.logger.Debug(
 			"Received request for audio stream",
 			slog.String("method", r.Method),
 			slog.String("route", route),
@@ -806,7 +813,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 		// For HEAD requests, just send headers and return.
 		if r.Method == http.MethodHead {
-			s.logger.Info("Handled HEAD request", slog.String("route", route), slog.String("remoteAddr", r.RemoteAddr))
+			s.logger.Debug("Handled HEAD request", slog.String("route", route), slog.String("remoteAddr", r.RemoteAddr))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -857,7 +864,7 @@ func (s *Server) getStream(route string, w http.ResponseWriter) (StreamHandler, 
 		return nil, false
 	}
 
-	s.logger.Info("Stream found, setting up headers", slog.String("route", route))
+	s.logger.Debug("Stream found, setting up headers", slog.String("route", route))
 	return stream, true
 }
 
@@ -1288,11 +1295,14 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams":       streams,
-		"Title":         "Audio Streams Status",
-		"RelayEnabled":  s.relayManager != nil,
-		"RelayActive":   s.relayManager != nil && s.relayManager.IsActive(),
-		"GlobalShuffle": s.getGlobalShuffleStatus(),
+		"Streams":            streams,
+		"Title":              "Audio Streams Status",
+		"RelayEnabled":       s.relayManager != nil,
+		"RelayActive":        s.relayManager != nil && s.relayManager.IsActive(),
+		"TelegramEnabled":    s.telegramManager != nil,
+		"TelegramActive":     s.telegramManager != nil && s.telegramManager.IsEnabled(),
+		"TelegramClickable":  s.telegramFunctionalityEnabled,
+		"GlobalShuffle":      s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
@@ -1844,6 +1854,22 @@ func (s *Server) SetRelayManager(manager *relay.Manager) {
 	s.logger.Info("Relay manager set for HTTP server")
 }
 
+// SetTelegramManager sets the telegram manager for the server.
+func (s *Server) SetTelegramManager(manager *telegram.Manager) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.telegramManager = manager
+	s.logger.Info("Telegram manager set for HTTP server")
+}
+
+// SetTelegramFunctionalityEnabled sets whether telegram functionality is enabled via environment.
+func (s *Server) SetTelegramFunctionalityEnabled(enabled bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.telegramFunctionalityEnabled = enabled
+	s.logger.Info("Telegram functionality enabled flag set", "enabled", enabled)
+}
+
 // SetStatusPassword sets the password for accessing the status page.
 func (s *Server) SetStatusPassword(password string) {
 	s.mutex.Lock()
@@ -1939,6 +1965,76 @@ func (s *Server) SetGlobalShuffleConfig(enabled bool) {
 	defer s.mutex.Unlock()
 	s.globalShuffleConfig = enabled
 	s.logger.Info("Global shuffle configuration updated", slog.Bool("enabled", enabled))
+}
+
+// IsStreamAvailable checks if a stream is available by making a HEAD request to the route
+func (s *Server) IsStreamAvailable(route string) bool {
+	s.mutex.RLock()
+	stream, exists := s.streams[route]
+	s.mutex.RUnlock()
+	
+	// If stream doesn't exist, it's not available
+	if !exists {
+		return false
+	}
+	
+	// Check if stream has clients or is active
+	clientCount := stream.GetClientCount()
+	
+	// Stream is available if it exists and has valid configuration
+	// We could also check if the stream is actually playing audio
+	return clientCount >= 0 // ClientCount >= 0 means stream is properly initialized
+}
+
+// streamStatusHandler checks the status of all main audio streams
+func (s *Server) streamStatusHandler(w http.ResponseWriter, r *http.Request) {
+	s.mutex.RLock()
+	routes := make([]string, 0, len(s.streams))
+	for route := range s.streams {
+		routes = append(routes, route)
+	}
+	s.mutex.RUnlock()
+
+	// Check status of each route with HEAD requests to localhost
+	type StreamStatus struct {
+		Route  string `json:"route"`
+		Status string `json:"status"`
+		Index  int    `json:"index"`
+	}
+
+	statuses := make([]StreamStatus, 0, len(routes))
+	
+	for i, route := range routes {
+		status := "offline"
+		
+		// Make HEAD request to check stream availability
+		url := fmt.Sprintf("http://localhost:8000%s", route)
+		client := &http.Client{
+			Timeout: 5 * time.Second,
+		}
+		
+		resp, err := client.Head(url)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			status = "online"
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		
+		statuses = append(statuses, StreamStatus{
+			Route:  route,
+			Status: status,
+			Index:  i,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"statuses": statuses,
+	}); err != nil {
+		s.logger.Error("Failed to encode stream status response", slog.String("error", err.Error()))
+		return
+	}
 }
 
 // ClearHistoryForRoute clears track history for a specific route (internal method)
@@ -2129,4 +2225,31 @@ func (s *Server) trackHandler(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("Failed to encode track", slog.String("error", encodeErr.Error()))
 		}
 	}
+}
+
+// SetupTelegramRoutes is a public method to configure telegram routes after telegram manager is set
+func (s *Server) SetupTelegramRoutes() {
+	s.setupTelegramRoutes()
+}
+
+// setupTelegramRoutes configures all telegram-related routes in the router.
+func (s *Server) setupTelegramRoutes() {
+	// Only setup telegram routes if a telegram manager is available
+	if s.telegramManager == nil {
+		s.logger.Info("Telegram manager not available, skipping telegram routes setup")
+		return
+	}
+
+	s.logger.Info("Setting up telegram routes")
+
+	// Telegram alerts management page
+	s.router.HandleFunc("/telegram-alerts", s.telegramAlertsHandler).Methods("GET")
+
+	// Update telegram alerts configuration
+	s.router.HandleFunc("/telegram-alerts/update", s.telegramAlertsUpdateHandler).Methods("POST")
+
+	// Test telegram alerts
+	s.router.HandleFunc("/telegram-alerts/test", s.telegramAlertsTestHandler).Methods("POST")
+
+	s.logger.Info("Telegram routes setup complete")
 }

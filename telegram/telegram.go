@@ -208,7 +208,7 @@ func (m *Manager) Start() {
 	
 	m.running = true
 	go m.monitoringLoop()
-	m.logger.Error("TELEGRAM ALERTS: Monitoring started")
+	m.logger.Info("TELEGRAM ALERTS: Monitoring started")
 }
 
 // Stop stops the monitoring loop
@@ -247,7 +247,7 @@ func (m *Manager) checkStreams() {
 	config := m.GetConfig()
 	
 	// Log check start
-	m.logger.Error("TELEGRAM ALERTS: Starting stream check cycle", 
+	m.logger.Debug("TELEGRAM ALERTS: Starting stream check cycle", 
 		"routes", len(config.Routes),
 		"relay_routes", len(config.RelayRoutes))
 	
@@ -262,7 +262,7 @@ func (m *Manager) checkStreams() {
 			isAvailable = m.routeCheckFunc(route)
 		}
 		
-		m.logger.Error("TELEGRAM ALERTS: Route check result", 
+		m.logger.Debug("TELEGRAM ALERTS: Route check result", 
 			"route", route, 
 			"available", isAvailable)
 		
@@ -280,7 +280,7 @@ func (m *Manager) checkStreams() {
 			isAvailable = m.relayCheckFunc(relayIndex)
 		}
 		
-		m.logger.Error("TELEGRAM ALERTS: Relay check result", 
+		m.logger.Debug("TELEGRAM ALERTS: Relay check result", 
 			"relay", relayIndex, 
 			"available", isAvailable)
 		
@@ -319,7 +319,7 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 	if wasAvailable && !isAvailable {
 		// Stream went down
 		status.DownSince = &now
-		m.logger.Error("TELEGRAM ALERTS: Stream went DOWN", 
+		m.logger.Info("TELEGRAM ALERTS: Stream went DOWN", 
 			"route", route, 
 			"is_relay", isRelay)
 		m.sendAlert(route, false, nil, isRelay)
@@ -331,7 +331,7 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 			downtime = &dt
 		}
 		status.DownSince = nil
-		m.logger.Error("TELEGRAM ALERTS: Stream came UP", 
+		m.logger.Info("TELEGRAM ALERTS: Stream came UP", 
 			"route", route, 
 			"is_relay", isRelay, 
 			"downtime", downtime)
@@ -343,7 +343,7 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, isRelay bool) {
 	config := m.GetConfig()
 	
-	m.logger.Error("TELEGRAM ALERTS: Attempting to send alert", 
+	m.logger.Debug("TELEGRAM ALERTS: Attempting to send alert", 
 		"route", route, 
 		"is_up", isUp, 
 		"is_relay", isRelay,
@@ -353,7 +353,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 	
 	// Check if we can send alerts
 	if !config.Enabled || config.BotToken == "" || config.ChatID == "" {
-		m.logger.Error("TELEGRAM ALERTS: Cannot send alert - missing configuration", 
+		m.logger.Debug("TELEGRAM ALERTS: Cannot send alert - missing configuration", 
 			"enabled", config.Enabled,
 			"has_bot_token", config.BotToken != "",
 			"has_chat_id", config.ChatID != "")
@@ -418,7 +418,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 			"route", route, 
 			"error", err.Error())
 	} else {
-		m.logger.Error("TELEGRAM ALERTS: Alert sent successfully", 
+		m.logger.Info("TELEGRAM ALERTS: Alert sent successfully", 
 			"route", route, 
 			"is_up", isUp)
 		

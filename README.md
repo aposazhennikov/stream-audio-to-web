@@ -140,6 +140,10 @@ SENTRY_DSN=https://your-sentry-dsn
 # Relay Configuration
 RELAY=true
 RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
+
+# Telegram Alerts Configuration
+TG_ALERT=false
+TG_ALERT_CONFIG_FILE=/app/telegram_alerts.json
 ```
 
 The `.env` file is automatically loaded by docker-compose and all variables are logged at application startup.
@@ -189,6 +193,13 @@ All environment variables with their defaults and descriptions:
 |---------------------|-------------|---------|---------|
 | `RELAY` | Enable relay functionality | `true` | `false` |
 | `RELAY_CONFIG_FILE` | Relay configuration file path | `/app/relay_data/relay_list.json` | `/custom/path/relays.json` |
+
+#### Telegram Alerts Configuration
+
+| Environment Variable | Description | Default | Example |
+|---------------------|-------------|---------|---------|
+| `TG_ALERT` | Enable telegram alerts functionality | `false` | `true` |
+| `TG_ALERT_CONFIG_FILE` | Telegram alerts config file path | `/app/telegram_alerts.json` | `/custom/path/tg_alerts.json` |
 
 ## 📁 Volume Mounting
 
@@ -351,6 +362,14 @@ The built-in web interface provides:
 - Real-time stream status checking
 - Direct streaming from relay sources
 
+### Telegram Alerts
+- Real-time monitoring of audio streams and relay sources
+- Instant notifications when streams go offline or come back online
+- Beautiful formatted messages with emojis and status indicators
+- Configurable monitoring for specific routes
+- Web-based configuration interface
+- Downtime tracking with precise timestamps
+
 ## 🔀 Shuffle Mode
 
 Flexible shuffle configuration with multiple levels:
@@ -398,6 +417,77 @@ Stream audio from external HTTP/HTTPS sources:
 ### Access Relay Streams
 - Management: http://localhost:8000/relay-management
 - Stream: http://localhost:8000/relay/stream/0 (index from relay list)
+
+## 📱 Telegram Alerts
+
+Real-time monitoring and notification system for audio stream availability:
+
+### Features
+- **🚨 Instant Notifications** - Get alerted when streams go offline or come back online
+- **🎯 Selective Monitoring** - Choose which routes to monitor (main streams and relay sources)
+- **💬 Beautiful Messages** - Rich formatted messages with emojis and precise timestamps
+- **⏱️ Downtime Tracking** - Shows exactly how long streams were unavailable
+- **🌐 Web Interface** - Easy configuration through browser interface
+- **🔄 Automatic Recovery** - Detects when streams come back online
+
+### Configuration
+
+Enable telegram alerts in docker-compose.yml:
+```yaml
+environment:
+  - TG_ALERT=true
+  - TG_ALERT_CONFIG_FILE=/app/telegram_alerts.json
+volumes:
+  - ./telegram_alerts.json:/app/telegram_alerts.json:rw
+```
+
+### Web Interface Access
+- Status page shows "📱 Telegram Alerts Active/Inactive" 
+- Configuration page: http://localhost:8000/telegram-alerts
+- Same authentication as status page
+
+### Message Format
+When a stream goes offline:
+```
+🚨 Stream Alert 🚨
+
+Route: /floyd
+Status: ❌ OFFLINE
+Time: 2025-07-13 21:30:45 UTC
+```
+
+When a stream comes back online:
+```
+✅ Stream Recovered ✅
+
+Route: /floyd  
+Status: ✅ ONLINE
+Downtime: 2m 15s
+Time: 2025-07-13 21:32:60 UTC
+```
+
+### Setup Process
+1. Enable `TG_ALERT=true` in docker-compose.yml
+2. Navigate to /telegram-alerts page
+3. Enter your Telegram bot token
+4. Enter your chat ID
+5. Select routes to monitor
+6. Save configuration
+7. Send test message to verify setup
+
+### Bot Token Setup
+1. Message @BotFather on Telegram
+2. Create new bot with /newbot command
+3. Copy the bot token to configuration
+4. Add bot to your chat or get your user ID
+5. Use chat ID in configuration
+
+### Monitoring Logic
+- Checks stream availability every second using HTTP HEAD requests
+- Prevents spam by tracking alert state per stream
+- Only sends alerts on status changes (online ⟷ offline)
+- Measures exact downtime duration
+- Handles configuration errors gracefully
 
 ## 🎨 User Interface
 

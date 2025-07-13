@@ -24,8 +24,25 @@
                 <a href="/relay-management" class="relay-link">
                     <span class="relay-icon">🔄</span>
                     Relay Management
-                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
+                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{else}}<span class="relay-inactive-badge">Inactive</span>{{end}}
                 </a>
+            </div>
+            {{end}}
+            {{if .TelegramEnabled}}
+            <div class="telegram-alerts-link">
+                {{if .TelegramClickable}}
+                <a href="/telegram-alerts" class="telegram-link">
+                    <span class="telegram-icon">📱</span>
+                    Telegram Alerts
+                    {{if .TelegramActive}}<span class="telegram-active-badge">Active</span>{{else}}<span class="telegram-inactive-badge">Inactive</span>{{end}}
+                </a>
+                {{else}}
+                <span class="telegram-link disabled">
+                    <span class="telegram-icon">📱</span>
+                    Telegram Alerts
+                    <span class="telegram-inactive-badge">Inactive</span>
+                </span>
+                {{end}}
             </div>
             {{end}}
         </div>
@@ -33,7 +50,13 @@
     <div class="container">
         {{range .Streams}}
         <div class="stream-container">
-            <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
+            <div class="stream-header">
+                <a href="{{.Route}}" target="_blank">{{.DisplayName}}</a>
+                <span class="stream-status-indicator checking" id="stream-status-{{.RouteID}}">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Checking...</span>
+                </span>
+            </div>
             <div class="status-info start-time">Started: {{.StartTime}}</div>
             <div class="status-info current-track">
                 <div class="track-info-container">
@@ -218,6 +241,78 @@
             font-size: 0.8rem;
         }
 
+        .relay-inactive-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .telegram-alerts-link {
+            display: inline-block;
+            margin-left: 1rem;
+        }
+
+        .telegram-link {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .telegram-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background-color: var(--color-primary);
+            color: white;
+        }
+
+        .telegram-link.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .telegram-link.disabled:hover {
+            transform: none;
+            box-shadow: var(--box-shadow);
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+        }
+
+        .telegram-icon {
+            margin-right: 0.5rem;
+            font-size: 1.1rem;
+        }
+
+        .telegram-active-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(39, 174, 96, 0.2);
+            color: #27ae60;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .telegram-inactive-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
+        }
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -253,6 +348,7 @@
         .stream-header {
             display: flex;
             align-items: center;
+            justify-content: space-between;
             font-size: 1.5rem;
             font-weight: 600;
             color: var(--color-secondary);
@@ -275,6 +371,57 @@
 
         .stream-header a:hover {
             color: var(--color-primary);
+        }
+
+        .stream-status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.3rem 0.7rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .stream-status-indicator.online {
+            background-color: rgba(39, 174, 96, 0.1);
+            color: #27ae60;
+        }
+
+        .stream-status-indicator.online .status-dot {
+            background-color: #27ae60;
+        }
+
+        .stream-status-indicator.offline {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: #e74c3c;
+        }
+
+        .stream-status-indicator.offline .status-dot {
+            background-color: #e74c3c;
+        }
+
+        .stream-status-indicator.checking {
+            background-color: rgba(241, 196, 15, 0.1);
+            color: #f39c12;
+        }
+
+        .stream-status-indicator.checking .status-dot {
+            background-color: #f39c12;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
         .status-info {
@@ -1035,10 +1182,63 @@
             }
         });
         
+        // Stream status checking functions
+        function checkStreamStatuses() {
+            console.log('Checking stream statuses...');
+            
+            fetch('/stream/status')
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data && data.statuses) {
+                        updateStreamStatuses(data.statuses);
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Error checking stream statuses:', error);
+                });
+        }
+
+        function updateStreamStatuses(statuses) {
+            console.log('Updating stream statuses:', statuses.length);
+            
+            statuses.forEach(function(status) {
+                const routeId = status.route.replace('/', '');
+                const element = document.getElementById('stream-status-' + routeId);
+                
+                if (element) {
+                    const statusClass = status.status;
+                    const statusText = status.status === 'online' ? 'Online' : 'Offline';
+                    
+                    // Remove all status classes
+                    element.classList.remove('online', 'offline', 'checking');
+                    // Add current status class
+                    element.classList.add(statusClass);
+                    
+                    // Update status text
+                    const textElement = element.querySelector('.status-text');
+                    if (textElement) {
+                        textElement.textContent = statusText;
+                    }
+                }
+            });
+        }
+
         // Initialization on page load.
         window.addEventListener('DOMContentLoaded', () => {
             // Initial track and time information loading.
             updateAllTrackInfo();
+            
+            // Start stream status checking
+            setTimeout(function() {
+                checkStreamStatuses();
+                // Check stream status every 30 seconds
+                setInterval(checkStreamStatuses, 30000);
+            }, 1000);
         });
     </script>
 </body>

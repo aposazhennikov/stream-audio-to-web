@@ -685,7 +685,7 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 	clientChannel := make(chan []byte, defaultClientChannelBuffer)
 	s.clientChannels[clientID] = clientChannel
 
-	s.logger.Info(
+	s.logger.Debug(
 		"Client connected",
 		"clientID", clientID,
 		"totalClients", int(atomic.LoadInt32(&s.clientCounter)),
@@ -698,7 +698,7 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 		// Use append to create a new copy for the client - one allocation instead of two.
 		dataCopy := append([]byte(nil), s.lastChunk...)
 
-		s.logger.Info(
+		s.logger.Debug(
 			"DIAGNOSTICS: Sending last buffer to new client",
 			"bytes", len(dataCopy),
 			"clientID", clientID,
@@ -728,7 +728,7 @@ func (s *Streamer) RemoveClient(clientID int) {
 		close(channel)
 		delete(s.clientChannels, clientID)
 		atomic.AddInt32(&s.clientCounter, -1)
-		s.logger.Info(
+		s.logger.Debug(
 			"Client disconnected",
 			"clientID", clientID,
 			"totalClients", int(atomic.LoadInt32(&s.clientCounter)),
@@ -759,7 +759,7 @@ func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
 	// Method 1: Try ffprobe (most accurate)
 	duration := s.calculateDurationWithFFProbe(trackPath)
 	if duration > 0 {
-		s.logger.Info("MP3 duration calculated with ffprobe", 
+		s.logger.Debug("MP3 duration calculated with ffprobe", 
 			"trackPath", trackPath, 
 			"duration", duration.String())
 		return duration
@@ -839,7 +839,7 @@ func (s *Streamer) calculateDurationBySimpleEstimation(trackPath string) time.Du
 		estimatedDuration = 3 * time.Hour
 	}
 	
-	s.logger.Info("MP3 duration calculated by simple estimation",
+	s.logger.Debug("MP3 duration calculated by simple estimation",
 		"trackPath", trackPath,
 		"duration", estimatedDuration.String(),
 		"fileSize", fileSize,
@@ -872,9 +872,9 @@ func (s *Streamer) broadcastToClients(data []byte) {
 // logClientStatusIfNeeded logs client status information periodically.
 func (s *Streamer) logClientStatusIfNeeded(clientCount, dataSize int) {
 	// Log only when client count changes (meaningful events) or very rarely for status.
-	if clientCount > 0 && (clientCount != s.lastClientCount || time.Since(s.lastLogTime) > 5*time.Minute) {
+	if clientCount > 0 && (clientCount != s.lastClientCount || time.Since(s.lastLogTime) > 10*time.Minute) {
 		if clientCount != s.lastClientCount {
-			s.logger.Info("Client streaming activity", 
+			s.logger.Debug("Client streaming activity", 
 				"clients", clientCount,
 				"previousClients", s.lastClientCount,
 				"bytes", dataSize,

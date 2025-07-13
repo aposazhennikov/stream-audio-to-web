@@ -486,3 +486,16 @@ func (rm *Manager) CheckAllStreamsStatus() []StreamStatus {
 
 	return statuses
 }
+
+// IsStreamAvailable checks if a stream is available by checking its status
+func (rm *Manager) IsStreamAvailable(relayIndex string) bool {
+	// Convert string index to int
+	index := 0
+	if _, err := fmt.Sscanf(relayIndex, "%d", &index); err != nil {
+		return false
+	}
+	
+	// Check if the stream is available
+	status := rm.CheckStreamStatus(index)
+	return status.Status == "online"
+}
