@@ -26,6 +26,7 @@ import (
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 
+
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 )
@@ -109,7 +110,7 @@ func main() {
 
 	// Create and initialize components.
 	logger.Info("STEP 1: Starting component initialization...")
-	server, stationManager, relayManager := initializeComponents(logger, config)
+	server, stationManager, relayManager, telegramManager := initializeComponents(logger, config)
 	logger.Info("STEP 2: Component initialization completed")
 
 	// Create and start HTTP server.
@@ -142,7 +143,7 @@ func main() {
 	sig := waitForShutdownSignal()
 
 	// Handle the signal.
-	handleShutdownSignal(logger, sig, server, stationManager, httpSrv)
+	handleShutdownSignal(logger, sig, server, stationManager, httpSrv, telegramManager)
 
 	// Проверяем и выводим состояние relayManager при наличии.
 	if relayManager != nil {
@@ -290,7 +291,7 @@ func logConfiguration(logger *slog.Logger, config *Config) {
 func initializeComponents(
 	logger *slog.Logger,
 	config *Config,
-) (*httpServer.Server, *radio.StationManager, *relay.Manager) {
+) (*httpServer.Server, *radio.StationManager, *relay.Manager, *telegram.Manager) {
 	// Create HTTP server.
 	logger.Info("Creating HTTP server...")
 	server := httpServer.NewServer(config.MaxClients, logger, config.SentryHelper)
@@ -346,13 +347,24 @@ func initializeComponents(
 		logger.Info("Relay functionality is disabled")
 	}
 
+	// Create telegram manager if needed.
+	logger.Info("Checking telegram alerts configuration...")
+	var telegramManager *telegram.Manager
+	if os.Getenv("TG_ALERT") == "true" {
+		logger.Info("Telegram alerts enabled, initializing telegram manager...")
+		telegramManager = initializeTelegramManager(logger, server, relayManager)
+		logger.Info("Telegram manager initialized")
+	} else {
+		logger.Info("Telegram alerts functionality is disabled")
+	}
+
 	// Create minimal dummy streams for /healthz to immediately find at least one route.
 	logger.Info("Creating initial dummy streams...")
 	createInitialDummyStreams(logger, server)
 	logger.Info("Initial dummy streams created")
 
 	logger.Info("Component initialization completed successfully")
-	return server, stationManager, relayManager
+	return server, stationManager, relayManager, telegramManager
 }
 
 // initializeRelayManager creates and initializes the relay manager.
@@ -559,6 +571,7 @@ func handleShutdownSignal(
 	server *httpServer.Server,
 	stationManager *radio.StationManager,
 	httpSrv *http.Server,
+	telegramManager *telegram.Manager,
 ) {
 	logger.Info(
 		"Signal received",
@@ -570,6 +583,12 @@ func handleShutdownSignal(
 	if sig == syscall.SIGHUP {
 		reloadAllPlaylists(logger, server)
 		return // Continue operation
+	}
+
+	// Stop telegram manager if it's running.
+	if telegramManager != nil {
+		telegramManager.Stop()
+		logger.Info("Telegram manager stopped")
 	}
 
 	// Stop all radio stations.
@@ -1416,4 +1435,172 @@ func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int
 		slog.Int("targetBitrate", targetBitrate))
 
 	return true
+}
+
+// initializeTelegramManager creates and initializes the telegram manager.
+func initializeTelegramManager(logger *slog.Logger, server *httpServer.Server, relayManager *relay.Manager) *telegram.Manager {
+	configFile := os.Getenv("TG_ALERT_CONFIG_FILE")
+	if configFile == "" {
+		configFile = "/app/telegram_alerts/telegram_alerts.json"
+	}
+	
+	logger.Info("Initializing telegram manager", "config_file", configFile)
+	telegramManager := telegram.NewManager(configFile, logger)
+	
+	// Load configuration
+	if err := telegramManager.LoadConfig(); err != nil {
+		logger.Error("Failed to load telegram config", "error", err.Error())
+		// Continue anyway - will create default config
+	}
+	
+	// Set telegram manager for HTTP server
+	server.SetTelegramManager(telegramManager)
+	
+	// Set up check functions
+	telegramManager.SetRouteCheckFunc(func(route string) bool {
+		return checkRouteAvailability(logger, route)
+	})
+	
+	if relayManager != nil {
+		telegramManager.SetRelayCheckFunc(func(relayIndex string) bool {
+			return checkRelayAvailability(logger, relayManager, relayIndex)
+		})
+	}
+	
+	// Start monitoring if enabled
+	if telegramManager.IsEnabled() {
+		telegramManager.Start()
+		logger.Info("Telegram alerts monitoring started")
+	}
+	
+	logger.Info("Telegram manager initialized and set for HTTP server")
+	return telegramManager
+}
+
+// checkRouteAvailability checks if a main route is available
+func checkRouteAvailability(logger *slog.Logger, route string) bool {
+	// First check if we can get current track info for this route
+	trackInfoURL := fmt.Sprintf("http://localhost:8000/now-playing?route=%s", strings.TrimPrefix(route, "/"))
+	trackClient := &http.Client{Timeout: 5 * time.Second}
+	
+	trackResp, err := trackClient.Get(trackInfoURL)
+	if err == nil {
+		defer trackResp.Body.Close()
+		if trackResp.StatusCode == 200 {
+			var trackData map[string]string
+			if json.NewDecoder(trackResp.Body).Decode(&trackData) == nil {
+				if track, exists := trackData["track"]; exists && track != "" && track != "dummy.mp3" {
+					logger.Debug("Route has valid current track", "route", route, "track", track)
+					// Track exists, now check HTTP stream
+				} else {
+					logger.Debug("Route has no valid current track", "route", route, "track", track)
+					return false
+				}
+			}
+		}
+	}
+	
+	// Make HTTP request to the route
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := fmt.Sprintf("http://localhost:8000%s", route)
+	
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Debug("Failed to create request for route check", "route", route, "error", err.Error())
+		return false
+	}
+	
+	// Set headers to mimic a real audio player
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "audio/mpeg, audio/*, */*")
+	req.Header.Set("Range", "bytes=0-1023") // Request only first 1KB to test availability
+	req.Header.Set("Connection", "close")
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Debug("Route check failed", "route", route, "error", err.Error())
+		return false
+	}
+	defer resp.Body.Close()
+	
+	// Check response status and content type
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		contentType := resp.Header.Get("Content-Type")
+		
+		// Check if content type looks like audio
+		if strings.Contains(contentType, "audio") || 
+		   strings.Contains(contentType, "mpeg") || 
+		   strings.Contains(contentType, "mp3") ||
+		   strings.Contains(contentType, "ogg") ||
+		   strings.Contains(contentType, "application/octet-stream") ||
+		   contentType == "" { // Some streams don't set content-type
+			
+			// Additional check: try to read some audio data
+			buffer := make([]byte, 1024)
+			n, readErr := resp.Body.Read(buffer)
+			
+			if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+				logger.Debug("Route returns no audio data", "route", route, "read_error", readErr.Error())
+				return false
+			}
+			
+			logger.Debug("Route check successful", "route", route, "status_code", resp.StatusCode, "content_type", contentType, "bytes_read", n)
+			return true
+		}
+		
+		logger.Debug("Route has invalid content type", "route", route, "content_type", contentType)
+		return false
+	} else if resp.StatusCode == 206 {
+		// Partial content is also OK for range requests
+		// Additional check: try to read some audio data
+		buffer := make([]byte, 1024)
+		n, readErr := resp.Body.Read(buffer)
+		
+		if readErr != nil && readErr.Error() != "EOF" && n == 0 {
+			logger.Debug("Route returns no audio data (206)", "route", route, "read_error", readErr.Error())
+			return false
+		}
+		
+		logger.Debug("Route check successful (partial content)", "route", route, "status_code", resp.StatusCode, "bytes_read", n)
+		return true
+	}
+	
+	logger.Debug("Route check failed", "route", route, "status_code", resp.StatusCode)
+	return false
+}
+
+// checkRelayAvailability checks if a relay stream is available
+func checkRelayAvailability(logger *slog.Logger, relayManager *relay.Manager, relayIndex string) bool {
+	// Get relay list
+	relayList := relayManager.GetLinks()
+	
+	// Parse index
+	idx, err := strconv.Atoi(relayIndex)
+	if err != nil || idx < 0 || idx >= len(relayList) {
+		logger.Debug("Invalid relay index", "index", relayIndex)
+		return false
+	}
+	
+	// Make HTTP request to the relay URL
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := relayList[idx]
+	
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Debug("Failed to create request for relay check", "relay", relayIndex, "url", url, "error", err.Error())
+		return false
+	}
+	
+	// Set Range header to request just a small amount of data
+	req.Header.Set("Range", "bytes=0-1023")
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Debug("Relay check failed", "relay", relayIndex, "url", url, "error", err.Error())
+		return false
+	}
+	defer resp.Body.Close()
+	
+	// Consider 200, 206 (Partial Content), or 416 (Range Not Satisfiable) as success
+	return resp.StatusCode == 200 || resp.StatusCode == 206 || resp.StatusCode == 416
 }

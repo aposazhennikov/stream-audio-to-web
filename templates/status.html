@@ -19,18 +19,40 @@
                     {{if .GlobalShuffle}}Enabled{{else}}Disabled{{end}}
                 </span>
             </div>
-            {{if .RelayEnabled}}
             <div class="relay-management-link">
-                <a href="/relay-management" class="relay-link">
+                {{if .RelayActive}}
+                <a href="/relay-management" class="relay-link active">
                     <span class="relay-icon">🔄</span>
                     Relay Management
-                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{end}}
+                    <span class="relay-active-badge">Active</span>
                 </a>
+                                 {{else}}
+                 <span class="relay-link inactive" title="Set RELAY=true environment variable to enable relay functionality">
+                     <span class="relay-icon">🔄</span>
+                     Relay Management
+                     <span class="relay-inactive-badge">Inactive</span>
+                 </span>
+                 {{end}}
             </div>
-            {{end}}
+            <div class="telegram-alerts-link">
+                {{if .TelegramActive}}
+                <a href="/telegram-alerts" class="telegram-link active">
+                    <span class="telegram-icon">📱</span>
+                    Telegram Alerts
+                    <span class="telegram-active-badge">Active</span>
+                </a>
+                                 {{else}}
+                 <span class="telegram-link inactive" title="Set TG_ALERT=true environment variable to enable telegram alerts functionality">
+                     <span class="telegram-icon">📱</span>
+                     Telegram Alerts
+                     <span class="telegram-inactive-badge">Inactive</span>
+                 </span>
+                 {{end}}
+            </div>
         </div>
     </header>
     <div class="container">
+        <button class="refresh-status-button" onclick="refreshStreamStatus()">Refresh Stream Status</button>
         {{range .Streams}}
         <div class="stream-container">
             <div class="stream-header"><a href="{{.Route}}" target="_blank">{{.DisplayName}}</a></div>
@@ -50,6 +72,9 @@
                 </div>
             </div>
             <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="status-info stream-status">
+                Stream Status: <span class="stream-status-indicator checking" data-route="{{.Route}}">Checking...</span>
+            </div>
             <div class="status-info shuffle-info">
                 Shuffle: <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">
                     {{if .ShuffleEnabled}}Enabled{{else}}Disabled{{end}}
@@ -179,11 +204,11 @@
             color: var(--color-text-secondary);
         }
 
-        .relay-management-link {
+        .relay-management-link, .telegram-alerts-link {
             display: inline-block;
         }
 
-        .relay-link {
+        .relay-link, .telegram-link {
             display: inline-flex;
             align-items: center;
             background-color: var(--color-surface-accent);
@@ -196,23 +221,98 @@
             box-shadow: var(--box-shadow);
         }
 
-        .relay-link:hover {
+        .relay-link.active:hover, .telegram-link.active:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             background-color: var(--color-primary);
             color: white;
         }
 
-        .relay-icon {
+        .relay-link.inactive, .telegram-link.inactive {
+            background-color: rgba(149, 165, 166, 0.1);
+            color: var(--color-text-secondary);
+            cursor: help;
+            opacity: 0.6;
+            position: relative;
+        }
+
+        /* Custom tooltip styles for inactive links */
+        .relay-link.inactive::after, .telegram-link.inactive::after {
+            content: attr(title);
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            z-index: 1000;
+            margin-top: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            max-width: 300px;
+            white-space: normal;
+            word-wrap: break-word;
+        }
+
+        .relay-link.inactive::before, .telegram-link.inactive::before {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-bottom-color: #333;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+            z-index: 1000;
+            margin-top: 3px;
+        }
+
+        .relay-link.inactive:hover::after, .telegram-link.inactive:hover::after,
+        .relay-link.inactive:hover::before, .telegram-link.inactive:hover::before {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Dark theme tooltip adjustments */
+        :root[data-theme="dark"] .relay-link.inactive::after, 
+        :root[data-theme="dark"] .telegram-link.inactive::after {
+            background-color: #555;
+            color: #e0e0e0;
+        }
+
+        :root[data-theme="dark"] .relay-link.inactive::before, 
+        :root[data-theme="dark"] .telegram-link.inactive::before {
+            border-bottom-color: #555;
+        }
+
+        .relay-icon, .telegram-icon {
             margin-right: 0.5rem;
             font-size: 1.1rem;
         }
 
-        .relay-active-badge {
+        .relay-active-badge, .telegram-active-badge {
             display: inline-block;
             margin-left: 0.5rem;
             background-color: rgba(39, 174, 96, 0.2);
             color: #27ae60;
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .relay-inactive-badge, .telegram-inactive-badge {
+            display: inline-block;
+            margin-left: 0.5rem;
+            background-color: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
             padding: 0.2rem 0.5rem;
             border-radius: 0.75rem;
             font-size: 0.8rem;
@@ -337,6 +437,86 @@
         .shuffle-status.disabled {
             background-color: rgba(149, 165, 166, 0.1);
             color: var(--color-text-secondary);
+        }
+
+        /* Stream status styles */
+        .status-info.stream-status:before {
+            content: '📡';
+        }
+
+        .stream-status-indicator {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            margin-left: 0.5rem;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .stream-status-indicator.online {
+            background-color: rgba(46, 204, 113, 0.1);
+            color: #27ae60;
+        }
+
+        .stream-status-indicator.offline {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: var(--color-error);
+        }
+
+        .stream-status-indicator.checking {
+            background-color: rgba(241, 196, 15, 0.1);
+            color: #f39c12;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .refresh-status-button {
+            background-color: var(--color-primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            min-height: 36px;
+        }
+
+        .refresh-status-button:hover {
+            background-color: var(--color-primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .refresh-status-button:active {
+            transform: translateY(0);
+        }
+
+        .refresh-status-button:before {
+            content: '🔄';
+        }
+
+        .refresh-status-button.loading:before {
+            content: '🔄';
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .listeners-count {
@@ -1039,7 +1219,62 @@
         window.addEventListener('DOMContentLoaded', () => {
             // Initial track and time information loading.
             updateAllTrackInfo();
+            // Initial stream status check
+            refreshStreamStatus();
         });
+
+        // NEW FUNCTION: Refresh stream status
+        function refreshStreamStatus() {
+            const refreshButton = document.querySelector('.refresh-status-button');
+            if (refreshButton) {
+                refreshButton.classList.add('loading');
+                refreshButton.disabled = true;
+            }
+
+            // Set all statuses to checking
+            const statusIndicators = document.querySelectorAll('.stream-status-indicator');
+            statusIndicators.forEach(indicator => {
+                indicator.className = 'stream-status-indicator checking';
+                indicator.textContent = 'Checking...';
+            });
+
+            fetch('/routes/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.statuses) {
+                        data.statuses.forEach(status => {
+                            const indicator = document.querySelector(`.stream-status-indicator[data-route="${status.route}"]`);
+                            if (indicator) {
+                                indicator.className = `stream-status-indicator ${status.status}`;
+                                
+                                if (status.status === 'online') {
+                                    indicator.textContent = 'Online';
+                                } else if (status.status === 'offline') {
+                                    indicator.textContent = status.error ? `Offline (${status.error})` : 'Offline';
+                                } else {
+                                    indicator.textContent = 'Checking...';
+                                }
+                            }
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking stream status:', error);
+                    statusIndicators.forEach(indicator => {
+                        indicator.className = 'stream-status-indicator offline';
+                        indicator.textContent = 'Error';
+                    });
+                })
+                .finally(() => {
+                    if (refreshButton) {
+                        refreshButton.classList.remove('loading');
+                        refreshButton.disabled = false;
+                    }
+                });
+        }
+
+        // Auto-refresh stream status every 30 seconds
+        setInterval(refreshStreamStatus, 30000);
     </script>
 </body>
 </html> 
