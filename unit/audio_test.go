@@ -1,6 +1,7 @@
 package unit_test
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,10 +11,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/user/stream-audio-to-web/audio"
-	"github.com/user/stream-audio-to-web/unit/testdata"
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 	"go.uber.org/goleak"
 )
+
 
 // TestMain sets up and tears down tests, including goroutine leak detection.
 func TestMain(m *testing.M) {
@@ -22,8 +25,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		// Ignore our own goroutines that are expected to stay alive after tests.
-		goleak.IgnoreTopFunction("github.com/user/stream-audio-to-web/http.(*Server).trackCurrentTrack"),
-		goleak.IgnoreTopFunction("github.com/user/stream-audio-to-web/playlist.(*Playlist).watchDirectory"),
+		goleak.IgnoreTopFunction("github.com/aposazhennikov/stream-audio-to-web/http.(*Server).trackCurrentTrack"),
+		goleak.IgnoreTopFunction("github.com/aposazhennikov/stream-audio-to-web/playlist.(*Playlist).watchDirectory"),
 		goleak.IgnoreTopFunction("github.com/fsnotify/fsnotify.(*Watcher).readEvents"),
 	}
 
@@ -34,7 +37,7 @@ func TestMain(m *testing.M) {
 // TestStreamerClientManagement tests the client management functions of the Streamer.
 func TestStreamerClientManagement(t *testing.T) {
 	// Create a new streamer with small buffer size.
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close() // Ensure cleanup
 
 	// Test initial state.
@@ -64,7 +67,7 @@ func TestStreamerClientManagement(t *testing.T) {
 	}
 
 	// Test maximum clients limit.
-	streamer = audio.NewStreamer(1024, 3, "mp3", 128)
+	streamer = audio.NewStreamer(1024, 3, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close()
 
 	// Add clients up to limit.
@@ -82,7 +85,7 @@ func TestStreamerClientManagement(t *testing.T) {
 // TestBroadcastToClients tests the broadcasting functionality.
 func TestBroadcastToClients(t *testing.T) {
 	// Create a streamer with small buffers for testing.
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close()
 
 	// Add some test clients.
@@ -137,7 +140,7 @@ func TestBroadcastToClients(t *testing.T) {
 // TestStreamTrackHappyPath tests the normal functioning of StreamTrack.
 func TestStreamTrackHappyPath(t *testing.T) {
 	// Create a streamer with small buffers for quick testing.
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close()
 
 	// Create temporary file with minimal MP3 data.
@@ -182,7 +185,7 @@ func TestStreamTrackHappyPath(t *testing.T) {
 
 // TestStreamTrackErrors tests error handling in StreamTrack.
 func TestStreamTrackErrors(t *testing.T) {
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close()
 
 	// Test empty path.
@@ -206,7 +209,7 @@ func TestStreamTrackErrors(t *testing.T) {
 // TestLastChunkDelivery tests that new clients receive the last chunk of data.
 func TestLastChunkDelivery(t *testing.T) {
 	// Create a streamer with small buffers.
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	defer streamer.Close()
 
 	// Create temporary file with minimal MP3 data.
@@ -244,7 +247,7 @@ func TestLastChunkDelivery(t *testing.T) {
 
 // TestStopCurrentTrack tests that stopping the current track works correctly.
 func TestStopCurrentTrack(t *testing.T) {
-	streamer := audio.NewStreamer(1024, 10, "mp3", 128)
+	streamer := audio.NewStreamer(1024, 10, 128, slog.Default(), createTestSentryHelper())
 	// Отключим нормализацию громкости для этого теста, чтобы избежать ошибок.
 	streamer.SetVolumeNormalization(false)
 	defer streamer.Close()

@@ -1,14 +1,17 @@
 package unit_test
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	httpServer "github.com/user/stream-audio-to-web/http"
+	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
+
 
 // Синглтон для тестового HTTP сервера.
 
@@ -21,7 +24,7 @@ var (
 // getTestServer возвращает единственный экземпляр HTTP сервера для тестов.
 func getTestServer() *httpServer.Server {
 	serverOnce.Do(func() {
-		serverInstance = httpServer.NewServer("mp3", 10)
+		serverInstance = httpServer.NewServer(10, slog.Default(), createTestSentryHelper())
 	})
 	return serverInstance
 }
@@ -48,6 +51,10 @@ func (m *mockStreamHandler) GetClientCount() int {
 
 func (m *mockStreamHandler) GetCurrentTrackChannel() <-chan string {
 	return m.trackChan
+}
+
+func (m *mockStreamHandler) GetPlaybackInfo() (string, time.Time, time.Duration, time.Duration) {
+	return "test_track.mp3", time.Now(), time.Minute, time.Minute * 2
 }
 
 // Mock implementation for PlaylistManager.
@@ -89,6 +96,14 @@ func (m *mockPlaylistManager) PreviousTrack() interface{} {
 // Shuffle implements PlaylistManager.Shuffle method.
 func (m *mockPlaylistManager) Shuffle() {
 	// Mock implementation, doesn't need to actually shuffle anything.
+}
+
+func (m *mockPlaylistManager) GetShuffleEnabled() bool {
+	return false
+}
+
+func (m *mockPlaylistManager) SetShuffleEnabled(enabled bool) {
+	// Do nothing - this is a mock.
 }
 
 func TestHealthzEndpoint(t *testing.T) {

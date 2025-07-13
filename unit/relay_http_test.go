@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/stream-audio-to-web/relay"
-	"github.com/user/stream-audio-to-web/slog"
+	"github.com/aposazhennikov/stream-audio-to-web/relay"
+	"github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 // mockHTTPServer creates a mock HTTP server for relay tests.

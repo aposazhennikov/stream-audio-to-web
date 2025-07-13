@@ -2,6 +2,7 @@ package unit_test
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,9 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/user/stream-audio-to-web/radio"
-	"github.com/user/stream-audio-to-web/slog"
+	"github.com/aposazhennikov/stream-audio-to-web/radio"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
+
 
 // MockAudioStreamer implements radio.AudioStreamer for testing.
 type MockAudioStreamer struct {
@@ -163,7 +165,7 @@ func TestRadioStationPlayback(t *testing.T) {
 	playlist := NewMockPlaylistManager([]string{"/path/to/track1.mp3", "/path/to/track2.mp3"})
 
 	// Create a radio station with the mock streamer and playlist.
-	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default(), createTestSentryHelper())
 
 	// Start the radio station in a goroutine.
 	go rs.Start()
@@ -207,7 +209,7 @@ func TestRadioStationRestartPlayback(t *testing.T) {
 	}
 
 	// Create a radio station with the mock streamer and playlist.
-	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+	rs := radio.NewRadioStation("/test", streamer, playlist, slog.Default(), createTestSentryHelper())
 
 	// Start the radio station in a goroutine.
 	go rs.Start()
@@ -262,7 +264,7 @@ func TestRadioStationErrorHandling(t *testing.T) {
 	playlist := NewMockPlaylistManager(tracks)
 
 	// Create a radio station.
-	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default(), createTestSentryHelper())
 
 	// Start the station.
 	station.Start()
@@ -293,7 +295,7 @@ func TestRadioStationEmptyPlaylist(t *testing.T) {
 	playlist := NewMockPlaylistManager([]string{})
 
 	// Create a radio station.
-	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default())
+	station := radio.NewRadioStation("/test", streamer, playlist, slog.Default(), createTestSentryHelper())
 
 	// Start the station.
 	station.Start()
@@ -316,7 +318,7 @@ func TestRadioStationEmptyPlaylist(t *testing.T) {
 // TestRadioStationManager tests the RadioStationManager functionality.
 func TestRadioStationManager(t *testing.T) {
 	// Create a manager.
-	manager := radio.NewRadioStationManager(slog.Default())
+	manager := radio.NewRadioStationManager(slog.Default(), createTestSentryHelper())
 
 	// Create streamers and playlists for multiple stations.
 	streamer1 := NewMockAudioStreamer()

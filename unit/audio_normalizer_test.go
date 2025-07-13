@@ -13,7 +13,7 @@ import (
 
 	"errors"
 
-	"github.com/user/stream-audio-to-web/audio"
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
 )
 
 // MockVolumeCache - простая локальная реализация кэша для тестов.

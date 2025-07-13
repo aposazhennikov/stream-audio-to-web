@@ -2,15 +2,17 @@ package unit_test
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/user/stream-audio-to-web/playlist"
-	"github.com/user/stream-audio-to-web/slog"
+	"github.com/aposazhennikov/stream-audio-to-web/playlist"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
+
 
 // TestParallelPlaylistInitialization tests initialization of multiple playlists in parallel.
 // This is a stress test simulating production-like conditions.
@@ -127,7 +129,7 @@ func testSinglePlaylist(t *testing.T, idx int, directory string, results chan<- 
 
 	// Create playlist with shuffling enabled.
 	t.Logf("PLAYLIST %d: Creating playlist object (NewPlaylist call)", idx)
-	pl, err := playlist.NewPlaylist(directory, nil, true, slog.Default())
+	pl, err := playlist.NewPlaylist(directory, nil, true, slog.Default(), createTestSentryHelper())
 	if err != nil {
 		results <- fmt.Errorf("playlist %d creation failed: %w", idx, err)
 		return
@@ -234,7 +236,7 @@ func TestConcurrentShuffling(t *testing.T) {
 	}
 
 	// Create a playlist.
-	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default()) // Start without shuffle
+	pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper()) // Start without shuffle
 	if err != nil {
 		t.Fatalf("Failed to create playlist: %v", err)
 	}
@@ -337,7 +339,7 @@ func TestShufflePerformance(t *testing.T) {
 			}
 
 			// Create playlist.
-			pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default())
+			pl, err := playlist.NewPlaylist(tmpDir, nil, false, slog.Default(), createTestSentryHelper())
 			if err != nil {
 				t.Fatalf("Failed to create playlist: %v", err)
 			}

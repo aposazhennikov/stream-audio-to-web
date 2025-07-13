@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	sentry "github.com/getsentry/sentry-go"
+	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 // Track represents information about a track.
@@ -44,6 +44,7 @@ type Playlist struct {
 	startTime    time.Time    // Playlist start time
 	historyMutex sync.RWMutex // Mutex for history
 	logger       *slog.Logger // Инстанс логгера
+	sentryHelper *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
 
 const (
@@ -60,32 +61,33 @@ const (
 )
 
 // NewPlaylist creates a new playlist from the specified directory.
-func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.Logger) (*Playlist, error) {
+func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.Logger, sentryHelper *sentryhelper.SentryHelper) (*Playlist, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	pl := &Playlist{
-		directory: directory,
-		tracks:    []Track{},
-		history:   []Track{},
-		current:   0,
-		onChange:  onChange,
-		shuffle:   shuffle,    // Save shuffle parameter
-		startTime: time.Now(), // Remember start time
-		logger:    logger,
+		directory:    directory,
+		tracks:       []Track{},
+		history:      []Track{},
+		current:      0,
+		onChange:     onChange,
+		shuffle:      shuffle,      // Save shuffle parameter
+		startTime:    time.Now(),   // Remember start time
+		logger:       logger,
+		sentryHelper: sentryHelper,
 	}
 
 	// Initialize watcher to track directory changes.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		sentry.CaptureException(err)
+		pl.sentryHelper.CaptureError(err, "playlist", "watcher_init")
 		return nil, err
 	}
 	pl.watcher = watcher
 
 	// Load tracks from directory.
 	if err2 := pl.Reload(); err2 != nil {
-		sentry.CaptureException(err2)
+		pl.sentryHelper.CaptureError(err2, "playlist", "initial_load")
 		return nil, err2
 	}
 
@@ -99,7 +101,7 @@ func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.L
 func (p *Playlist) Close() error {
 	err := p.watcher.Close()
 	if err != nil {
-		sentry.CaptureException(err)
+		p.sentryHelper.CaptureError(err, "playlist", "operation")
 	}
 	return err
 }
@@ -202,8 +204,9 @@ func (p *Playlist) handleEmptyDirectory() {
 	p.current = 0
 
 	// Отправляем в Sentry как сообщение, а не ошибку
-	sentry.CaptureMessage(
+	p.sentryHelper.CaptureInfo(
 		fmt.Sprintf("Directory is empty: %s, but playlist will be configured anyway", p.directory),
+		"playlist", "empty_directory",
 	)
 }
 
@@ -218,8 +221,9 @@ func (p *Playlist) handleNoTracks() {
 	p.current = 0
 
 	// Отправляем в Sentry как сообщение, а не ошибку
-	sentry.CaptureMessage(
+	p.sentryHelper.CaptureInfo(
 		fmt.Sprintf("No audio files in directory: %s, but playlist will be configured anyway", p.directory),
+		"playlist", "no_audio_files",
 	)
 }
 
@@ -881,7 +885,7 @@ func (p *Playlist) watchDirectory() {
 				return
 			}
 			p.logger.Error("fsnotify error", slog.String("error", err.Error()))
-			sentry.CaptureException(fmt.Errorf("fsnotify error: %w", err))
+			p.sentryHelper.CaptureError(fmt.Errorf("fsnotify error: %w", err), "playlist", "fsnotify")
 		}
 	}
 }
@@ -910,7 +914,7 @@ func (p *Playlist) processFileEvent(event fsnotify.Event) {
 	// Перезагружаем плейлист.
 	if err := p.Reload(); err != nil {
 		p.logger.Info("Error reloading playlist", slog.String("error", err.Error()))
-		sentry.CaptureException(fmt.Errorf("error reloading playlist: %w", err))
+		p.sentryHelper.CaptureError(fmt.Errorf("error reloading playlist: %w", err), "playlist", "reload")
 		return
 	}
 
