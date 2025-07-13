@@ -313,12 +313,7 @@ func (s *Server) setupRoutes() {
 
 // healthzHandler returns 200 OK if server is running.
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
-	// Log healthz request.
-	s.logger.Debug(
-		"Received healthz request",
-		slog.String("method", r.Method),
-		slog.String("remote_addr", r.RemoteAddr),
-	)
+	// Healthz requests are frequent (Docker healthchecks), no need to log them in DEBUG.
 
 	// Check for registered streams.
 	s.mutex.RLock()
@@ -329,12 +324,11 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mutex.RUnlock()
 
-	// Log status.
+	// Log only if no streams registered (potential issue).
 	if streamsCount == 0 {
 		s.logger.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
-	} else {
-		s.logger.Debug("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
 	}
+	// Normal healthz status is not logged to avoid spam from frequent Docker healthchecks.
 
 	// Add headers to prevent caching.
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -358,8 +352,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Additional logging of successful response.
-	s.logger.Debug("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	// Successful healthz response sent (no logging to avoid Docker healthcheck spam).
 }
 
 // readyzHandler checks readiness.
@@ -567,8 +560,7 @@ func (s *Server) nowPlayingHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверка на пустой маршрут.
 	if route == "" {
 		// Для отсутствующего параметра route возвращаем информацию по всем маршрутам
-		// вместо ошибки, и используем уровень DEBUG для логов
-		s.logger.Debug("No route parameter provided, returning all tracks info")
+		// вместо ошибки. Убираем DEBUG лог так как он вызывается каждую секунду.
 
 		// Подготовим карту со всеми текущими треками
 		s.trackMutex.RLock()

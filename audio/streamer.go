@@ -592,12 +592,13 @@ func (s *Streamer) calculateAndLogDelay(dataSize int) int {
 		delayMs = minPlaybackDelayMs
 	}
 
-	// Log delay information once every 10 seconds.
-	if time.Since(s.lastDelayLogTime) > 10*time.Second {
-		s.logger.Debug("Calculated delay",
+	// Log delay information only once every 2 minutes to reduce noise in DEBUG.
+	if time.Since(s.lastDelayLogTime) > 2*time.Minute {
+		s.logger.Debug("Stream timing", 
 			"delayMs", delayMs,
 			"bytesCount", dataSize,
-			"bitrate", s.bitrate)
+			"bitrate", s.bitrate,
+			"route", getRouteFromTrackPath(s.currentTrackPath))
 		s.lastDelayLogTime = time.Now()
 	}
 
@@ -870,13 +871,20 @@ func (s *Streamer) broadcastToClients(data []byte) {
 
 // logClientStatusIfNeeded logs client status information periodically.
 func (s *Streamer) logClientStatusIfNeeded(clientCount, dataSize int) {
-	// Output message only when client count changes or not more than once every 10 seconds.
-	if clientCount > 0 && (clientCount != s.lastClientCount || time.Since(s.lastLogTime) > 10*time.Second) {
-		s.logger.Info(
-			"DIAGNOSTICS: Sending data to clients",
-			"bytes", dataSize,
-			"clients", clientCount,
-		)
+	// Log only when client count changes (meaningful events) or very rarely for status.
+	if clientCount > 0 && (clientCount != s.lastClientCount || time.Since(s.lastLogTime) > 5*time.Minute) {
+		if clientCount != s.lastClientCount {
+			s.logger.Info("Client streaming activity", 
+				"clients", clientCount,
+				"previousClients", s.lastClientCount,
+				"bytes", dataSize,
+				"route", getRouteFromTrackPath(s.currentTrackPath))
+		} else {
+			s.logger.Debug("Periodic stream status", 
+				"clients", clientCount,
+				"bytes", dataSize,
+				"route", getRouteFromTrackPath(s.currentTrackPath))
+		}
 		s.lastClientCount = clientCount
 		s.lastLogTime = time.Now()
 	}
@@ -1127,15 +1135,7 @@ func (s *Streamer) calculateDelay(dataSize int) int {
 		delayMs = minPlaybackDelayMs
 	}
 
-	// Log delay information once every 10 seconds.
-	if time.Since(s.lastDelayLogTime) > 10*time.Second {
-		s.logger.Debug("Calculated delay",
-			"delayMs", delayMs,
-			"bytesCount", dataSize,
-			"bitrate", s.bitrate)
-		s.lastDelayLogTime = time.Now()
-	}
-
+	// No logging here - using calculateAndLogDelay for consolidated timing logs.
 	return delayMs
 }
 

@@ -241,10 +241,14 @@ func initSentry(logger *slog.Logger) *sentryhelper.SentryHelper {
 // initSentryWithDSN attempts to initialize Sentry with the given DSN.
 // It handles common errors and tries alternative approaches if needed.
 func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
+	// Enable Sentry debug mode only for debug log level.
+	logLevel := strings.ToLower(getEnvOrDefault("LOG_LEVEL", "warning"))
+	sentryDebug := logLevel == "debug"
+
 	// First attempt with original DSN.
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:   sentryDSN,
-		Debug: true, // Enable debug mode for more verbose logging
+		Debug: sentryDebug,
 	})
 
 	if err == nil {
@@ -263,7 +267,7 @@ func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
 	altDSN := strings.ReplaceAll(sentryDSN, "@", "%40")
 	altErr := sentry.Init(sentry.ClientOptions{
 		Dsn:   altDSN,
-		Debug: true,
+		Debug: sentryDebug,
 	})
 
 	if altErr != nil {
@@ -665,7 +669,7 @@ func configureSyncRoute(
 
 	logger.Info("Starting synchronous configuration of route", slog.String("route", route), slog.String("directory", dir))
 
-	logger.Debug("ROUTE CONFIG STEP 1: Checking directory exists", "route", route, "directory", dir)
+	// Step 1: Check directory exists (consolidated DEBUG logging).
 	if !ensureDirectoryExists(logger, dir, route) {
 		err := fmt.Errorf("directory check failed for route %s: %s", route, dir)
 		logger.Error("Directory check failed", "route", route, "directory", dir)
@@ -675,7 +679,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Debug("ROUTE CONFIG STEP 2: Checking audio files", "route", route, "directory", dir)
+	// Step 2: Check audio files.
 	if !checkAudioFiles(logger, dir, route) {
 		err := fmt.Errorf("audio files check failed for route %s: %s", route, dir)
 		logger.Error("Audio files check failed", "route", route, "directory", dir)
@@ -685,7 +689,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Debug("ROUTE CONFIG STEP 2.5: Checking and converting audio bitrate", "route", route, "directory", dir)
+	// Step 2.5: Check/convert bitrate.
 	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
 		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
 		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
@@ -695,7 +699,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Debug("ROUTE CONFIG STEP 3: Creating playlist", "route", route, "directory", dir)
+	// Step 3: Create playlist.
 	pl := createPlaylistOrNil(logger, dir, route, config)
 	if pl == nil {
 		err := fmt.Errorf("playlist creation failed for route %s: %s", route, dir)
@@ -706,7 +710,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Debug("ROUTE CONFIG STEP 4: Creating streamer", "route", route)
+	// Step 4: Create streamer.
 	streamer := createStreamer(logger, config, route)
 	if streamer == nil {
 		err := fmt.Errorf("streamer creation failed for route %s", route)
@@ -717,13 +721,11 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Debug("ROUTE CONFIG STEP 5: Adding station to manager", "route", route)
+	// Step 5: Add station to manager.
 	stationManager.AddStation(route, streamer, pl)
-	logger.Debug("Radio station successfully added to manager", slog.String("route", route))
 
-	logger.Debug("ROUTE CONFIG STEP 6: Registering stream on HTTP server", "route", route)
+	// Step 6: Register stream on HTTP server.
 	server.RegisterStream(route, streamer, pl)
-	logger.Debug("Audio stream successfully registered on HTTP server", slog.String("route", route))
 
 	if !server.IsStreamRegistered(route) {
 		logger.Error("CRITICAL ERROR: Stream not registered after all operations", slog.String("route", route))
@@ -749,7 +751,15 @@ func configureSyncRoute(
 		logger.Debug("Using default normalization setting for route", slog.String("route", route))
 	}
 
-	logger.Debug("RESULT: Route configuration SUCCESSFULLY COMPLETED", slog.String("route", route))
+
+	// Context7: Consolidated route configuration summary for DEBUG.
+	logger.Debug("Route configuration completed", 
+		"route", route,
+		"directory", dir,
+		"bitrate", config.Bitrate,
+		"normalizeVolume", config.NormalizeVolume,
+		"normalizeRuntime", config.NormalizeRuntime,
+		"shuffle", config.Shuffle)
 	return true
 }
 
@@ -826,9 +836,7 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 		// Считаем аудиофайлы (не директории, не скрытые файлы, с поддержкой аудиоформатов)
 		if !file.IsDir() && !isHidden && (isMP3 || isOGG || isAAC || isWAV || isFLAC) {
 			audioFiles++
-			logger.Debug("Audio file counted",
-				slog.String("fileName", fileName),
-				slog.Int("totalSoFar", audioFiles))
+			// Context7: Individual file counting is too verbose - using summary log instead.
 		}
 	}
 

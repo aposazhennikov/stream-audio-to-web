@@ -647,7 +647,7 @@ func (p *Playlist) GetHistory() []interface{} {
 	// Если история пуста, сразу возвращаем пустой слайс без дополнительных операций.
 	if historyLen == 0 {
 		p.historyMutex.RUnlock()
-		p.logger.Debug("GetHistory: history is empty")
+		// Empty history is normal at startup - no need to log this frequently called case.
 		return []interface{}{}
 	}
 
