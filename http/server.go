@@ -162,7 +162,7 @@ func (s *Server) Handler() http.Handler {
 
 // RegisterStream registers a new audio stream.
 func (s *Server) RegisterStream(route string, stream StreamHandler, playlist PlaylistManager) {
-	s.logger.Info("DIAGNOSTICS: Starting audio stream registration", slog.String("route", route))
+	s.logger.Debug("Starting audio stream registration", slog.String("route", route))
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -173,33 +173,33 @@ func (s *Server) RegisterStream(route string, stream StreamHandler, playlist Pla
 		s.logger.Info("Fixed route during registration", slog.String("route", route))
 	}
 
-	s.logger.Info("DIAGNOSTICS: Adding stream to streams map", slog.String("route", route))
+	s.logger.Debug("Adding stream to streams map", slog.String("route", route))
 	s.streams[route] = stream
-	s.logger.Info("DIAGNOSTICS: Adding playlist to playlists map", slog.String("route", route))
+	s.logger.Debug("Adding playlist to playlists map", slog.String("route", route))
 	s.playlists[route] = playlist
 
 	// Set trackSecondsTotal metric directly to stream.
 	if streamer, ok := stream.(*audio.Streamer); ok {
 		streamer.SetTrackSecondsMetric(s.trackSecondsTotal)
-		s.logger.Info("DIAGNOSTICS: trackSecondsTotal metric set for streamer", slog.String("route", route))
+		s.logger.Debug("trackSecondsTotal metric set for streamer", slog.String("route", route))
 	}
 
 	// Check if stream was added.
 	if _, exists := s.streams[route]; exists {
-		s.logger.Info("DIAGNOSTICS: Stream for route successfully added to streams map", slog.String("route", route))
+		s.logger.Debug("Stream for route successfully added to streams map", slog.String("route", route))
 	} else {
 		s.logger.Error("ERROR: Stream for route was not added to streams map!", slog.String("route", route))
 	}
 
 	// IMPORTANT: Register route handler in router for GET and HEAD requests.
 	s.router.HandleFunc(route, s.StreamAudioHandler(route)).Methods("GET", "HEAD")
-	s.logger.Info("DIAGNOSTICS: HTTP handler registered for route", slog.String("route", route))
+	s.logger.Debug("HTTP handler registered for route", slog.String("route", route))
 
 	// Start goroutine to track current track.
-	s.logger.Info("DIAGNOSTICS: Starting goroutine to track current track", slog.String("route", route))
+	s.logger.Debug("Starting goroutine to track current track", slog.String("route", route))
 	go s.trackCurrentTrack(route, stream.GetCurrentTrackChannel())
 
-	s.logger.Info("DIAGNOSTICS: Audio stream for route successfully registered", slog.String("route", route))
+	s.logger.Debug("Audio stream for route successfully registered", slog.String("route", route))
 }
 
 // IsStreamRegistered checks if stream with specified route is registered.
@@ -314,7 +314,7 @@ func (s *Server) setupRoutes() {
 // healthzHandler returns 200 OK if server is running.
 func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	// Log healthz request.
-	s.logger.Info(
+	s.logger.Debug(
 		"Received healthz request",
 		slog.String("method", r.Method),
 		slog.String("remote_addr", r.RemoteAddr),
@@ -333,7 +333,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	if streamsCount == 0 {
 		s.logger.Info("WARNING: No registered streams, but server is running", slog.String("status", "no_streams"))
 	} else {
-		s.logger.Info("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
+		s.logger.Debug("Healthz status", slog.Int("streamsCount", streamsCount), slog.Any("routes", streamsList))
 	}
 
 	// Add headers to prevent caching.
@@ -359,7 +359,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Additional logging of successful response.
-	s.logger.Info("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
+	s.logger.Debug("Sent successful healthz response to client", slog.String("remoteAddr", r.RemoteAddr))
 }
 
 // readyzHandler checks readiness.
@@ -944,11 +944,11 @@ func (s *Server) streamDataToClient(
 		select {
 		case <-clientClosed:
 			// Client disconnected.
-			s.logger.Info("Client disconnected from stream",
-				slog.String("route", route),
-				slog.String("remoteAddr", clientData.remoteAddr),
-				slog.Int("clientID", clientData.clientID),
-				slog.Int64("totalBytesSent", totalBytesSent))
+					s.logger.Debug("Client disconnected from stream",
+			slog.String("route", route),
+			slog.String("remoteAddr", clientData.remoteAddr),
+			slog.Int("clientID", clientData.clientID),
+			slog.Int64("totalBytesSent", totalBytesSent))
 			return
 		case data, ok := <-clientData.clientCh:
 			if !ok {
@@ -988,7 +988,7 @@ func (s *Server) sendDataToClient(
 	if writeErr != nil {
 		if isConnectionClosedError(writeErr) {
 			// Just log, don't send to Sentry.
-			s.logger.Info("Client disconnected",
+			s.logger.Debug("Client disconnected",
 				slog.Int("clientID", clientData.clientID),
 				slog.String("error", writeErr.Error()),
 				slog.Int64("totalBytesSent", *totalBytesSent))
@@ -1010,10 +1010,10 @@ func (s *Server) sendDataToClient(
 // logDataTransfer logs information about data transfer periodically.
 func (s *Server) logDataTransfer(clientData *clientStreamData, totalBytesSent *int64, lastLogTime *time.Time) {
 	if *totalBytesSent >= logEveryBytes && time.Since(*lastLogTime) > logIntervalSec*time.Second {
-		s.logger.Info("Sent data to client",
-			slog.Int("mbytes", int(*totalBytesSent/mb)),
-			slog.Int("clientID", clientData.clientID),
-			slog.String("remoteAddr", clientData.remoteAddr))
+			s.logger.Debug("Sent data to client",
+		slog.Int("mbytes", int(*totalBytesSent/mb)),
+		slog.Int("clientID", clientData.clientID),
+		slog.String("remoteAddr", clientData.remoteAddr))
 		*lastLogTime = time.Now()
 	}
 }
@@ -1316,7 +1316,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	isFloydRoute := strings.Contains(route, "floyd")
 	
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: HTTP handleTrackSwitchHandler called", 
+		s.logger.Debug("HTTP handleTrackSwitchHandler called", 
 			slog.String("direction", direction),
 			slog.String("route", route),
 			slog.String("method", r.Method),
@@ -1335,7 +1335,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	// Check authentication.
 	if !s.checkAuth(r) {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Authentication failed")
+			s.logger.Debug("Authentication failed")
 		} else {
 			s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
 		}
@@ -1347,14 +1347,14 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	playlist, exists := s.getPlaylistForRoute(route)
 	if !exists {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Playlist not found", slog.String("route", route))
+			s.logger.Debug("Playlist not found", slog.String("route", route))
 		}
 		s.handlePlaylistNotFound(w, r, route)
 		return
 	}
 
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: About to get track for direction", 
+		s.logger.Debug("About to get track for direction", 
 			slog.String("direction", direction), 
 			slog.String("route", route))
 	}
@@ -1363,7 +1363,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	track := s.getTrackForDirection(playlist, direction)
 	if track == nil {
 		if isFloydRoute {
-			s.logger.Error("FLOYD DEBUG: Track not found", 
+			s.logger.Debug("Track not found", 
 				slog.String("direction", direction), 
 				slog.String("route", route))
 		}
@@ -1372,7 +1372,7 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if isFloydRoute {
-		s.logger.Error("FLOYD DEBUG: Manual track switch proceeding", 
+		s.logger.Debug("Manual track switch proceeding", 
 			slog.String("direction", direction), 
 			slog.String("route", route))
 	} else {

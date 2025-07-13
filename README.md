@@ -22,6 +22,7 @@ High-performance audio streaming server written in Go that provides synchronized
 - **📡 Relay Functionality** — Stream from external HTTP/HTTPS sources with web management
 - **🎯 Bitrate Conversion** — Automatic conversion to target bitrate using FFmpeg
 - **🏥 Health Checks** — Multiple endpoints for monitoring and readiness checks
+- **📝 Smart Logging** — Structured JSON logging with configurable levels and startup diagnostics
 
 ## 🏗️ Architecture
 
@@ -61,19 +62,27 @@ git clone https://github.com/aposazhennikov/stream-audio-to-web.git
 cd stream-audio-to-web
 ```
 
-2. **Build and run with your custom command**
+2. **Create configuration (optional)**
+```bash
+# Create .env file for custom configuration
+echo "LOG_LEVEL=info
+BITRATE=192
+MAX_CLIENTS=20" > .env
+```
+
+3. **Build and run with your custom command**
 ```bash
 clear && docker build -t audio-streamer:latest . && docker tag audio-streamer:latest aposazhennikov/audio-streamer:latest && docker compose up -d
 ```
 
-3. **Access the application**
+4. **Access the application**
 - Main status page: http://localhost:8000/status
 - Audio streams: http://localhost:8000/floyd, http://localhost:8000/humor, etc.
 - Health check: http://localhost:8000/healthz
 
-4. **View logs**
+5. **View logs (with configuration info)**
 ```bash
-docker compose logs
+docker logs audio-streamer | grep "ENVIRONMENT VARIABLES" -A 20
 ```
 
 ### Manual Docker Build
@@ -98,53 +107,88 @@ docker run -d --name audio-streamer \
 
 ## ⚙️ Configuration
 
-The server can be configured through environment variables in docker-compose.yml:
+The server can be configured through environment variables in docker-compose.yml or via `.env` file:
 
-### Core Settings
+### Using .env File (Recommended)
+
+Create a `.env` file in your project root to configure all environment variables:
+
+```bash
+# Application Configuration
+LOG_LEVEL=warning
+BITRATE=128
+MAX_CLIENTS=10
+PORT=8000
+
+# Audio Processing
+NORMALIZE_VOLUME=false
+NORMALIZE_RUNTIME=off
+NORMALIZE_SAMPLE_WINDOWS=0
+NORMALIZE_SAMPLE_MS=0
+
+# Routing Configuration
+DIRECTORY_ROUTES={"floyd":"/app/floyd/","humor":"/app/humor","science":"/app/science","shaov":"/app/shaov"}
+SHUFFLE=false
+ROUTES_SHUFFLE=
+
+# Security
+STATUS_PASSWORD=1234554321
+
+# External Services
+SENTRY_DSN=https://your-sentry-dsn
+
+# Relay Configuration
+RELAY=true
+RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
+```
+
+The `.env` file is automatically loaded by docker-compose and all variables are logged at application startup.
+
+**Note:** Add `.env` to your `.gitignore` file to avoid committing sensitive information like passwords and API keys.
+
+### Environment Variables Reference
+
+All environment variables with their defaults and descriptions:
+
+#### Application Configuration
 
 | Environment Variable | Description | Default | Example |
 |---------------------|-------------|---------|---------|
-| `PORT` | HTTP server port | `8000` | `8000` |
-| `BITRATE` | Target audio bitrate (kbps) | `128` | `128` |
-| `MAX_CLIENTS` | Maximum simultaneous clients | `500` | `10` |
-| `LOG_LEVEL` | Logging level | `warn` | `error`, `warn`, `info`, `debug` |
-| `BUFFER_SIZE` | Read buffer size (bytes) | `65536` | `65536` |
+| `LOG_LEVEL` | Logging level (error/warning/info/debug) | `warning` | `info`, `debug` |
+| `PORT` | HTTP server port | `8000` | `8080` |
+| `BITRATE` | Target audio bitrate (kbps) | `128` | `192`, `320` |
+| `MAX_CLIENTS` | Maximum simultaneous clients | `10` | `50`, `100` |
 
-### Directory Mapping
-
-| Environment Variable | Description | Example |
-|---------------------|-------------|---------|
-| `DIRECTORY_ROUTES` | JSON mapping of routes to directories | `{"humor":"/app/humor","science":"/app/science","floyd":"/app/floyd"}` |
-
-### Shuffle Configuration
+#### Audio Processing
 
 | Environment Variable | Description | Default | Example |
 |---------------------|-------------|---------|---------|
-| `SHUFFLE` | Global shuffle mode | `false` | `true`, `false` |
-| `SHUFFLE_SETTINGS` | Per-stream shuffle settings | `{}` | `humor:true,science:false` |
+| `NORMALIZE_VOLUME` | Enable volume normalization | `false` | `true` |
+| `NORMALIZE_RUNTIME` | Runtime normalization mode | `off` | `on`, `auto` |
+| `NORMALIZE_SAMPLE_WINDOWS` | Analysis windows count | `0` | `10` |
+| `NORMALIZE_SAMPLE_MS` | Window duration (ms) | `0` | `1000` |
 
-### Volume Normalization
+#### Routing Configuration
 
 | Environment Variable | Description | Default | Example |
 |---------------------|-------------|---------|---------|
-| `NORMALIZE_VOLUME` | Enable volume normalization | `true` | `false` |
-| `NORMALIZE_RUNTIME` | Runtime normalization mode | `auto` | `auto`, `on`, `off` |
-| `NORMALIZE_SAMPLE_WINDOWS` | Analysis windows count | `10` | `0` (disable) |
-| `NORMALIZE_SAMPLE_MS` | Window duration (ms) | `1000` | `0` (disable) |
+| `DIRECTORY_ROUTES` | JSON mapping of routes to directories | See .env example | `{"music":"/app/music"}` |
+| `SHUFFLE` | Global shuffle mode | `false` | `true` |
+| `ROUTES_SHUFFLE` | Per-stream shuffle settings (JSON) | `{}` | `{"humor":"true","science":"false"}` |
 
-### Security & Monitoring
+#### Security & Monitoring
 
 | Environment Variable | Description | Default | Example |
 |---------------------|-------------|---------|---------|
 | `STATUS_PASSWORD` | Status page password | `1234554321` | `your_secure_password` |
 | `SENTRY_DSN` | Sentry error tracking DSN | Empty | `https://...@sentry.io/...` |
 
-### Relay Configuration
+#### Relay Configuration
 
 | Environment Variable | Description | Default | Example |
 |---------------------|-------------|---------|---------|
-| `RELAY` | Enable relay functionality | `false` | `true` |
-| `RELAY_CONFIG_FILE` | Relay configuration file path | `./relay_list.json` | `/app/relay_data/relay_list.json` |
+| `RELAY` | Enable relay functionality | `true` | `false` |
+| `RELAY_CONFIG_FILE` | Relay configuration file path | `/app/relay_data/relay_list.json` | `/custom/path/relays.json` |
 
 ## 📁 Volume Mounting
 
@@ -242,11 +286,44 @@ curl -X POST -b "status_auth=your_password" "http://server:8000/next-track/humor
 - Configurable via `SENTRY_DSN` environment variable
 
 ### Logging
-Configure logging level via `LOG_LEVEL`:
-- `debug` - Detailed debugging information
-- `info` - General operational information  
-- `warn` - Warning messages (default)
-- `error` - Error messages only
+
+The application features a comprehensive structured logging system:
+
+#### Log Levels
+Configure logging level via `LOG_LEVEL` environment variable:
+- **`error`** - Only critical errors (minimal output)
+- **`warning`** - Warnings and errors (default, recommended for production)
+- **`info`** - Informational messages, warnings, and errors
+- **`debug`** - All messages including detailed diagnostics
+
+#### Startup Information
+All environment variables are automatically logged at startup:
+```json
+{
+  "time": "2025-07-13T19:22:50Z",
+  "level": "INFO", 
+  "msg": "ENVIRONMENT VARIABLES",
+  "LOG_LEVEL": "INFO",
+  "BITRATE": "128",
+  "MAX_CLIENTS": "10",
+  "NORMALIZE_VOLUME": "false",
+  "DIRECTORY_ROUTES": "{...}",
+  "SENTRY_ENABLED": true
+}
+```
+
+#### Log Format
+- **JSON structured logging** for easy parsing and monitoring
+- **Timestamp** in ISO 8601 format
+- **Log level** for filtering
+- **Contextual fields** for debugging (route, clientID, etc.)
+- **Performance metrics** and timing information
+
+#### Best Practices
+- Use `warning` level for production environments
+- Use `info` level for development and debugging
+- Use `debug` level only for detailed troubleshooting
+- Monitor ERROR level logs for issues
 
 ## 🎛️ Status Dashboard
 
@@ -402,6 +479,24 @@ go build -o audio-streamer .
 ## 🚢 Deployment
 
 ### Docker Compose Production
+
+Create a `.env` file for configuration:
+```bash
+# Production .env file
+LOG_LEVEL=warning
+BITRATE=128
+MAX_CLIENTS=50
+NORMALIZE_VOLUME=true
+NORMALIZE_RUNTIME=auto
+DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science","floyd":"/app/floyd"}
+SHUFFLE=false
+STATUS_PASSWORD=your_secure_password
+SENTRY_DSN=your_sentry_dsn
+RELAY=true
+RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
+```
+
+Then use the simplified docker-compose.yml:
 ```yaml
 services:
   audio-streamer:
@@ -415,18 +510,24 @@ services:
       - /media/science:/app/science  
       - /media/music:/app/floyd
       - ./relay_data:/app/relay_data:rw
+    env_file:
+      - .env
     environment:
-      - BITRATE=128
-      - MAX_CLIENTS=50
-      - LOG_LEVEL=warn
-      - DIRECTORY_ROUTES={"humor":"/app/humor","science":"/app/science","floyd":"/app/floyd"}
-      - SHUFFLE=false
-      - NORMALIZE_VOLUME=true
-      - NORMALIZE_RUNTIME=auto
-      - STATUS_PASSWORD=your_secure_password
-      - SENTRY_DSN=your_sentry_dsn
-      - RELAY=true
-      - RELAY_CONFIG_FILE=/app/relay_data/relay_list.json
+      # All variables loaded from .env with fallback defaults
+      - BITRATE=${BITRATE:-128}
+      - MAX_CLIENTS=${MAX_CLIENTS:-10}
+      - LOG_LEVEL=${LOG_LEVEL:-warning}
+      - DIRECTORY_ROUTES=${DIRECTORY_ROUTES:-{"floyd":"/app/floyd/","humor":"/app/humor","science":"/app/science"}}
+      - SHUFFLE=${SHUFFLE:-false}
+      - ROUTES_SHUFFLE=${ROUTES_SHUFFLE:-}
+      - NORMALIZE_VOLUME=${NORMALIZE_VOLUME:-false}
+      - NORMALIZE_RUNTIME=${NORMALIZE_RUNTIME:-off}
+      - NORMALIZE_SAMPLE_WINDOWS=${NORMALIZE_SAMPLE_WINDOWS:-0}
+      - NORMALIZE_SAMPLE_MS=${NORMALIZE_SAMPLE_MS:-0}
+      - STATUS_PASSWORD=${STATUS_PASSWORD:-1234554321}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - RELAY=${RELAY:-true}
+      - RELAY_CONFIG_FILE=${RELAY_CONFIG_FILE:-/app/relay_data/relay_list.json}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s

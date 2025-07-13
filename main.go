@@ -88,12 +88,47 @@ func main() {
 
 	// Настраиваем логгер перед началом работы
 	logger := setupLogger()
-	logger.Info("APPLICATION STARTUP: Logger initialized")
+	logLevelEnv := strings.ToUpper(os.Getenv("LOG_LEVEL"))
+	if logLevelEnv == "" {
+		logLevelEnv = "WARNING (default)"
+	}
+	logger.Info("APPLICATION STARTUP: Logger initialized", 
+		slog.String("log_level_env", logLevelEnv))
 
 	// Загружаем конфигурацию
 	logger.Info("APPLICATION STARTUP: Loading configuration...")
 	config := loadConfig()
 	logger.Info("APPLICATION STARTUP: Configuration loaded")
+
+	// Log all environment variables from docker-compose.yml for debugging.
+	logger.Info("ENVIRONMENT VARIABLES",
+		// Application Configuration
+		slog.String("LOG_LEVEL", logLevelEnv),
+		slog.String("BITRATE", os.Getenv("BITRATE")),
+		slog.String("MAX_CLIENTS", os.Getenv("MAX_CLIENTS")),
+		slog.String("PORT", os.Getenv("PORT")),
+		
+		// Audio Processing
+		slog.String("NORMALIZE_VOLUME", os.Getenv("NORMALIZE_VOLUME")),
+		slog.String("NORMALIZE_RUNTIME", os.Getenv("NORMALIZE_RUNTIME")),
+		slog.String("NORMALIZE_SAMPLE_WINDOWS", os.Getenv("NORMALIZE_SAMPLE_WINDOWS")),
+		slog.String("NORMALIZE_SAMPLE_MS", os.Getenv("NORMALIZE_SAMPLE_MS")),
+		
+		// Routing Configuration
+		slog.String("DIRECTORY_ROUTES", os.Getenv("DIRECTORY_ROUTES")),
+		slog.String("SHUFFLE", os.Getenv("SHUFFLE")),
+		slog.String("ROUTES_SHUFFLE", os.Getenv("ROUTES_SHUFFLE")),
+		
+		// Security
+		slog.Bool("STATUS_PASSWORD_SET", os.Getenv("STATUS_PASSWORD") != ""),
+		
+		// External Services
+		slog.Bool("SENTRY_ENABLED", os.Getenv("SENTRY_DSN") != ""),
+		slog.Int("SENTRY_DSN_LENGTH", len(os.Getenv("SENTRY_DSN"))),
+		
+		// Relay Configuration
+		slog.String("RELAY", os.Getenv("RELAY")),
+		slog.String("RELAY_CONFIG_FILE", os.Getenv("RELAY_CONFIG_FILE")))
 
 	// Initialize Sentry.
 	logger.Info("APPLICATION STARTUP: Initializing Sentry...")
@@ -147,11 +182,11 @@ func main() {
 	}
 }
 
-// setupLogger creates and configures a logger with the specified log level.
+// setupLogger creates and configures a logger with the specified log level and sampling.
 func setupLogger() *slog.Logger {
 	var level slog.Level
 
-	// Получаем уровень логирования из переменной окружения
+	// Get log level from environment variable.
 	logLevelEnv := strings.ToUpper(os.Getenv("LOG_LEVEL"))
 
 	switch logLevelEnv {
@@ -164,17 +199,17 @@ func setupLogger() *slog.Logger {
 	case "ERROR":
 		level = slog.LevelError
 	default:
-		// По умолчанию используем WARNING для предотвращения излишнего спама в логах
+		// Default to WARNING to prevent excessive log spam.
 		level = slog.LevelWarn
 	}
 
-	// Создаем JSON handler с указанным уровнем логирования
+	// Create JSON handler with specified log level.
 	opts := &slog.HandlerOptions{
 		Level: level,
 	}
 	handler := slog.NewJSONHandler(os.Stdout, opts)
 
-	// Создаем и устанавливаем логгер
+	// Create and set logger.
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
@@ -242,45 +277,36 @@ func initSentryWithDSN(logger *slog.Logger, sentryDSN string) error {
 
 // logConfiguration logs the application configuration.
 func logConfiguration(logger *slog.Logger, config *Config) {
-	// Создаем временный логгер с уровнем INFO для вывода конфигурации независимо от LOG_LEVEL
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo, // Всегда используем INFO для конфигурации
-	}
-	configHandler := slog.NewJSONHandler(os.Stdout, opts)
-	configLogger := slog.New(configHandler)
+	// Use the passed logger respecting LOG_LEVEL setting.
+	logger.Debug("========== APPLICATION CONFIGURATION ==========")
+	logger.Debug("Port", slog.Int("value", config.Port))
+	logger.Debug("Default audio directory", slog.String("value", config.AudioDir))
 
-	configLogger.Info("========== APPLICATION CONFIGURATION ==========")
-	configLogger.Info("Port", slog.Int("value", config.Port))
-	configLogger.Info("Default audio directory", slog.String("value", config.AudioDir))
-
-	configLogger.Info("Bitrate", slog.Int("value", config.Bitrate))
-	configLogger.Info("Max clients", slog.Int("value", config.MaxClients))
-	configLogger.Info("Buffer size", slog.Int("value", config.BufferSize))
-	configLogger.Info("Global shuffle setting", slog.Bool("value", config.Shuffle))
-	configLogger.Info("Volume normalization", slog.Bool("value", config.NormalizeVolume))
-	configLogger.Info("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
-	configLogger.Info("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
-	configLogger.Info("Normalization sample duration",
+	logger.Debug("Bitrate", slog.Int("value", config.Bitrate))
+	logger.Debug("Max clients", slog.Int("value", config.MaxClients))
+	logger.Debug("Buffer size", slog.Int("value", config.BufferSize))
+	logger.Debug("Global shuffle setting", slog.Bool("value", config.Shuffle))
+	logger.Debug("Volume normalization", slog.Bool("value", config.NormalizeVolume))
+	logger.Debug("Runtime normalization mode", slog.String("value", config.NormalizeRuntime))
+	logger.Debug("Normalization sample windows", slog.Int("value", config.NormalizeSampleWindows))
+	logger.Debug("Normalization sample duration",
 		slog.String("value", fmt.Sprintf("%d ms", config.NormalizeSampleMs)))
-	configLogger.Info("Relay functionality enabled", slog.Bool("value", config.EnableRelay))
-	configLogger.Info("Relay configuration file", slog.String("value", config.RelayConfigFile))
+	logger.Debug("Relay functionality enabled", slog.Bool("value", config.EnableRelay))
+	logger.Debug("Relay configuration file", slog.String("value", config.RelayConfigFile))
 
 	// Log per-stream shuffle settings.
-	configLogger.Info("Per-stream shuffle settings:")
+	logger.Debug("Per-stream shuffle settings:")
 	for route, shuffle := range config.PerStreamShuffle {
-		configLogger.Info("Per-stream shuffle", slog.String("route", route), slog.Bool("value", shuffle))
+		logger.Debug("Per-stream shuffle", slog.String("route", route), slog.Bool("value", shuffle))
 	}
 
 	// Log additional directory routes.
-	configLogger.Info("Additional directory routes:")
+	logger.Debug("Additional directory routes:")
 	for path, route := range config.DirectoryRoutes {
-		configLogger.Info("Additional route", slog.String("path", path), slog.String("route", route))
+		logger.Debug("Additional route", slog.String("path", path), slog.String("route", route))
 	}
 
-	configLogger.Info("=============================================")
-
-	// Возвращаемся к обычному логированию с заданным уровнем
-	logger.Info("Configuration logged with INFO level regardless of LOG_LEVEL setting")
+	logger.Debug("=============================================")
 }
 
 // initializeComponents creates and initializes all application components.
@@ -289,9 +315,9 @@ func initializeComponents(
 	config *Config,
 ) (*httpServer.Server, *radio.StationManager, *relay.Manager) {
 	// Create HTTP server.
-	logger.Info("Creating HTTP server...")
+	logger.Debug("Creating HTTP server...")
 	server := httpServer.NewServer(config.MaxClients, logger, config.SentryHelper)
-	logger.Info("HTTP server created")
+	logger.Debug("HTTP server created")
 
 	// Set global shuffle configuration.
 	server.SetGlobalShuffleConfig(config.Shuffle)
@@ -323,32 +349,32 @@ func initializeComponents(
 		"durationMs", normalizeMs)
 
 	// Create radio station manager.
-	logger.Info("Creating radio station manager...")
+	logger.Debug("Creating radio station manager...")
 	stationManager := radio.NewRadioStationManager(logger, config.SentryHelper)
-	logger.Info("Radio station manager created")
+	logger.Debug("Radio station manager created")
 
 	// Set radio station manager for HTTP server.
-	logger.Info("Setting station manager for HTTP server...")
+	logger.Debug("Setting station manager for HTTP server...")
 	server.SetStationManager(stationManager)
-	logger.Info("Station manager set for HTTP server")
+	logger.Debug("Station manager set for HTTP server")
 
 	// Create relay manager if needed.
-	logger.Info("Checking relay configuration...")
+	logger.Debug("Checking relay configuration...")
 	var relayManager *relay.Manager
 	if config.EnableRelay {
-		logger.Info("Relay enabled, initializing relay manager...")
+		logger.Debug("Relay enabled, initializing relay manager...")
 		relayManager = initializeRelayManager(logger, config, server)
-		logger.Info("Relay manager initialized")
+		logger.Debug("Relay manager initialized")
 	} else {
 		logger.Info("Relay functionality is disabled")
 	}
 
 	// Create minimal dummy streams for /healthz to immediately find at least one route.
-	logger.Info("Creating initial dummy streams...")
+	logger.Debug("Creating initial dummy streams...")
 	createInitialDummyStreams(logger, server)
-	logger.Info("Initial dummy streams created")
+	logger.Debug("Initial dummy streams created")
 
-	logger.Info("Component initialization completed successfully")
+	logger.Debug("Component initialization completed successfully")
 	return server, stationManager, relayManager
 }
 
@@ -470,11 +496,11 @@ func configureAudioRoutes(
 	config *Config,
 ) {
 	logger.Info("Starting audio route configuration...")
-	logger.Info("Directory routes found", "count", len(config.DirectoryRoutes))
+	logger.Debug("Directory routes found", "count", len(config.DirectoryRoutes))
 
 	// Log all routes for debugging
 	for route, dir := range config.DirectoryRoutes {
-		logger.Info("Found route", "route", route, "directory", dir)
+		logger.Debug("Found route", "route", route, "directory", dir)
 	}
 
 	if len(config.DirectoryRoutes) == 0 {
@@ -501,7 +527,7 @@ func configureAudioRoutes(
 		return
 	}
 
-	logger.Info("Audio route configuration checks passed",
+	logger.Debug("Audio route configuration checks passed",
 		"normalizeVolume", config.NormalizeVolume,
 		"normalizeRuntime", config.NormalizeRuntime,
 		"normalizeWindows", config.NormalizeSampleWindows)
@@ -518,13 +544,13 @@ func configureAudioRoutes(
 		routeCopy := route
 		dirCopy := dir
 
-		logger.Info("Starting goroutine for route", "route", routeCopy, "directory", dirCopy)
+		logger.Debug("Starting goroutine for route", "route", routeCopy, "directory", dirCopy)
 
 		// Start configuring EACH stream in a separate goroutine.
 		go func(r, d string) {
-			logger.Info("Asynchronous configuration of route started", slog.String("route", r), slog.String("directory", d))
+			logger.Debug("Asynchronous configuration of route started", slog.String("route", r), slog.String("directory", d))
 			if success := configureSyncRoute(logger, server, stationManager, r, d, config); success {
-				logger.Info("Route successfully configured", slog.String("route", r))
+				logger.Debug("Route successfully configured", slog.String("route", r))
 			} else {
 				criticalErr := fmt.Errorf("CRITICAL: Route configuration failed for %s", r)
 				logger.Error("CRITICAL: Route configuration failed", slog.String("route", r))
@@ -639,7 +665,7 @@ func configureSyncRoute(
 
 	logger.Info("Starting synchronous configuration of route", slog.String("route", route), slog.String("directory", dir))
 
-	logger.Info("ROUTE CONFIG STEP 1: Checking directory exists", "route", route, "directory", dir)
+	logger.Debug("ROUTE CONFIG STEP 1: Checking directory exists", "route", route, "directory", dir)
 	if !ensureDirectoryExists(logger, dir, route) {
 		err := fmt.Errorf("directory check failed for route %s: %s", route, dir)
 		logger.Error("Directory check failed", "route", route, "directory", dir)
@@ -649,7 +675,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Info("ROUTE CONFIG STEP 2: Checking audio files", "route", route, "directory", dir)
+	logger.Debug("ROUTE CONFIG STEP 2: Checking audio files", "route", route, "directory", dir)
 	if !checkAudioFiles(logger, dir, route) {
 		err := fmt.Errorf("audio files check failed for route %s: %s", route, dir)
 		logger.Error("Audio files check failed", "route", route, "directory", dir)
@@ -659,7 +685,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Info("ROUTE CONFIG STEP 2.5: Checking and converting audio bitrate", "route", route, "directory", dir)
+	logger.Debug("ROUTE CONFIG STEP 2.5: Checking and converting audio bitrate", "route", route, "directory", dir)
 	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
 		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
 		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
@@ -669,7 +695,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Info("ROUTE CONFIG STEP 3: Creating playlist", "route", route, "directory", dir)
+	logger.Debug("ROUTE CONFIG STEP 3: Creating playlist", "route", route, "directory", dir)
 	pl := createPlaylistOrNil(logger, dir, route, config)
 	if pl == nil {
 		err := fmt.Errorf("playlist creation failed for route %s: %s", route, dir)
@@ -680,7 +706,7 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Info("ROUTE CONFIG STEP 4: Creating streamer", "route", route)
+	logger.Debug("ROUTE CONFIG STEP 4: Creating streamer", "route", route)
 	streamer := createStreamer(logger, config, route)
 	if streamer == nil {
 		err := fmt.Errorf("streamer creation failed for route %s", route)
@@ -691,13 +717,13 @@ func configureSyncRoute(
 		return false
 	}
 
-	logger.Info("ROUTE CONFIG STEP 5: Adding station to manager", "route", route)
+	logger.Debug("ROUTE CONFIG STEP 5: Adding station to manager", "route", route)
 	stationManager.AddStation(route, streamer, pl)
-	logger.Info("Radio station successfully added to manager", slog.String("route", route))
+	logger.Debug("Radio station successfully added to manager", slog.String("route", route))
 
-	logger.Info("ROUTE CONFIG STEP 6: Registering stream on HTTP server", "route", route)
+	logger.Debug("ROUTE CONFIG STEP 6: Registering stream on HTTP server", "route", route)
 	server.RegisterStream(route, streamer, pl)
-	logger.Info("Audio stream successfully registered on HTTP server", slog.String("route", route))
+	logger.Debug("Audio stream successfully registered on HTTP server", slog.String("route", route))
 
 	if !server.IsStreamRegistered(route) {
 		logger.Error("CRITICAL ERROR: Stream not registered after all operations", slog.String("route", route))
@@ -717,19 +743,19 @@ func configureSyncRoute(
 		)
 	case "off":
 		streamer.SetVolumeNormalization(false)
-		logger.Info("DIAGNOSTICS: Runtime normalization mode 'off' overrides default setting for route",
+		logger.Debug("Runtime normalization mode 'off' overrides default setting for route",
 			slog.String("route", route))
 	case "auto", "":
-		logger.Info("DIAGNOSTICS: Using default normalization setting for route", slog.String("route", route))
+		logger.Debug("Using default normalization setting for route", slog.String("route", route))
 	}
 
-	logger.Info("RESULT: Route configuration SUCCESSFULLY COMPLETED", slog.String("route", route))
+	logger.Debug("RESULT: Route configuration SUCCESSFULLY COMPLETED", slog.String("route", route))
 	return true
 }
 
 func ensureDirectoryExists(logger *slog.Logger, dir, route string) bool {
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
-		logger.Info("Creating directory for route", slog.String("route", route))
+		logger.Debug("Creating directory for route", slog.String("route", route))
 		if mkdirErr := os.MkdirAll(dir, 0750); mkdirErr != nil {
 			logger.Error("ERROR: When creating directory",
 				"directory", dir,
@@ -745,7 +771,7 @@ func ensureDirectoryExists(logger *slog.Logger, dir, route string) bool {
 }
 
 func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
-	logger.Info("DIAGNOSTICS: Checking audio files in directory",
+	logger.Debug("Checking audio files in directory",
 		slog.String("directory", dir), slog.String("route", route))
 
 	files, readErr := os.ReadDir(dir)
@@ -761,9 +787,9 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 	}
 
 	// Выводим список всех файлов для диагностики
-	logger.Info("DIAGNOSTICS: List of files in directory", slog.String("directory", dir))
+	logger.Debug("List of files in directory", slog.String("directory", dir))
 	for i, file := range files {
-		logger.Info("DIAGNOSTICS: File found",
+		logger.Debug("File found",
 			slog.Int("index", i),
 			slog.String("name", file.Name()),
 			slog.Bool("isDir", file.IsDir()),
@@ -786,7 +812,7 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 		isHidden := strings.HasPrefix(fileName, ".")
 
 		// Детальное логирование проверки файла
-		logger.Info("DIAGNOSTICS: Checking file",
+		logger.Debug("Checking file",
 			slog.String("fileName", fileName),
 			slog.String("lowerFileName", lowerFileName),
 			slog.Bool("isDir", file.IsDir()),
@@ -800,13 +826,13 @@ func checkAudioFiles(logger *slog.Logger, dir, route string) bool {
 		// Считаем аудиофайлы (не директории, не скрытые файлы, с поддержкой аудиоформатов)
 		if !file.IsDir() && !isHidden && (isMP3 || isOGG || isAAC || isWAV || isFLAC) {
 			audioFiles++
-			logger.Info("DIAGNOSTICS: Audio file counted",
+			logger.Debug("Audio file counted",
 				slog.String("fileName", fileName),
 				slog.Int("totalSoFar", audioFiles))
 		}
 	}
 
-	logger.Info("Directory contains", slog.Int("audio_files", audioFiles), slog.String("directory", dir))
+	logger.Debug("Directory contains", slog.Int("audio_files", audioFiles), slog.String("directory", dir))
 
 	// Вместо ошибки только выводим предупреждение, если нет аудиофайлов, но разрешаем продолжить работу
 	if audioFiles == 0 {
@@ -829,9 +855,9 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 	shuffleSetting := config.Shuffle
 	if specificShuffle, exists := config.PerStreamShuffle[route]; exists {
 		shuffleSetting = specificShuffle
-		logger.Info("Using specific shuffle setting for route", slog.String("route", route))
+		logger.Debug("Using specific shuffle setting for route", slog.String("route", route))
 	} else {
-		logger.Info("Using global shuffle setting for route", slog.String("route", route))
+		logger.Debug("Using global shuffle setting for route", slog.String("route", route))
 	}
 	pl, playlistErr := playlist.NewPlaylist(dir, nil, shuffleSetting, logger, config.SentryHelper)
 	if playlistErr != nil {
@@ -839,15 +865,15 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 		config.SentryHelper.CaptureError(fmt.Errorf("error creating playlist: %w", playlistErr), "main", "playlist_creation")
 		return nil
 	}
-	logger.Info("Playlist for route successfully created", slog.String("route", route))
+	logger.Debug("Playlist for route successfully created", slog.String("route", route))
 	return pl
 }
 
 func createStreamer(logger *slog.Logger, config *Config, route string) *audio.Streamer {
-	logger.Info("Creating audio streamer for route", slog.String("route", route))
+	logger.Debug("Creating audio streamer for route", slog.String("route", route))
 	streamer := audio.NewStreamer(config.BufferSize, config.MaxClients, config.Bitrate, logger, config.SentryHelper)
 	streamer.SetVolumeNormalization(config.NormalizeVolume)
-	logger.Info("Audio streamer for route successfully created", slog.String("route", route))
+	logger.Debug("Audio streamer for route successfully created", slog.String("route", route))
 	return streamer
 }
 
@@ -1020,7 +1046,7 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		for route, path := range jsonRoutes {
 			// Нормализуем маршрут (добавляем слэш в начало, если его нет)
 			if !strings.HasPrefix(route, "/") {
-				logger.Info("Normalized route", slog.String("from", route), slog.String("to", "/"+route))
+				logger.Debug("Normalized route", slog.String("from", route), slog.String("to", "/"+route))
 				route = "/" + route
 			}
 
@@ -1032,10 +1058,10 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 
 			// Ключ - маршрут, значение - путь к директории
 			config.DirectoryRoutes[route] = path
-			logger.Info("Added directory route from JSON", slog.String("route", route), slog.String("path", path))
+			logger.Debug("Added directory route from JSON", slog.String("route", route), slog.String("path", path))
 		}
 
-		logger.Info("Directory routes configured from JSON", slog.Int("count", len(config.DirectoryRoutes)))
+		logger.Debug("Directory routes configured from JSON", slog.Int("count", len(config.DirectoryRoutes)))
 		return
 	}
 
@@ -1067,7 +1093,7 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 		// Add to configuration.
 		config.DirectoryRoutes[url] = path
 
-		logger.Info("Added directory route", slog.String("url", url), slog.String("path", path))
+		logger.Debug("Added directory route", slog.String("url", url), slog.String("path", path))
 	}
 
 	logger.Debug("Directory routes configured", slog.Int("count", len(config.DirectoryRoutes)))
@@ -1290,7 +1316,7 @@ func cleanAllTrackHistories(logger *slog.Logger, server *httpServer.Server) {
 
 // checkAndConvertBitrate checks all audio files in directory and converts them to target bitrate if needed.
 func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrate int) bool {
-	logger.Info("BITRATE CONVERSION: Starting bitrate check for directory",
+	logger.Debug("BITRATE CONVERSION: Starting bitrate check for directory",
 		slog.String("directory", dir),
 		slog.String("route", route),
 		slog.Int("targetBitrate", targetBitrate))
@@ -1340,14 +1366,14 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 			continue
 		}
 
-		logger.Info("BITRATE CONVERSION: File bitrate detected",
+		logger.Debug("BITRATE CONVERSION: File bitrate detected",
 			slog.String("file", fileName),
 			slog.Int("currentBitrate", currentBitrate),
 			slog.Int("targetBitrate", targetBitrate))
 
 		// Check if conversion is needed.
 		if currentBitrate == targetBitrate {
-			logger.Info("BITRATE CONVERSION: File already has target bitrate, skipping",
+			logger.Debug("BITRATE CONVERSION: File already has target bitrate, skipping",
 				slog.String("file", fileName),
 				slog.Int("bitrate", currentBitrate))
 			skippedFiles++
@@ -1364,13 +1390,13 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 		}
 
 		convertedFiles++
-		logger.Info("BITRATE CONVERSION: File successfully converted",
+		logger.Debug("BITRATE CONVERSION: File successfully converted",
 			slog.String("file", fileName),
 			slog.Int("fromBitrate", currentBitrate),
 			slog.Int("toBitrate", targetBitrate))
 	}
 
-	logger.Info("BITRATE CONVERSION: Completed for directory",
+	logger.Debug("BITRATE CONVERSION: Completed for directory",
 		slog.String("directory", dir),
 		slog.String("route", route),
 		slog.Int("totalAudioFiles", totalAudioFiles),
@@ -1443,7 +1469,7 @@ func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int
 		return false
 	}
 
-	logger.Info("BITRATE CONVERSION: Successfully converted file",
+	logger.Debug("BITRATE CONVERSION: Successfully converted file",
 		slog.String("file", filePath),
 		slog.Int("targetBitrate", targetBitrate))
 
