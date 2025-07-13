@@ -35,12 +35,11 @@ var globalSentryHelper *sentryhelper.SentryHelper
 
 // Default configuration.
 const (
-	defaultPort            = 8000
-	defaultAudioDir        = "./audio"
+	defaultPort     = 8000
+	defaultAudioDir = "./audio"
 
 	defaultBitrate         = 128
 	defaultMaxClients      = 500
-	defaultLogLevel        = "info"
 	defaultBufferSize      = 65536               // 64KB
 	defaultShuffle         = false               // Shuffle tracks is disabled by default
 	defaultNormalizeVolume = true                // Volume normalization is enabled by default
@@ -52,7 +51,6 @@ const (
 	defaultRoute           = "/status"
 	maxSplitParts          = 2      // Maximum number of parts when splitting configuration strings
 	strTrue                = "true" // Строковое значение "true" для проверки
-	partsCount             = 2      // Ожидаемое количество частей при разделении строки
 )
 
 // Config describes the application configuration parameters.
@@ -62,17 +60,16 @@ type Config struct {
 	DirectoryRoutes        map[string]string
 	Bitrate                int
 	MaxClients             int
-	LogLevel               string
 	BufferSize             int
-	Shuffle                bool            // Global shuffle tracks setting
-	PerStreamShuffle       map[string]bool // Per-stream shuffle configuration
-	NormalizeVolume        bool            // Global volume normalization setting
-	NormalizeRuntime       string          // Runtime normalization mode: "auto", "on", "off"
-	NormalizeSampleWindows int             // Number of analysis windows for normalization
-	NormalizeSampleMs      int             // Duration of each analysis window in milliseconds
-	EnableRelay            bool            // Enable relay functionality
-	RelayConfigFile        string          // Path to relay configuration file
-	SentryDSN              string          // DSN для Sentry
+	Shuffle                bool                       // Global shuffle tracks setting
+	PerStreamShuffle       map[string]bool            // Per-stream shuffle configuration
+	NormalizeVolume        bool                       // Global volume normalization setting
+	NormalizeRuntime       string                     // Runtime normalization mode: "auto", "on", "off"
+	NormalizeSampleWindows int                        // Number of analysis windows for normalization
+	NormalizeSampleMs      int                        // Duration of each analysis window in milliseconds
+	EnableRelay            bool                       // Enable relay functionality
+	RelayConfigFile        string                     // Path to relay configuration file
+	SentryDSN              string                     // DSN для Sentry
 	SentryHelper           *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
 
@@ -295,7 +292,7 @@ func initializeComponents(
 	logger.Info("Creating HTTP server...")
 	server := httpServer.NewServer(config.MaxClients, logger, config.SentryHelper)
 	logger.Info("HTTP server created")
-	
+
 	// Set global shuffle configuration.
 	server.SetGlobalShuffleConfig(config.Shuffle)
 	logger.Info("Global shuffle configuration set for HTTP server", slog.Bool("enabled", config.Shuffle))
@@ -303,7 +300,7 @@ func initializeComponents(
 	// Configure normalization parameters with safe defaults.
 	normalizeWindows := config.NormalizeSampleWindows
 	normalizeMs := config.NormalizeSampleMs
-	
+
 	// CRITICAL: If normalization is disabled, use zero values
 	if !config.NormalizeVolume || config.NormalizeRuntime == "off" || normalizeWindows <= 0 || normalizeMs <= 0 {
 		normalizeWindows = 0
@@ -318,7 +315,7 @@ func initializeComponents(
 			"windows", normalizeWindows,
 			"durationMs", normalizeMs)
 	}
-	
+
 	audio.SetNormalizeConfig(normalizeWindows, normalizeMs)
 	logger.Info("Audio configuration completed",
 		"normalizationEnabled", normalizeWindows > 0 && normalizeMs > 0,
@@ -365,7 +362,7 @@ func initializeRelayManager(logger *slog.Logger, config *Config, server *httpSer
 
 	// Set relay manager for HTTP server.
 	server.SetRelayManager(relayManager)
-	
+
 	// CRITICAL: Setup relay routes AFTER relay manager is set
 	server.SetupRelayRoutes()
 	logger.Info("Relay manager initialized and set for HTTP server")
@@ -397,7 +394,9 @@ func startHTTPServer(logger *slog.Logger, port int, handler http.Handler) *http.
 		logger.Info("Starting HTTP server", "address", fmt.Sprintf("0.0.0.0:%d", port))
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("Server start error", "error", err)
-			if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+			if globalSentryHelper != nil {
+				globalSentryHelper.CaptureError(err, "main", "operation")
+			}
 		}
 	}()
 
@@ -453,7 +452,9 @@ func configureRootHandler(logger *slog.Logger, server *httpServer.Server, redire
 	if routeHandlerErr := routeHandler.GetError(); routeHandlerErr != nil {
 		routeErr = routeHandlerErr
 		logger.Error("Failed to register root handler", "error", routeErr)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(routeErr, "main", "route_config") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(routeErr, "main", "route_config")
+		}
 	}
 
 	if routeErr != nil {
@@ -470,7 +471,7 @@ func configureAudioRoutes(
 ) {
 	logger.Info("Starting audio route configuration...")
 	logger.Info("Directory routes found", "count", len(config.DirectoryRoutes))
-	
+
 	// Log all routes for debugging
 	for route, dir := range config.DirectoryRoutes {
 		logger.Info("Found route", "route", route, "directory", dir)
@@ -479,7 +480,9 @@ func configureAudioRoutes(
 	if len(config.DirectoryRoutes) == 0 {
 		criticalErr := fmt.Errorf("CRITICAL: No directory routes configured")
 		logger.Error("CRITICAL: No directory routes configured! Check DIRECTORY_ROUTES environment variable.")
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(criticalErr, "main", "critical")
+		}
 		return
 	}
 
@@ -491,11 +494,13 @@ func configureAudioRoutes(
 			"normalizeVolume", config.NormalizeVolume,
 			"normalizeRuntime", config.NormalizeRuntime,
 			"expected", "> 0")
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(criticalErr, "main", "critical")
+		}
 		// This is a critical configuration error - don't start audio streams
 		return
 	}
-	
+
 	logger.Info("Audio route configuration checks passed",
 		"normalizeVolume", config.NormalizeVolume,
 		"normalizeRuntime", config.NormalizeRuntime,
@@ -523,7 +528,9 @@ func configureAudioRoutes(
 			} else {
 				criticalErr := fmt.Errorf("CRITICAL: Route configuration failed for %s", r)
 				logger.Error("CRITICAL: Route configuration failed", slog.String("route", r))
-				if globalSentryHelper != nil { globalSentryHelper.CaptureError(criticalErr, "main", "critical") }
+				if globalSentryHelper != nil {
+					globalSentryHelper.CaptureError(criticalErr, "main", "critical")
+				}
 			}
 		}(routeCopy, dirCopy)
 	}
@@ -581,7 +588,9 @@ func handleShutdownSignal(
 
 	if shutdownErr := httpSrv.Shutdown(ctx); shutdownErr != nil {
 		logger.Error("Server shutdown error", "error", shutdownErr)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(shutdownErr, "main", "shutdown") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(shutdownErr, "main", "shutdown")
+		}
 	}
 	logger.Info("Server successfully stopped")
 
@@ -622,7 +631,9 @@ func configureSyncRoute(
 		if r := recover(); r != nil {
 			err := fmt.Errorf("PANIC in configureSyncRoute for route %s: %v", route, r)
 			logger.Error("PANIC in route configuration", "route", route, "panic", r)
-			if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+			if globalSentryHelper != nil {
+				globalSentryHelper.CaptureError(err, "main", "operation")
+			}
 		}
 	}()
 
@@ -632,7 +643,9 @@ func configureSyncRoute(
 	if !ensureDirectoryExists(logger, dir, route) {
 		err := fmt.Errorf("directory check failed for route %s: %s", route, dir)
 		logger.Error("Directory check failed", "route", route, "directory", dir)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(err, "main", "operation")
+		}
 		return false
 	}
 
@@ -640,7 +653,9 @@ func configureSyncRoute(
 	if !checkAudioFiles(logger, dir, route) {
 		err := fmt.Errorf("audio files check failed for route %s: %s", route, dir)
 		logger.Error("Audio files check failed", "route", route, "directory", dir)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(err, "main", "operation")
+		}
 		return false
 	}
 
@@ -648,7 +663,9 @@ func configureSyncRoute(
 	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
 		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
 		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(err, "main", "operation")
+		}
 		return false
 	}
 
@@ -657,7 +674,9 @@ func configureSyncRoute(
 	if pl == nil {
 		err := fmt.Errorf("playlist creation failed for route %s: %s", route, dir)
 		logger.Error("Playlist creation failed", "route", route, "directory", dir)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(err, "main", "operation")
+		}
 		return false
 	}
 
@@ -666,7 +685,9 @@ func configureSyncRoute(
 	if streamer == nil {
 		err := fmt.Errorf("streamer creation failed for route %s", route)
 		logger.Error("Streamer creation failed", "route", route)
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(err, "main", "operation") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(err, "main", "operation")
+		}
 		return false
 	}
 
@@ -845,9 +866,9 @@ func loadConfig() *Config {
 func parseCommandLineFlags() *Config {
 	port := flag.Int("port", defaultPort, "HTTP server port")
 	audioDir := flag.String("audio-dir", defaultAudioDir, "Directory with audio files")
+	directoryRoutes := flag.String("directory-routes", "", "JSON mapping of route prefixes to directories")
 	bitrate := flag.Int("bitrate", defaultBitrate, "Stream bitrate")
 	maxClients := flag.Int("max-clients", defaultMaxClients, "Maximum number of clients")
-	logLevel := flag.String("log-level", defaultLogLevel, "Log level")
 	bufferSize := flag.Int("buffer-size", defaultBufferSize, "Buffer size for audio streaming")
 	shuffle := flag.Bool("shuffle", defaultShuffle, "Enable shuffle mode for all streams")
 	normalizeVolume := flag.Bool("normalize", defaultNormalizeVolume, "Enable volume normalization")
@@ -860,14 +881,21 @@ func parseCommandLineFlags() *Config {
 
 	flag.Parse()
 
+	// Parse directory routes from command line flag.
+	directoryRoutesMap := make(map[string]string)
+	if *directoryRoutes != "" {
+		if err := json.Unmarshal([]byte(*directoryRoutes), &directoryRoutesMap); err != nil {
+			slog.Default().Error("Invalid directory-routes JSON", slog.String("error", err.Error()))
+		}
+	}
+
 	// Create configuration.
 	return &Config{
 		Port:                   *port,
 		AudioDir:               *audioDir,
-		DirectoryRoutes:        make(map[string]string),
+		DirectoryRoutes:        directoryRoutesMap,
 		Bitrate:                *bitrate,
 		MaxClients:             *maxClients,
-		LogLevel:               *logLevel,
 		BufferSize:             *bufferSize,
 		Shuffle:                *shuffle,
 		PerStreamShuffle:       make(map[string]bool),
@@ -1018,12 +1046,12 @@ func loadDirectoryRoutesFromEnv(config *Config, logger *slog.Logger) {
 	routes := strings.Split(dirRoutes, ";")
 	for _, route := range routes {
 		parts := strings.Split(route, ":")
-		if len(parts) != partsCount {
+		if len(parts) != maxSplitParts {
 			logger.Warn("Invalid directory route format", slog.String("route", route))
 			continue
 		}
 
-		url := parts[0] // Маршрут
+		url := parts[0]  // Маршрут
 		path := parts[1] // Путь к директории
 
 		if !strings.HasPrefix(url, "/") {
@@ -1197,7 +1225,9 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 				logger.Error("Error reloading playlist",
 					slog.String("route", path),
 					slog.String("error", reloadErr.Error()))
-				if globalSentryHelper != nil { globalSentryHelper.CaptureError(reloadErr, "main", "reload") }
+				if globalSentryHelper != nil {
+					globalSentryHelper.CaptureError(reloadErr, "main", "reload")
+				}
 			} else {
 				logger.Info("Playlist successfully reloaded", slog.String("route", path))
 			}
@@ -1207,7 +1237,9 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 	}); walkErr != nil {
 		logger.Error("Error walking routes for playlist reload",
 			slog.String("error", walkErr.Error()))
-		if globalSentryHelper != nil { globalSentryHelper.CaptureError(walkErr, "main", "file_walk") }
+		if globalSentryHelper != nil {
+			globalSentryHelper.CaptureError(walkErr, "main", "file_walk")
+		}
 	}
 
 	logger.Info("Playlist reload complete")
@@ -1216,10 +1248,10 @@ func reloadAllPlaylists(logger *slog.Logger, server *httpServer.Server) {
 // startHistoryCleanupRoutine starts a routine that cleans track history every 12 hours
 func startHistoryCleanupRoutine(logger *slog.Logger, server *httpServer.Server) {
 	logger.Info("History cleanup routine started - will clean every 12 hours")
-	
+
 	ticker := time.NewTicker(12 * time.Hour)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -1231,10 +1263,10 @@ func startHistoryCleanupRoutine(logger *slog.Logger, server *httpServer.Server) 
 // cleanAllTrackHistories clears track history for all streams
 func cleanAllTrackHistories(logger *slog.Logger, server *httpServer.Server) {
 	logger.Info("Starting automatic cleanup of all track histories")
-	
+
 	// Get all registered streams by checking common routes
 	commonRoutes := []string{"/humor", "/science", "/politics", "/nature", "/shaov", "/troshin", "/test_audio"}
-	
+
 	clearedCount := 0
 	for _, route := range commonRoutes {
 		if server.IsStreamRegistered(route) {
@@ -1244,22 +1276,22 @@ func cleanAllTrackHistories(logger *slog.Logger, server *httpServer.Server) {
 				logger.Info("Cleared history for route", slog.String("route", route))
 				clearedCount++
 			} else {
-				logger.Error("Failed to clear history for route", 
-					slog.String("route", route), 
+				logger.Error("Failed to clear history for route",
+					slog.String("route", route),
 					slog.String("error", err.Error()))
 			}
 		}
 	}
-	
-	logger.Info("Automatic history cleanup completed", 
+
+	logger.Info("Automatic history cleanup completed",
 		slog.Int("streams_cleaned", clearedCount),
 		slog.String("next_cleanup", time.Now().Add(12*time.Hour).Format("2006-01-02 15:04:05")))
 }
 
 // checkAndConvertBitrate checks all audio files in directory and converts them to target bitrate if needed.
 func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrate int) bool {
-	logger.Info("BITRATE CONVERSION: Starting bitrate check for directory", 
-		slog.String("directory", dir), 
+	logger.Info("BITRATE CONVERSION: Starting bitrate check for directory",
+		slog.String("directory", dir),
 		slog.String("route", route),
 		slog.Int("targetBitrate", targetBitrate))
 
@@ -1377,7 +1409,7 @@ func getAudioBitrate(logger *slog.Logger, filePath string) (int, error) {
 func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int) bool {
 	// Create temporary file for conversion.
 	tempFile := filePath + ".temp"
-	
+
 	// Remove temp file if it exists.
 	if _, err := os.Stat(tempFile); err == nil {
 		os.Remove(tempFile)
@@ -1385,7 +1417,7 @@ func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int
 
 	// Build ffmpeg command with explicit format specification.
 	cmd := exec.Command("ffmpeg", "-y", "-i", filePath, "-b:a", fmt.Sprintf("%dk", targetBitrate), "-codec:a", "libmp3lame", "-f", "mp3", tempFile)
-	
+
 	// Execute conversion.
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1394,7 +1426,7 @@ func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int
 			slog.Int("targetBitrate", targetBitrate),
 			slog.String("error", err.Error()),
 			slog.String("output", string(output)))
-		
+
 		// Clean up temp file.
 		os.Remove(tempFile)
 		return false
@@ -1405,7 +1437,7 @@ func convertAudioBitrate(logger *slog.Logger, filePath string, targetBitrate int
 		logger.Error("BITRATE CONVERSION: Failed to replace original file",
 			slog.String("file", filePath),
 			slog.String("error", err.Error()))
-		
+
 		// Clean up temp file.
 		os.Remove(tempFile)
 		return false

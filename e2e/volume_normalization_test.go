@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/aposazhennikov/stream-audio-to-web/audio"
 )
 
 // getServerURL returns the server URL from environment variable or default value.

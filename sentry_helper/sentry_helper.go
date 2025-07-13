@@ -51,12 +51,12 @@ func (h *SentryHelper) CaptureExceptionWithContext(err error, tags map[string]st
 		for key, value := range tags {
 			scope.SetTag(key, value)
 		}
-		
+
 		// Add extra context data.
 		for key, value := range extra {
 			scope.SetExtra(key, value)
 		}
-		
+
 		hub.CaptureException(err)
 	})
 }
@@ -85,12 +85,12 @@ func (h *SentryHelper) CaptureMessageWithContext(msg string, tags map[string]str
 		for key, value := range tags {
 			scope.SetTag(key, value)
 		}
-		
+
 		// Add extra context data.
 		for key, value := range extra {
 			scope.SetExtra(key, value)
 		}
-		
+
 		hub.CaptureMessage(msg)
 	})
 }
@@ -104,10 +104,10 @@ func (h *SentryHelper) AddBreadcrumb(category, message string, level sentry.Leve
 	// Clone hub to avoid data races in goroutines.
 	hub := sentry.CurrentHub().Clone()
 	hub.AddBreadcrumb(&sentry.Breadcrumb{
-		Category: category,
-		Message:  message,
-		Level:    level,
-		Data:     data,
+		Category:  category,
+		Message:   message,
+		Level:     level,
+		Data:      data,
 		Timestamp: time.Now(),
 	}, nil)
 }
@@ -135,7 +135,7 @@ func (h *SentryHelper) CaptureError(err error, component string, operation strin
 		"component": component,
 		"operation": operation,
 	}
-	
+
 	h.CaptureExceptionWithContext(err, tags, nil)
 }
 
@@ -150,7 +150,7 @@ func (h *SentryHelper) CaptureWarning(msg string, component string, operation st
 		"operation": operation,
 		"level":     "warning",
 	}
-	
+
 	h.CaptureMessageWithContext(msg, tags, nil)
 }
 
@@ -165,7 +165,7 @@ func (h *SentryHelper) CaptureInfo(msg string, component string, operation strin
 		"operation": operation,
 		"level":     "info",
 	}
-	
+
 	h.CaptureMessageWithContext(msg, tags, nil)
 }
 
@@ -179,4 +179,4 @@ func (h *SentryHelper) SafeFlush(timeout time.Duration) {
 	if !sentry.Flush(timeout) {
 		h.logger.Warn("Sentry flush timeout", "timeout", timeout)
 	}
-} 
+}

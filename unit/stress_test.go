@@ -10,9 +10,7 @@ import (
 	"time"
 
 	"github.com/aposazhennikov/stream-audio-to-web/playlist"
-	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
-
 
 // TestParallelPlaylistInitialization tests initialization of multiple playlists in parallel.
 // This is a stress test simulating production-like conditions.

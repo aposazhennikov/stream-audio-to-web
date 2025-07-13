@@ -2,6 +2,7 @@ package unit_test
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
-	"github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 // mockHTTPServer creates a mock HTTP server for relay tests.

@@ -74,7 +74,6 @@ const xmlHTTPRequestHeader = "X-Requested-With"
 
 const (
 	defaultStatusPassword     = "1234554321"
-	defaultStreamsSortTimeout = 1 * time.Second
 	asciiMax                  = 127
 	shortSleepMs              = 50
 	kb                        = 1024

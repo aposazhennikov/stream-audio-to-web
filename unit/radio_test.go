@@ -8,12 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/radio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/aposazhennikov/stream-audio-to-web/radio"
-	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
-
 
 // MockAudioStreamer implements radio.AudioStreamer for testing.
 type MockAudioStreamer struct {

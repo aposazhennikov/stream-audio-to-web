@@ -51,10 +51,8 @@ const (
 	maxShowTracks       = 3
 	maxAttempts         = 3
 	getTrackTimeout     = 500 * time.Millisecond // Базовый таймаут
-	getTrackPause       = 50 * time.Millisecond
 	maxHistorySize      = 100
 	mutexTryLockTimeout = 50 * time.Millisecond
-	shuffleDelayMs      = 10
 
 	// Увеличенный таймаут для стрессовых тестов.
 	testTrackTimeout = 2000 * time.Millisecond

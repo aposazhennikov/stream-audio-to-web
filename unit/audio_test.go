@@ -9,14 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/aposazhennikov/stream-audio-to-web/audio"
-	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
-	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 	"go.uber.org/goleak"
 )
-
 
 // TestMain sets up and tears down tests, including goroutine leak detection.
 func TestMain(m *testing.M) {
@@ -54,7 +52,7 @@ func TestStreamerClientManagement(t *testing.T) {
 		require.NotNil(t, ch, "Client channel should not be nil")
 
 		clients = append(clients, clientID)
-		var _ = append(channels, ch)
+		channels = append(channels, ch)
 
 		// Check incremented client count.
 		assert.Equal(t, i+1, streamer.GetClientCount(), "Client count should increase by one")

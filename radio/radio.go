@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	shortDelayMs            = 50
 	emptyTrackWaitSec       = 5
 	longWaitSec             = 30
 	loopPauseMs             = 100

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,7 +16,6 @@ import (
 
 	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
-	"github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 // Mock HTTP server that serves fake audio content.

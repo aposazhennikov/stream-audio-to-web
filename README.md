@@ -118,7 +118,7 @@ The server provides the following endpoints for monitoring:
 
 1. Clone the repository
 ```bash
-git clone https://github.com/user/stream-audio-to-web.git
+git clone https://github.com/aposazhennikov/stream-audio-to-web.git
 cd stream-audio-to-web
 ```
 
@@ -148,7 +148,7 @@ When connecting to these routes in the browser, the audio stream will start auto
 
 1. Clone the repository
 ```bash
-git clone https://github.com/user/stream-audio-to-web.git
+git clone https://github.com/aposazhennikov/stream-audio-to-web.git
 cd stream-audio-to-web
 ```
 

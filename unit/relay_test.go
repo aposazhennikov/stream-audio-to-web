@@ -2,12 +2,12 @@ package unit_test
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
-	"github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
 func TestNewRelayManager(t *testing.T) {

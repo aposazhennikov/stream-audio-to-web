@@ -38,9 +38,6 @@ const (
 	firstTimeoutMs             = 200
 	secondTimeoutMs            = 200
 	batchSize                  = 50
-	streamerDefaultSampleRate  = 44100
-	defaultChannels            = 2
-	defaultBitDepth            = 16
 )
 
 // Streamer manages audio streaming for a single "radio" stream.
