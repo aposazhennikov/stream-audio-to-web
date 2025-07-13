@@ -622,3 +622,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Integrates Prometheus for monitoring
 - Features Sentry for error tracking
 - Powered by FFmpeg for audio processing
+
+
+# TODO
+
+- Fix normalization and bufferization, volume on different tracks sould be the same
+- Pass all liners and tests
+- Add TG_ALERT on fall 
