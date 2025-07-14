@@ -809,9 +809,25 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		// Set up appropriate headers for streaming.
 		s.setupStreamingHeaders(w, contentType)
 
-		// For HEAD requests, just send headers and return.
+		// For HEAD requests, check if stream is ready before returning OK.
 		if r.Method == http.MethodHead {
-			s.logger.Debug("Handled HEAD request", slog.String("route", route), slog.String("remoteAddr", r.RemoteAddr))
+			// Check if stream has a current track (files are ready for playback).
+			s.trackMutex.RLock()
+			currentTrack := s.currentTracks[route]
+			s.trackMutex.RUnlock()
+			
+			if currentTrack == "" {
+				s.logger.Debug("HEAD request - stream not ready, no current track", 
+					slog.String("route", route), 
+					slog.String("remoteAddr", r.RemoteAddr))
+				http.Error(w, "Stream not ready - files are being processed", http.StatusServiceUnavailable)
+				return
+			}
+			
+			s.logger.Debug("HEAD request - stream ready", 
+				slog.String("route", route), 
+				slog.String("remoteAddr", r.RemoteAddr),
+				slog.String("currentTrack", currentTrack))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
