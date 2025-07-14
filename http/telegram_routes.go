@@ -32,8 +32,11 @@ func getTimeInTimezone() time.Time {
 
 // telegramAlertsHandler handles the telegram alerts management page
 func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("TELEGRAM HANDLER: Starting request", "path", r.URL.Path, "method", r.Method)
+	
 	// Check authentication
 	if !s.checkAuth(r) {
+		s.logger.Info("TELEGRAM HANDLER: Authentication failed, redirecting")
 		// Redirect to login with telegram-alerts as return URL
 		originalURL := r.URL.Path
 		if r.URL.RawQuery != "" {
@@ -44,14 +47,20 @@ func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Info("TELEGRAM HANDLER: Authentication passed")
+
 	if s.telegramManager == nil {
+		s.logger.Error("TELEGRAM HANDLER: Telegram manager is nil")
 		http.Error(w, "Telegram alerts not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Get current configuration
-	config := s.telegramManager.GetConfig()
+	s.logger.Info("TELEGRAM HANDLER: Getting telegram config...")
+	// Get current configuration - use fast version to avoid blocking background monitoring
+	config := s.telegramManager.GetConfigFast()
+	s.logger.Info("TELEGRAM HANDLER: Got telegram config", "enabled", config.Enabled)
 
+	s.logger.Info("TELEGRAM HANDLER: Getting available routes...")
 	// Get available routes from registered streams
 	type RouteInfo struct {
 		Route string
@@ -70,20 +79,26 @@ func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.mutex.RUnlock()
+	s.logger.Info("TELEGRAM HANDLER: Got available routes", "count", len(availableRoutes))
 
+	s.logger.Info("TELEGRAM HANDLER: Getting relay routes...")
 	// Get available relay routes
 	availableRelayRoutes := make([]string, 0)
 	if s.relayManager != nil {
 		relayList := s.relayManager.GetLinks()
+		s.logger.Info("TELEGRAM HANDLER: Got relay links", "count", len(relayList))
 		for i := range relayList {
 			availableRelayRoutes = append(availableRelayRoutes, strconv.Itoa(i))
 		}
 	}
+	s.logger.Info("TELEGRAM HANDLER: Finished getting relay routes", "count", len(availableRelayRoutes))
 
 	// Process any error/success messages
 	errorMessage := r.URL.Query().Get("error")
 	successMessage := r.URL.Query().Get("success")
+	s.logger.Info("TELEGRAM HANDLER: Processing query parameters", "error", errorMessage, "success", successMessage)
 
+	s.logger.Info("TELEGRAM HANDLER: Loading template...")
 	// Load template
 	tmpl, err := template.ParseFiles(
 		"templates/telegram_alerts.html",
@@ -94,7 +109,9 @@ func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error", http.StatusInternalServerError)
 		return
 	}
+	s.logger.Info("TELEGRAM HANDLER: Template loaded successfully")
 
+	s.logger.Info("TELEGRAM HANDLER: Preparing template data...")
 	// Prepare template data
 	data := map[string]interface{}{
 		"Title":                "Telegram Alerts - Audio Stream Server",
@@ -104,12 +121,15 @@ func (s *Server) telegramAlertsHandler(w http.ResponseWriter, r *http.Request) {
 		"ErrorMessage":         errorMessage,
 		"SuccessMessage":       successMessage,
 	}
+	s.logger.Info("TELEGRAM HANDLER: Template data prepared")
 
+	s.logger.Info("TELEGRAM HANDLER: Executing template...")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
 		s.logger.Error("Failed to execute telegram alerts template", slog.String("error", err.Error()))
 		return
 	}
+	s.logger.Info("TELEGRAM HANDLER: Template executed successfully, response sent")
 }
 
 // telegramAlertsUpdateHandler handles updates to telegram alerts configuration
@@ -249,7 +269,16 @@ func (s *Server) telegramAlertsTestHandler(w http.ResponseWriter, r *http.Reques
 	// Create test message
 	message := "🧪 *Telegram Alerts Test*\n\n"
 	message += "✅ Bot configuration is working correctly!\n"
-	message += "📅 *Test Time:* " + getTimeInTimezone().Format("15:04:05") + "\n"
+	
+	// Get time in configured timezone from telegram manager
+	var timeStr string
+	if s.telegramManager != nil {
+		timeStr = s.telegramManager.GetTimeInConfiguredTimezone().Format("15:04:05")
+	} else {
+		timeStr = getTimeInTimezone().Format("15:04:05")
+	}
+	
+	message += "📅 *Test Time:* " + timeStr + "\n"
 	message += "🤖 *From:* Audio Stream Server"
 
 	// Send test message

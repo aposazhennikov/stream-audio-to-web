@@ -71,6 +71,7 @@ type Server struct {
 	sentryHelper      *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
 	telegramManager   *telegram.Manager      // Manager for telegram alerts.
 	telegramFunctionalityEnabled bool       // Whether telegram functionality is enabled via environment.
+	relayFunctionalityEnabled     bool       // Whether relay functionality is enabled via environment.
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
@@ -295,11 +296,8 @@ func (s *Server) setupRoutes() {
 	// Endpoint to clear track history for specific stream.
 	s.router.HandleFunc("/clear-history/{route}", s.handleClearHistory).Methods("POST")
 
-	// Add relay routes if relay manager is available
-	s.setupRelayRoutes()
-
-	// Add telegram routes if telegram manager is available
-	s.setupTelegramRoutes()
+	// NOTE: Relay and Telegram routes will be set up later after managers are created.
+	// Do NOT call setupRelayRoutes() and setupTelegramRoutes() here - they need managers to be set first.
 
 	// Add static files for web interface.
 	s.router.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("./web"))))
@@ -1293,14 +1291,23 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	// Устанавливаем тип контента перед выполнением шаблона.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	// CRITICAL DEADLOCK FIX: Don't call IsEnabled() in template execution
+	// as it can cause deadlock with background monitoring
+	telegramActive := false
+	if s.telegramManager != nil {
+		// Use a simple null check instead of IsEnabled() to avoid deadlock
+		telegramActive = s.telegramFunctionalityEnabled
+	}
+
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
 		"Streams":            streams,
 		"Title":              "Audio Streams Status",
 		"RelayEnabled":       s.relayManager != nil,
 		"RelayActive":        s.relayManager != nil && s.relayManager.IsActive(),
+		"RelayClickable":     s.relayFunctionalityEnabled,
 		"TelegramEnabled":    s.telegramManager != nil,
-		"TelegramActive":     s.telegramManager != nil && s.telegramManager.IsEnabled(),
+		"TelegramActive":     telegramActive,
 		"TelegramClickable":  s.telegramFunctionalityEnabled,
 		"GlobalShuffle":      s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
@@ -1868,6 +1875,14 @@ func (s *Server) SetTelegramFunctionalityEnabled(enabled bool) {
 	defer s.mutex.Unlock()
 	s.telegramFunctionalityEnabled = enabled
 	s.logger.Info("Telegram functionality enabled flag set", "enabled", enabled)
+}
+
+// SetRelayFunctionalityEnabled sets whether relay functionality is enabled via environment.
+func (s *Server) SetRelayFunctionalityEnabled(enabled bool) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.relayFunctionalityEnabled = enabled
+	s.logger.Info("Relay functionality enabled flag set", "enabled", enabled)
 }
 
 // SetStatusPassword sets the password for accessing the status page.

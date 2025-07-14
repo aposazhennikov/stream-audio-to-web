@@ -21,11 +21,19 @@
             </div>
             {{if .RelayEnabled}}
             <div class="relay-management-link">
+                {{if .RelayClickable}}
                 <a href="/relay-management" class="relay-link">
                     <span class="relay-icon">🔄</span>
                     Relay Management
                     {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{else}}<span class="relay-inactive-badge">Inactive</span>{{end}}
                 </a>
+                {{else}}
+                <span class="relay-link disabled" title="Set RELAY=true in environment variables to enable">
+                    <span class="relay-icon">🔄</span>
+                    Relay Management
+                    <span class="relay-inactive-badge">Inactive</span>
+                </span>
+                {{end}}
             </div>
             {{end}}
             {{if .TelegramEnabled}}
@@ -37,7 +45,7 @@
                     {{if .TelegramActive}}<span class="telegram-active-badge">Active</span>{{else}}<span class="telegram-inactive-badge">Inactive</span>{{end}}
                 </a>
                 {{else}}
-                <span class="telegram-link disabled">
+                <span class="telegram-link disabled" title="Set TG_ALERT=true in environment variables to enable">
                     <span class="telegram-icon">📱</span>
                     Telegram Alerts
                     <span class="telegram-inactive-badge">Inactive</span>
@@ -224,6 +232,18 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             background-color: var(--color-primary);
             color: white;
+        }
+
+        .relay-link.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .relay-link.disabled:hover {
+            transform: none;
+            box-shadow: var(--box-shadow);
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
         }
 
         .relay-icon {

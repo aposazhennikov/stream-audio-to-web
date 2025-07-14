@@ -47,6 +47,7 @@ type Manager struct {
 	relayCheckFunc   func(string) bool
 	stopChan         chan struct{}
 	running          bool
+	timezone         string          // Timezone for alert timestamps
 }
 
 // getTimeInTimezone returns current time in the configured timezone
@@ -76,6 +77,7 @@ func NewManager(configFile string, logger *slog.Logger) *Manager {
 		alertCooldown:  5 * time.Minute,  // Don't spam alerts
 		checkInterval:  30 * time.Second, // Check every 30 seconds
 		stopChan:       make(chan struct{}),
+		timezone:       "Europe/Moscow",  // Default timezone for alerts
 	}
 }
 
@@ -145,10 +147,17 @@ func (m *Manager) saveConfigUnsafe() error {
 
 // GetConfig returns the current configuration
 func (m *Manager) GetConfig() *AlertConfig {
+	m.logger.Debug("TELEGRAM CONFIG: GetConfig called - acquiring RLock")
 	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.logger.Debug("TELEGRAM CONFIG: RLock acquired successfully")
+	defer func() {
+		m.logger.Debug("TELEGRAM CONFIG: Releasing RLock")
+		m.mutex.RUnlock()
+		m.logger.Debug("TELEGRAM CONFIG: RLock released")
+	}()
 	
 	if m.config == nil {
+		m.logger.Debug("TELEGRAM CONFIG: Config is nil, returning default")
 		return &AlertConfig{
 			Enabled:     false,
 			Routes:      make(map[string]bool),
@@ -156,19 +165,54 @@ func (m *Manager) GetConfig() *AlertConfig {
 		}
 	}
 	
+	m.logger.Debug("TELEGRAM CONFIG: Creating config copy")
 	// Return a copy to prevent race conditions
 	config := *m.config
 	config.Routes = make(map[string]bool)
 	config.RelayRoutes = make(map[string]bool)
 	
+	m.logger.Debug("TELEGRAM CONFIG: Copying routes", "routes_count", len(m.config.Routes))
 	for k, v := range m.config.Routes {
 		config.Routes[k] = v
 	}
+	
+	m.logger.Debug("TELEGRAM CONFIG: Copying relay routes", "relay_routes_count", len(m.config.RelayRoutes))
 	for k, v := range m.config.RelayRoutes {
 		config.RelayRoutes[k] = v
 	}
 	
+	m.logger.Debug("TELEGRAM CONFIG: Config copy completed successfully")
 	return &config
+}
+
+// GetConfigFast returns config copy quickly without blocking background operations
+func (m *Manager) GetConfigFast() *AlertConfig {
+	m.logger.Debug("TELEGRAM CONFIG: GetConfigFast called - acquiring RLock")
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	
+	if m.config == nil {
+		m.logger.Debug("TELEGRAM CONFIG: No config available")
+		return &AlertConfig{
+			Enabled:     false,
+			Routes:      make(map[string]bool),
+			RelayRoutes: make(map[string]bool),
+		}
+	}
+	
+	// Make fast copy
+	configCopy := *m.config
+	configCopy.Routes = make(map[string]bool)
+	configCopy.RelayRoutes = make(map[string]bool)
+	for k, v := range m.config.Routes {
+		configCopy.Routes[k] = v
+	}
+	for k, v := range m.config.RelayRoutes {
+		configCopy.RelayRoutes[k] = v
+	}
+	
+	m.logger.Debug("TELEGRAM CONFIG: GetConfigFast completed")
+	return &configCopy
 }
 
 // UpdateConfig updates the configuration
@@ -182,9 +226,16 @@ func (m *Manager) UpdateConfig(newConfig *AlertConfig) error {
 
 // IsEnabled returns whether telegram alerts are enabled
 func (m *Manager) IsEnabled() bool {
+	m.logger.Debug("TELEGRAM CONFIG: IsEnabled called - acquiring RLock")
 	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	return m.config != nil && m.config.Enabled
+	defer func() {
+		m.logger.Debug("TELEGRAM CONFIG: IsEnabled releasing RLock")
+		m.mutex.RUnlock()
+	}()
+	m.logger.Debug("TELEGRAM CONFIG: IsEnabled RLock acquired")
+	result := m.config != nil && m.config.Enabled
+	m.logger.Debug("TELEGRAM CONFIG: IsEnabled result", "enabled", result)
+	return result
 }
 
 // SetRouteCheckFunc sets the function to check route availability
@@ -195,6 +246,30 @@ func (m *Manager) SetRouteCheckFunc(fn func(string) bool) {
 // SetRelayCheckFunc sets the function to check relay availability
 func (m *Manager) SetRelayCheckFunc(fn func(string) bool) {
 	m.relayCheckFunc = fn
+}
+
+// SetTimezone sets the timezone for alert timestamps.
+func (m *Manager) SetTimezone(timezone string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.timezone = timezone
+	m.logger.Info("Telegram alert timezone updated", "timezone", timezone)
+}
+
+// GetTimeInConfiguredTimezone returns current time in the configured timezone.
+func (m *Manager) GetTimeInConfiguredTimezone() time.Time {
+	m.mutex.RLock()
+	timezone := m.timezone
+	m.mutex.RUnlock()
+	
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		// If timezone loading fails, use UTC
+		m.logger.Warn("Failed to load timezone, using UTC", "timezone", timezone, "error", err)
+		loc = time.UTC
+	}
+	
+	return time.Now().In(loc)
 }
 
 // Start starts the monitoring loop
@@ -208,6 +283,25 @@ func (m *Manager) Start() {
 	
 	m.running = true
 	go m.monitoringLoop()
+	
+	// CRITICAL FIX: Perform initial state check for all enabled streams
+	// This ensures that offline streams are detected and alerts sent immediately on startup
+	go func() {
+		// Small delay to allow check functions to be properly initialized
+		time.Sleep(2 * time.Second)
+		m.logger.Info("TELEGRAM ALERTS: Performing initial state check for all enabled streams")
+		
+		isEnabled := m.IsEnabled()
+		m.logger.Info("TELEGRAM ALERTS: Initial check - IsEnabled result", "enabled", isEnabled)
+		
+		if isEnabled {
+			m.logger.Info("TELEGRAM ALERTS: Initial check - calling checkStreams()")
+			m.checkStreams()
+		} else {
+			m.logger.Info("TELEGRAM ALERTS: Initial check - skipping checkStreams because IsEnabled=false")
+		}
+	}()
+	
 	m.logger.Info("TELEGRAM ALERTS: Monitoring started")
 }
 
@@ -244,12 +338,39 @@ func (m *Manager) monitoringLoop() {
 
 // checkStreams checks all monitored streams
 func (m *Manager) checkStreams() {
-	config := m.GetConfig()
+	// CRITICAL DEADLOCK FIX: Use quick config copy instead of long-running GetConfig()
+	// GetConfig() holds RLock which blocks HTTP handlers during long relay checks
+	m.logger.Debug("TELEGRAM ALERTS: checkStreams ENTRY - getting config copy")
 	
-	// Log check start
-	m.logger.Debug("TELEGRAM ALERTS: Starting stream check cycle", 
+	// Quick copy without holding lock during network operations
+	m.mutex.RLock()
+	if m.config == nil {
+		m.mutex.RUnlock()
+		m.logger.Debug("TELEGRAM ALERTS: No config available, skipping check")
+		return
+	}
+	
+	// Make fast copy
+	configCopy := *m.config
+	configCopy.Routes = make(map[string]bool)
+	configCopy.RelayRoutes = make(map[string]bool)
+	for k, v := range m.config.Routes {
+		configCopy.Routes[k] = v
+	}
+	for k, v := range m.config.RelayRoutes {
+		configCopy.RelayRoutes[k] = v
+	}
+	m.mutex.RUnlock()
+	
+	m.logger.Debug("TELEGRAM ALERTS: Config copy completed, RLock released")
+	config := &configCopy
+	
+	// Log check start  
+	m.logger.Info("TELEGRAM ALERTS: Starting stream check cycle", 
 		"routes", len(config.Routes),
-		"relay_routes", len(config.RelayRoutes))
+		"relay_routes", len(config.RelayRoutes),
+		"routeCheckFunc_set", m.routeCheckFunc != nil,
+		"relayCheckFunc_set", m.relayCheckFunc != nil)
 	
 	// Check regular routes
 	for route, enabled := range config.Routes {
@@ -266,32 +387,47 @@ func (m *Manager) checkStreams() {
 			"route", route, 
 			"available", isAvailable)
 		
-		m.updateStreamStatus(route, isAvailable, false)
+		// CRITICAL FIX: Pass config to avoid re-locking
+		m.updateStreamStatusWithConfig(route, isAvailable, false, config)
 	}
 	
 	// Check relay routes
+	m.logger.Info("TELEGRAM ALERTS: Starting relay routes check", "total_relays", len(config.RelayRoutes))
 	for relayIndex, enabled := range config.RelayRoutes {
 		if !enabled {
+			m.logger.Debug("TELEGRAM ALERTS: Skipping disabled relay", "relay", relayIndex)
 			continue
 		}
+		m.logger.Info("TELEGRAM ALERTS: Checking relay", "relay", relayIndex)
 		
 		isAvailable := false
 		if m.relayCheckFunc != nil {
 			isAvailable = m.relayCheckFunc(relayIndex)
 		}
 		
-		m.logger.Debug("TELEGRAM ALERTS: Relay check result", 
+		m.logger.Info("TELEGRAM ALERTS: Relay check result", 
 			"relay", relayIndex, 
 			"available", isAvailable)
 		
-		m.updateStreamStatus("relay/"+relayIndex, isAvailable, true)
+		// CRITICAL FIX: Pass config to avoid re-locking
+		m.updateStreamStatusWithConfig("relay/"+relayIndex, isAvailable, true, config)
 	}
 }
 
 // updateStreamStatus updates the status of a stream and sends alerts if needed
 func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay bool) {
+	config := m.GetConfig()
+	m.updateStreamStatusWithConfig(route, isAvailable, isRelay, config)
+}
+
+// updateStreamStatusWithConfig updates the status of a stream with provided config to avoid re-locking
+func (m *Manager) updateStreamStatusWithConfig(route string, isAvailable bool, isRelay bool, config *AlertConfig) {
+	// Prepare variables outside the lock to minimize lock time
+	var needAlert bool
+	var alertIsUp bool
+	var alertDowntime *time.Duration
+	
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
 	
 	var statusMap map[string]*StreamStatus
 	if isRelay {
@@ -301,28 +437,41 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 	}
 	
 	status, exists := statusMap[route]
+	var wasAvailable bool
+	
 	if !exists {
+		// CRITICAL FIX: For new streams, assume they were previously UP
+		// This ensures that if a stream is DOWN on first check, we send an alert
+		wasAvailable = true
 		status = &StreamStatus{
 			Route:       route,
 			IsAvailable: isAvailable,
 			LastCheck:   time.Now(),
 		}
 		statusMap[route] = status
+		m.logger.Info("TELEGRAM ALERTS: New stream status created", 
+			"route", route, 
+			"current_available", isAvailable,
+			"assumed_previous", wasAvailable,
+			"is_relay", isRelay)
+	} else {
+		wasAvailable = status.IsAvailable
 	}
 	
 	now := time.Now()
-	wasAvailable := status.IsAvailable
 	status.IsAvailable = isAvailable
 	status.LastCheck = now
 	
-	// Handle state changes
+	// Handle state changes and prepare alert info
 	if wasAvailable && !isAvailable {
 		// Stream went down
 		status.DownSince = &now
+		needAlert = true
+		alertIsUp = false
+		alertDowntime = nil
 		m.logger.Info("TELEGRAM ALERTS: Stream went DOWN", 
 			"route", route, 
 			"is_relay", isRelay)
-		m.sendAlert(route, false, nil, isRelay)
 	} else if !wasAvailable && isAvailable {
 		// Stream came back up
 		var downtime *time.Duration
@@ -331,18 +480,32 @@ func (m *Manager) updateStreamStatus(route string, isAvailable bool, isRelay boo
 			downtime = &dt
 		}
 		status.DownSince = nil
+		needAlert = true
+		alertIsUp = true
+		alertDowntime = downtime
 		m.logger.Info("TELEGRAM ALERTS: Stream came UP", 
 			"route", route, 
 			"is_relay", isRelay, 
 			"downtime", downtime)
-		m.sendAlert(route, true, downtime, isRelay)
+	}
+	
+	m.mutex.Unlock()
+	
+	// CRITICAL DEADLOCK FIX: Send alert OUTSIDE the lock to prevent deadlock
+	// This prevents the case where we hold Lock() and try to acquire RLock() in sendAlertWithConfig()
+	if needAlert {
+		m.sendAlertWithConfig(route, alertIsUp, alertDowntime, isRelay, config)
 	}
 }
 
 // sendAlert sends a telegram alert
 func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, isRelay bool) {
 	config := m.GetConfig()
-	
+	m.sendAlertWithConfig(route, isUp, downtime, isRelay, config)
+}
+
+// sendAlertWithConfig sends a telegram alert with provided config to avoid re-locking
+func (m *Manager) sendAlertWithConfig(route string, isUp bool, downtime *time.Duration, isRelay bool, config *AlertConfig) {
 	m.logger.Debug("TELEGRAM ALERTS: Attempting to send alert", 
 		"route", route, 
 		"is_up", isUp, 
@@ -385,7 +548,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 		}
 		message = fmt.Sprintf("%s *Stream Restored*\n\n", emoji)
 		message += fmt.Sprintf("🎵 *Route:* `%s`\n", route)
-		message += fmt.Sprintf("⏰ *Time:* %s\n", getTimeInTimezone().Format("15:04:05"))
+		message += fmt.Sprintf("⏰ *Time:* %s\n", m.GetTimeInConfiguredTimezone().Format("15:04:05"))
 		
 		if downtime != nil {
 			message += fmt.Sprintf("⏱️ *Downtime:* %s\n", formatDuration(*downtime))
@@ -403,7 +566,7 @@ func (m *Manager) sendAlert(route string, isUp bool, downtime *time.Duration, is
 		}
 		message = fmt.Sprintf("%s *Stream Down*\n\n", emoji)
 		message += fmt.Sprintf("🎵 *Route:* `%s`\n", route)
-		message += fmt.Sprintf("⏰ *Time:* %s\n", getTimeInTimezone().Format("15:04:05"))
+		message += fmt.Sprintf("⏰ *Time:* %s\n", m.GetTimeInConfiguredTimezone().Format("15:04:05"))
 		
 		if isRelay {
 			message += "🌐 *Type:* Relay Stream"

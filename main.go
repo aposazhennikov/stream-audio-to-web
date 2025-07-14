@@ -72,6 +72,7 @@ type Config struct {
 	RelayConfigFile        string                     // Path to relay configuration file
 	EnableTelegramAlerts   bool                       // Enable telegram alerts functionality
 	TelegramAlertsConfig   string                     // Path to telegram alerts configuration file
+	TelegramAlertTimezone  string                     // Timezone for telegram alert timestamps
 	SentryDSN              string                     // DSN для Sentry
 	SentryHelper           *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
@@ -144,7 +145,7 @@ func main() {
 
 	// Create and initialize components.
 	logger.Info("STEP 1: Starting component initialization...")
-	server, stationManager, relayManager := initializeComponents(logger, config)
+	server, stationManager, relayManager, _ := initializeComponents(logger, config)
 	logger.Info("STEP 2: Component initialization completed")
 
 	// Create and start HTTP server.
@@ -320,7 +321,7 @@ func logConfiguration(logger *slog.Logger, config *Config) {
 func initializeComponents(
 	logger *slog.Logger,
 	config *Config,
-) (*httpServer.Server, *radio.StationManager, *relay.Manager) {
+) (*httpServer.Server, *radio.StationManager, *relay.Manager, *telegram.Manager) {
 	// Create HTTP server.
 	logger.Debug("Creating HTTP server...")
 	server := httpServer.NewServer(config.MaxClients, logger, config.SentryHelper)
@@ -365,20 +366,18 @@ func initializeComponents(
 	server.SetStationManager(stationManager)
 	logger.Debug("Station manager set for HTTP server")
 
-	// Create relay manager if needed.
-	logger.Debug("Checking relay configuration...")
-	var relayManager *relay.Manager
+	// Create relay manager (always create, but may be inactive).
+	logger.Debug("Initializing relay manager...")
+	relayManager := initializeRelayManager(logger, config, server)
 	if config.EnableRelay {
-		logger.Debug("Relay enabled, initializing relay manager...")
-		relayManager = initializeRelayManager(logger, config, server)
-		logger.Debug("Relay manager initialized")
+		logger.Debug("Relay functionality enabled and active")
 	} else {
-		logger.Info("Relay functionality is disabled")
+		logger.Info("Relay functionality is disabled (inactive)")
 	}
 
 	// Create telegram manager (always create, but may be inactive).
 	logger.Debug("Initializing telegram manager...")
-	_ = initializeTelegramManager(logger, config, server, relayManager)
+	telegramManager := initializeTelegramManager(logger, config, server, relayManager)
 	if config.EnableTelegramAlerts {
 		logger.Debug("Telegram alerts enabled and active")
 	} else {
@@ -391,7 +390,7 @@ func initializeComponents(
 	logger.Debug("Initial dummy streams created")
 
 	logger.Debug("Component initialization completed successfully")
-	return server, stationManager, relayManager
+	return server, stationManager, relayManager, telegramManager
 }
 
 // initializeRelayManager creates and initializes the relay manager.
@@ -399,11 +398,12 @@ func initializeRelayManager(logger *slog.Logger, config *Config, server *httpSer
 	logger.Info("Initializing relay manager", "config_file", config.RelayConfigFile)
 	relayManager := relay.NewRelayManager(config.RelayConfigFile, logger)
 
-	// Configure default state (enabled by default when feature is enabled).
-	relayManager.SetActive(true)
+	// Configure active state based on configuration.
+	relayManager.SetActive(config.EnableRelay)
 
 	// Set relay manager for HTTP server.
 	server.SetRelayManager(relayManager)
+	server.SetRelayFunctionalityEnabled(config.EnableRelay)
 
 	// CRITICAL: Setup relay routes AFTER relay manager is set
 	server.SetupRelayRoutes()
@@ -414,8 +414,9 @@ func initializeRelayManager(logger *slog.Logger, config *Config, server *httpSer
 
 // initializeTelegramManager creates and initializes the telegram manager.
 func initializeTelegramManager(logger *slog.Logger, config *Config, server *httpServer.Server, relayManager *relay.Manager) *telegram.Manager {
-	logger.Info("Initializing telegram manager", "config_file", config.TelegramAlertsConfig)
+	logger.Info("Initializing telegram manager", "config_file", config.TelegramAlertsConfig, "timezone", config.TelegramAlertTimezone)
 	telegramManager := telegram.NewManager(config.TelegramAlertsConfig, logger)
+	telegramManager.SetTimezone(config.TelegramAlertTimezone)
 
 	// Load configuration from file.
 	if err := telegramManager.LoadConfig(); err != nil {
@@ -442,9 +443,14 @@ func initializeTelegramManager(logger *slog.Logger, config *Config, server *http
 	// CRITICAL: Setup telegram routes AFTER telegram manager is set
 	server.SetupTelegramRoutes()
 	
-	// Start monitoring if alerts are enabled
-	if config.EnableTelegramAlerts && telegramManager.IsEnabled() {
+	// CRITICAL FIX: Always start monitoring if telegram alerts functionality is enabled
+	// This ensures that stream status is tracked even if alerts are disabled in config
+	// Admin can enable alerts through web interface later and monitoring will already be running
+	if config.EnableTelegramAlerts {
 		telegramManager.Start()
+		logger.Info("Telegram monitoring started (will track stream status regardless of alert config)")
+	} else {
+		logger.Info("Telegram alerts functionality disabled - monitoring not started")
 	}
 
 	logger.Info("Telegram manager initialized and set for HTTP server")
@@ -1092,6 +1098,14 @@ func loadTelegramConfig(config *Config) {
 	} else {
 		// Значение по умолчанию
 		config.TelegramAlertsConfig = "./telegram_alerts.json"
+	}
+
+	// Timezone для отметок времени в telegram алертах
+	if telegramTimezone := os.Getenv("TG_ALERT_TIMEZONE"); telegramTimezone != "" {
+		config.TelegramAlertTimezone = telegramTimezone
+	} else {
+		// Значение по умолчанию
+		config.TelegramAlertTimezone = "Europe/Moscow"
 	}
 }
 

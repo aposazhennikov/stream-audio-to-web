@@ -437,6 +437,7 @@ Enable telegram alerts in docker-compose.yml:
 environment:
   - TG_ALERT=true
   - TG_ALERT_CONFIG_FILE=/app/telegram_alerts.json
+  - TG_ALERT_TIMEZONE=Europe/Moscow  # Optional: Timezone for alert timestamps
 volumes:
   - ./telegram_alerts.json:/app/telegram_alerts.json:rw
 ```
@@ -449,22 +450,31 @@ volumes:
 ### Message Format
 When a stream goes offline:
 ```
-🚨 Stream Alert 🚨
+🚨 Stream Down
 
-Route: /floyd
-Status: ❌ OFFLINE
-Time: 2025-07-13 21:30:45 UTC
+🎵 Route: /floyd
+⏰ Time: 21:30:45
+📻 Type: Main Stream
 ```
 
 When a stream comes back online:
 ```
-✅ Stream Recovered ✅
+✅ Stream Restored
 
-Route: /floyd  
-Status: ✅ ONLINE
-Downtime: 2m 15s
-Time: 2025-07-13 21:32:60 UTC
+🎵 Route: /floyd
+⏰ Time: 21:32:00
+⏱️ Downtime: 1m 15s
+📻 Type: Main Stream
 ```
+
+### Timezone Configuration
+By default, alert timestamps use Europe/Moscow timezone. You can customize this:
+```yaml
+environment:
+  - TG_ALERT_TIMEZONE=America/New_York  # Use your preferred timezone
+```
+
+Supported timezone formats: `Europe/Moscow`, `America/New_York`, `Asia/Tokyo`, `UTC`, etc.
 
 ### Setup Process
 1. Enable `TG_ALERT=true` in docker-compose.yml
