@@ -9,14 +9,14 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      #- /home/politics:/app/politics
+      - /home/politics:/app/politics
       - /home/humor:/app/humor
       - /home/science:/app/science
-      - /home/floyd/:/app/floyd/
-      #- /home/nature:/app/nature
+      #- /home/floyd/:/app/floyd/
+      - /home/nature:/app/nature
       - /home/shaov:/app/shaov
-      #- /home/troshin:/app/troshin
-      #- /home/test_audio:/app/test_audio
+      - /home/troshin:/app/troshin
+      - /home/test_audio:/app/test_audio
       - ./relay_data:/app/relay_data:rw
       - ./telegram_alerts.json:/app/telegram_alerts.json:rw
     env_file:
