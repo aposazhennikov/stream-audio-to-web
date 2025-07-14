@@ -99,6 +99,23 @@ jobs:
             rm -rf ./stream-audio-to-web
             git clone https://github.com/aposazhennikov/stream-audio-to-web.git
             cd stream-audio-to-web/
+            
+            # Create .env file from template and replace values
+            cp .env.template .env
+            # Replace template values with actual values from secrets
+            sed -i "s/STATUS_PASSWORD=.*/STATUS_PASSWORD=${{ secrets.STATUS_PASSWORD }}/g" .env
+            sed -i "s/SENTRY_DSN=.*/SENTRY_DSN=${{ secrets.SENTRY_DSN }}/g" .env
+            
+            # Create telegram_alerts.json with proper configuration
+            echo '{
+              "enabled": true,
+              "bot_token": "${{ secrets.TELEGRAM_BOT_TOKEN }}",
+              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
+              "routes": {},
+              "relay_routes": {},
+              "updated_at": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+            }' > telegram_alerts.json
+            
             docker pull aposazhennikov/audio-streamer:latest
             docker compose down
             docker compose up -d
