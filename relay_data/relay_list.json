@@ -1,5 +1,5 @@
 [
-  "http://server.audiopedia.su:8000/ices128",
+  "https://myradio24.org/55699",
   "https://lk.castnow.ru:8100/oldbrief-320.mp3",
   "https://umnoe.amgradio.ru/Umnoe",
   "https://icecast-zvezda.mediacdn.ru/radio/zvezda/zvezda_128",
@@ -9,7 +9,7 @@
   "https://5.restream.one/1465_1",
   "https://5.restream.one/1464_1",
   "https://radio-soyuz.ru:1045/stream",
-  "https://storyfm.hostingradio.ru:8031/storyfm128.mp3",
+  "https://nostalgiafm.ru/story",
   "https://stream.cassiopeia-station.ru:5125/stream",
   "http://aposazhennikov.ru:8000/relay/stream/1"
 ]
