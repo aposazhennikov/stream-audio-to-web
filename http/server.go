@@ -1993,12 +1993,13 @@ func (s *Server) IsStreamAvailable(route string) bool {
 		return false
 	}
 	
-	// Check if stream has clients or is active
-	clientCount := stream.GetClientCount()
+	// Check if stream is actually playing audio
+	s.trackMutex.RLock()
+	currentTrack := s.currentTracks[route]
+	s.trackMutex.RUnlock()
 	
-	// Stream is available if it exists and has valid configuration
-	// We could also check if the stream is actually playing audio
-	return clientCount >= 0 // ClientCount >= 0 means stream is properly initialized
+	// Stream is available only if it exists, has a current track and is properly initialized
+	return currentTrack != "" && stream.GetClientCount() >= 0
 }
 
 // streamStatusHandler checks the status of all main audio streams
