@@ -25,11 +25,12 @@ type AlertConfig struct {
 
 // StreamStatus represents the status of a stream
 type StreamStatus struct {
-	Route       string    `json:"route"`
-	IsAvailable bool      `json:"is_available"`
-	LastCheck   time.Time `json:"last_check"`
-	DownSince   *time.Time `json:"down_since,omitempty"`
-	LastAlert   *time.Time `json:"last_alert,omitempty"`
+	Route         string     `json:"route"`
+	IsAvailable   bool       `json:"is_available"`
+	LastCheck     time.Time  `json:"last_check"`
+	DownSince     *time.Time `json:"down_since,omitempty"`
+	LastAlert     *time.Time `json:"last_alert,omitempty"`
+	LastAlertType *bool      `json:"last_alert_type,omitempty"` // true = up alert, false = down alert
 }
 
 // Manager handles telegram alerts
@@ -48,6 +49,7 @@ type Manager struct {
 	stopChan         chan struct{}
 	running          bool
 	timezone         string          // Timezone for alert timestamps
+	isInitialCheck   bool // Flag to skip alerts on first check after startup
 }
 
 // getTimeInTimezone returns current time in the configured timezone
@@ -78,6 +80,7 @@ func NewManager(configFile string, logger *slog.Logger) *Manager {
 		checkInterval:  30 * time.Second, // Check every 30 seconds
 		stopChan:       make(chan struct{}),
 		timezone:       "Europe/Moscow",  // Default timezone for alerts
+		isInitialCheck: true, // Set to true initially
 	}
 }
 
@@ -412,6 +415,14 @@ func (m *Manager) checkStreams() {
 		// CRITICAL FIX: Pass config to avoid re-locking
 		m.updateStreamStatusWithConfig("relay/"+relayIndex, isAvailable, true, config)
 	}
+	
+	// Reset initial check flag after first complete check
+	if m.isInitialCheck {
+		m.mutex.Lock()
+		m.isInitialCheck = false
+		m.mutex.Unlock()
+		m.logger.Info("TELEGRAM ALERTS: Initial check completed - future checks will send alerts for state changes")
+	}
 }
 
 // updateStreamStatus updates the status of a stream and sends alerts if needed
@@ -440,9 +451,15 @@ func (m *Manager) updateStreamStatusWithConfig(route string, isAvailable bool, i
 	var wasAvailable bool
 	
 	if !exists {
-		// CRITICAL FIX: For new streams, assume they were previously UP
-		// This ensures that if a stream is DOWN on first check, we send an alert
-		wasAvailable = true
+		// For new streams during initial check, don't send alerts
+		// This prevents duplicate alerts when application restarts
+		if m.isInitialCheck {
+			// During initial check, just record current state without alerts
+			wasAvailable = isAvailable
+		} else {
+			// For truly new streams (discovered after startup), assume they were previously UP
+			wasAvailable = true
+		}
 		status = &StreamStatus{
 			Route:       route,
 			IsAvailable: isAvailable,
@@ -453,7 +470,8 @@ func (m *Manager) updateStreamStatusWithConfig(route string, isAvailable bool, i
 			"route", route, 
 			"current_available", isAvailable,
 			"assumed_previous", wasAvailable,
-			"is_relay", isRelay)
+			"is_relay", isRelay,
+			"is_initial_check", m.isInitialCheck)
 	} else {
 		wasAvailable = status.IsAvailable
 	}
@@ -523,7 +541,7 @@ func (m *Manager) sendAlertWithConfig(route string, isUp bool, downtime *time.Du
 		return
 	}
 	
-	// Check cooldown
+	// Check cooldown - but allow immediate alerts for state changes (down->up or up->down)
 	m.mutex.RLock()
 	var statusMap map[string]*StreamStatus
 	if isRelay {
@@ -533,11 +551,23 @@ func (m *Manager) sendAlertWithConfig(route string, isUp bool, downtime *time.Du
 	}
 	
 	status := statusMap[route]
+	shouldSkipDueToCooldown := false
 	if status.LastAlert != nil && time.Since(*status.LastAlert) < m.alertCooldown {
-		m.mutex.RUnlock()
-		return
+		// Only apply cooldown if the alert type is the same (down->down or up->up)
+		if status.LastAlertType != nil && *status.LastAlertType == isUp {
+			shouldSkipDueToCooldown = true
+			m.logger.Debug("TELEGRAM ALERTS: Skipping alert due to cooldown", 
+				"route", route, 
+				"is_up", isUp,
+				"last_alert_type", *status.LastAlertType,
+				"time_since_last", time.Since(*status.LastAlert))
+		}
 	}
 	m.mutex.RUnlock()
+	
+	if shouldSkipDueToCooldown {
+		return
+	}
 	
 	// Create alert message
 	var message string
@@ -587,8 +617,19 @@ func (m *Manager) sendAlertWithConfig(route string, isUp bool, downtime *time.Du
 		
 		// Update last alert time
 		m.mutex.Lock()
-		now := time.Now()
-		status.LastAlert = &now
+		// Get status again inside the lock for safe update
+		var statusMap map[string]*StreamStatus
+		if isRelay {
+			statusMap = m.relayStatuses
+		} else {
+			statusMap = m.streamStatuses
+		}
+		
+		if status := statusMap[route]; status != nil {
+			now := time.Now()
+			status.LastAlert = &now
+			status.LastAlertType = &isUp // Update alert type
+		}
 		m.mutex.Unlock()
 	}
 }
