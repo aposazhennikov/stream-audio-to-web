@@ -1504,26 +1504,64 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 
 // getAudioBitrate returns the bitrate of an audio file using ffprobe.
 func getAudioBitrate(logger *slog.Logger, filePath string) (int, error) {
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "stream=bit_rate", "-of", "csv=p=0", filePath)
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("ffprobe failed: %w", err)
-	}
+    cmd := exec.Command("ffprobe", "-v", "quiet", "-select_streams", "a:0", "-show_entries", "stream=bit_rate", "-of", "csv=p=0", filePath)
+    output, err := cmd.Output()
+    if err != nil {
+        return 0, fmt.Errorf("ffprobe failed: %w", err)
+    }
 
-	bitrateStr := strings.TrimSpace(string(output))
-	if bitrateStr == "" || bitrateStr == "N/A" {
-		return 0, fmt.Errorf("could not determine bitrate")
-	}
+    // Clean and split the output
+    bitrateStr := strings.TrimSpace(string(output))
+    if bitrateStr == "" || bitrateStr == "N/A" {
+        return 0, fmt.Errorf("could not determine bitrate")
+    }
 
-	bitrateFloat, err := strconv.ParseFloat(bitrateStr, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid bitrate value: %s", bitrateStr)
-	}
+    // Split by newline and take first non-empty value
+    parts := strings.Split(bitrateStr, "\n")
+    for _, part := range parts {
+        part = strings.TrimSpace(part)
+        if part != "" && part != "N/A" {
+            bitrateFloat, err := strconv.ParseFloat(part, 64)
+            if err != nil {
+                continue
+            }
+            // Convert from bits per second to kilobits per second
+            bitrateKbps := int(bitrateFloat / 1000)
+            if bitrateKbps > 0 {
+                return bitrateKbps, nil
+            }
+        }
+    }
 
-	// Convert from bits per second to kilobits per second.
-	bitrateKbps := int(bitrateFloat / 1000)
+    // If we couldn't get bitrate, try alternative method
+    cmd = exec.Command("ffprobe", "-v", "quiet", "-select_streams", "a:0", "-show_entries", "format=bit_rate", "-of", "csv=p=0", filePath)
+    output, err = cmd.Output()
+    if err != nil {
+        return 0, fmt.Errorf("ffprobe format check failed: %w", err)
+    }
 
-	return bitrateKbps, nil
+    bitrateStr = strings.TrimSpace(string(output))
+    if bitrateStr == "" || bitrateStr == "N/A" {
+        return 0, fmt.Errorf("could not determine bitrate from format")
+    }
+
+    parts = strings.Split(bitrateStr, "\n")
+    for _, part := range parts {
+        part = strings.TrimSpace(part)
+        if part != "" && part != "N/A" {
+            bitrateFloat, err := strconv.ParseFloat(part, 64)
+            if err != nil {
+                continue
+            }
+            // Convert from bits per second to kilobits per second
+            bitrateKbps := int(bitrateFloat / 1000)
+            if bitrateKbps > 0 {
+                return bitrateKbps, nil
+            }
+        }
+    }
+
+    return 0, fmt.Errorf("could not determine bitrate after all attempts")
 }
 
 // convertAudioBitrate converts an audio file to the target bitrate using ffmpeg.
