@@ -771,6 +771,13 @@ func (s *Streamer) calculateMP3Duration(trackPath string) time.Duration {
 
 // calculateDurationWithFFProbe uses ffprobe to get exact duration
 func (s *Streamer) calculateDurationWithFFProbe(trackPath string) time.Duration {
+	// Check if file exists before trying ffprobe.
+	if _, err := os.Stat(trackPath); os.IsNotExist(err) {
+		s.logger.Debug("File does not exist, skipping ffprobe", 
+			"trackPath", trackPath)
+		return time.Duration(0)
+	}
+
 	// Try ffprobe command to get exact duration
 	cmd := exec.Command("ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", trackPath)
 	output, err := cmd.Output()
@@ -807,6 +814,13 @@ func (s *Streamer) calculateDurationWithFFProbe(trackPath string) time.Duration 
 
 // calculateDurationBySimpleEstimation uses simple file size estimation
 func (s *Streamer) calculateDurationBySimpleEstimation(trackPath string) time.Duration {
+	// Check if file exists before trying to open.
+	if _, err := os.Stat(trackPath); os.IsNotExist(err) {
+		s.logger.Debug("File does not exist, skipping duration calculation", 
+			"trackPath", trackPath)
+		return time.Duration(0)
+	}
+
 	file, err := os.Open(trackPath)
 	if err != nil {
 		s.logger.Error("Failed to open file for simple duration calculation", 

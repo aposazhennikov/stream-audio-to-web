@@ -290,7 +290,8 @@ func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("Failed to relay audio stream",
 			slog.Int("index", index),
 			slog.String("error", relayErr.Error()))
-		http.Error(w, "Relay error: "+relayErr.Error(), http.StatusInternalServerError)
+		// Don't call http.Error here as WriteHeader may have already been called in RelayAudioStream.
+		// Just return as the error has been logged.
 		return
 	}
 }

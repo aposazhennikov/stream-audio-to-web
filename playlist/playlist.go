@@ -10,7 +10,9 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +58,9 @@ const (
 
 	// Увеличенный таймаут для стрессовых тестов.
 	testTrackTimeout = 2000 * time.Millisecond
+	
+	// Минимальный размер аудиофайла в байтах (1KB).
+	minAudioFileSize = 1024
 )
 
 // NewPlaylist creates a new playlist from the specified directory.
@@ -241,6 +246,15 @@ func (p *Playlist) createTracksFromFiles(files []os.FileInfo) []Track {
 			continue
 		}
 
+		// Проверяем размер файла - исключаем поврежденные файлы.
+		if file.Size() < minAudioFileSize {
+			p.logger.Warn("Skipping small/corrupted audio file",
+				slog.String("file", file.Name()),
+				slog.Int64("size", file.Size()),
+				slog.Int64("minSize", minAudioFileSize))
+			continue
+		}
+
 		// Создаем полный путь к файлу.
 		path := filepath.Join(p.directory, file.Name())
 
@@ -283,10 +297,8 @@ func (p *Playlist) updatePlaylistWithPath(tracks []Track, currentTrackPath strin
 	if p.shuffle {
 		p.shuffleTracks()
 	} else {
-		// Сортируем треки по имени.
-		sort.Slice(p.tracks, func(i, j int) bool {
-			return p.tracks[i].Name < p.tracks[j].Name
-		})
+		// Используем естественную сортировку для правильной обработки числовых имен файлов.
+		p.naturalSort()
 	}
 
 	// Установка текущего трека
@@ -1045,4 +1057,48 @@ func (p *Playlist) shuffleTracksInternal() {
 	p.logger.Info("Tracks shuffled internally", 
 		slog.Int("trackCount", len(p.tracks)),
 		slog.Int("currentIndex", p.current))
+}
+
+// naturalSort выполняет естественную сортировку треков, учитывая числа в именах файлов.
+func (p *Playlist) naturalSort() {
+	sort.Slice(p.tracks, func(i, j int) bool {
+		return naturalCompare(p.tracks[i].Name, p.tracks[j].Name)
+	})
+}
+
+// naturalCompare сравнивает две строки естественным образом, учитывая числа.
+func naturalCompare(a, b string) bool {
+	// Регулярное выражение для разделения строки на части (текст и числа).
+	re := regexp.MustCompile(`(\d+|\D+)`)
+	partsA := re.FindAllString(a, -1)
+	partsB := re.FindAllString(b, -1)
+
+	minLen := len(partsA)
+	if len(partsB) < minLen {
+		minLen = len(partsB)
+	}
+
+	for i := 0; i < minLen; i++ {
+		partA := partsA[i]
+		partB := partsB[i]
+
+		// Проверяем, являются ли обе части числами.
+		numA, errA := strconv.Atoi(partA)
+		numB, errB := strconv.Atoi(partB)
+
+		if errA == nil && errB == nil {
+			// Обе части - числа, сравниваем как числа.
+			if numA != numB {
+				return numA < numB
+			}
+		} else {
+			// Хотя бы одна часть - не число, сравниваем как строки.
+			if partA != partB {
+				return partA < partB
+			}
+		}
+	}
+
+	// Если все общие части равны, короткая строка идет первой.
+	return len(partsA) < len(partsB)
 }

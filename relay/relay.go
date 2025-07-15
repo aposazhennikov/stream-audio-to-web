@@ -3,6 +3,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,9 +264,16 @@ func (rm *Manager) createSourceRequest(r *http.Request, sourceURL string) (*http
 
 // executeSourceRequest выполняет запрос к источнику.
 func (rm *Manager) executeSourceRequest(req *http.Request) (*http.Response, error) {
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 30 * time.Second, // 30 second timeout for source requests.
+	}
 	resp, err := client.Do(req)
 	if err != nil {
+		// Check for context cancellation errors and handle them gracefully.
+		if errors.Is(err, context.Canceled) {
+			rm.logger.Debug("Source request canceled", slog.String("url", req.URL.String()))
+			return nil, fmt.Errorf("request canceled: %w", err)
+		}
 		return nil, fmt.Errorf("failed to fetch from source: %w", err)
 	}
 	return resp, nil
@@ -312,6 +320,11 @@ func (rm *Manager) streamFromSourceToClient(w http.ResponseWriter, resp *http.Re
 		if readErr != nil {
 			if readErr == io.EOF {
 				return nil // Конец потока
+			}
+			// Check for context cancellation and handle gracefully.
+			if errors.Is(readErr, context.Canceled) {
+				rm.logger.Debug("Source stream reading canceled")
+				return nil // Don't treat as error, just canceled
 			}
 			return fmt.Errorf("error reading from source: %w", readErr)
 		}
