@@ -93,6 +93,8 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          timeout: 60s
+          command_timeout: 10m
           script: |
             clear
             cd /home/
@@ -136,6 +138,20 @@ jobs:
             echo "Container did not become healthy in time. Deployment might have failed."
             docker logs $(docker ps -q -f name=audio-streamer)
             exit 1
+      
+      # Fallback webhook deploy if SSH fails
+      - name: Deploy via webhook (fallback)
+        if: failure()
+        run: |
+          echo "SSH deploy failed, trying webhook method..."
+          curl -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "image": "aposazhennikov/audio-streamer:latest",
+              "commit": "${{ github.sha }}",
+              "branch": "${{ github.ref_name }}"
+            }' || echo "Webhook deploy also failed"
 
   test-streams:
     needs: deploy
@@ -148,6 +164,8 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          timeout: 60s
+          command_timeout: 5m
           script: |
             echo "Testing stream endpoints with HEAD requests..."
             
