@@ -37,7 +37,6 @@ services:
       - BITRATE=${BITRATE:-128}
       - MAX_CLIENTS=${MAX_CLIENTS:-10}
       - LOG_LEVEL=${LOG_LEVEL:-warning}
-      - DIRECTORY_ROUTES=${DIRECTORY_ROUTES:-{"floyd":"/app/floyd/","humor":"/app/humor","science":"/app/science","shaov":"/app/shaov","monosov":"/app/monosov","monosov1":"/app/monosov1","monosov2":"/app/monosov2","monosov3":"/app/monosov3","monosov4":"/app/monosov4","monosov5":"/app/monosov5", "monosov6":"/app/monosov6", "monosov7":"/app/monosov7", "monosov8":"/app/monosov8", "monosov9":"/app/monosov9", "monosov10":"/app/monosov10", "monosov11":"/app/monosov11"}}
       - SHUFFLE=${SHUFFLE:-false}
       - ROUTES_SHUFFLE=${ROUTES_SHUFFLE:-}
       - NORMALIZE_VOLUME=${NORMALIZE_VOLUME:-false}
