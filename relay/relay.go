@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -264,8 +265,20 @@ func (rm *Manager) createSourceRequest(r *http.Request, sourceURL string) (*http
 
 // executeSourceRequest выполняет запрос к источнику.
 func (rm *Manager) executeSourceRequest(req *http.Request) (*http.Response, error) {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+
 	client := &http.Client{
-		Timeout: 30 * time.Second, // 30 second timeout for source requests.
+		Transport: transport,
 	}
 	resp, err := client.Do(req)
 	if err != nil {

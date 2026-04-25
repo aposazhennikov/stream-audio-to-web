@@ -5,8 +5,11 @@ package http
 import (
 	"encoding/json"
 	"html/template"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"log/slog"
 
@@ -285,6 +288,10 @@ func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.tryServeLocalRelayTarget(w, r, index) {
+		return
+	}
+
 	// Relay the audio stream
 	if relayErr := s.relayManager.RelayAudioStream(w, r, index); relayErr != nil {
 		s.logger.Error("Failed to relay audio stream",
@@ -294,4 +301,57 @@ func (s *Server) relayStreamHandler(w http.ResponseWriter, r *http.Request) {
 		// Just return as the error has been logged.
 		return
 	}
+}
+
+func (s *Server) tryServeLocalRelayTarget(w http.ResponseWriter, r *http.Request, index int) bool {
+	links := s.relayManager.GetLinks()
+	if index < 0 || index >= len(links) {
+		return false
+	}
+
+	targetURL, parseErr := url.Parse(links[index])
+	if parseErr != nil {
+		return false
+	}
+
+	if targetURL.Path == "" || strings.HasPrefix(targetURL.Path, "/relay/stream/") {
+		return false
+	}
+
+	if !isLocalRelayHost(targetURL.Hostname(), r.Host) {
+		return false
+	}
+
+	s.logger.Info(
+		"Serving local stream directly for relay endpoint",
+		slog.Int("index", index),
+		slog.String("target", targetURL.String()),
+		slog.String("path", targetURL.Path),
+	)
+
+	rewrittenReq := r.Clone(r.Context())
+	rewrittenReq.URL.Path = targetURL.Path
+	rewrittenReq.URL.RawPath = targetURL.EscapedPath()
+	rewrittenReq.URL.RawQuery = targetURL.RawQuery
+	rewrittenReq.Host = r.Host
+	s.Handler().ServeHTTP(w, rewrittenReq)
+	return true
+}
+
+func isLocalRelayHost(targetHost, requestHost string) bool {
+	targetHost = strings.ToLower(strings.TrimSpace(targetHost))
+	if targetHost == "" {
+		return false
+	}
+
+	if targetHost == "localhost" || targetHost == "127.0.0.1" || targetHost == "::1" {
+		return true
+	}
+
+	requestHostOnly := strings.ToLower(strings.TrimSpace(requestHost))
+	if host, _, splitErr := net.SplitHostPort(requestHostOnly); splitErr == nil {
+		requestHostOnly = host
+	}
+
+	return targetHost == requestHostOnly
 }
