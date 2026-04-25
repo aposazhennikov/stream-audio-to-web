@@ -17,6 +17,18 @@ services:
       - /home/shaov:/app/shaov
       - /home/troshin:/app/troshin
       - /home/test_audio:/app/test_audio
+      - /home/monosov:/app/monosov
+      - /home/monosov1:/app/monosov1
+      - /home/monosov2:/app/monosov2
+      - /home/monosov3:/app/monosov3
+      - /home/monosov4:/app/monosov4
+      - /home/monosov5:/app/monosov5
+      - /home/monosov6:/app/monosov6
+      - /home/monosov7:/app/monosov7
+      - /home/monosov8:/app/monosov8
+      - /home/monosov9:/app/monosov9
+      - /home/monosov10:/app/monosov10
+      - /home/monosov11:/app/monosov11
       - ./relay_data:/app/relay_data:rw
       - ./telegram_alerts.json:/app/telegram_alerts.json:rw
     env_file:
@@ -25,7 +37,7 @@ services:
       - BITRATE=${BITRATE:-128}
       - MAX_CLIENTS=${MAX_CLIENTS:-10}
       - LOG_LEVEL=${LOG_LEVEL:-warning}
-      - DIRECTORY_ROUTES=${DIRECTORY_ROUTES:-{"floyd":"/app/floyd/","humor":"/app/humor","science":"/app/science","shaov":"/app/shaov"}}
+      - DIRECTORY_ROUTES=${DIRECTORY_ROUTES:-{"floyd":"/app/floyd/","humor":"/app/humor","science":"/app/science","shaov":"/app/shaov","monosov":"/app/monosov","monosov1":"/app/monosov1","monosov2":"/app/monosov2","monosov3":"/app/monosov3","monosov4":"/app/monosov4","monosov5":"/app/monosov5", "monosov6":"/app/monosov6", "monosov7":"/app/monosov7", "monosov8":"/app/monosov8", "monosov9":"/app/monosov9", "monosov10":"/app/monosov10", "monosov11":"/app/monosov11"}}
       - SHUFFLE=${SHUFFLE:-false}
       - ROUTES_SHUFFLE=${ROUTES_SHUFFLE:-}
       - NORMALIZE_VOLUME=${NORMALIZE_VOLUME:-false}
@@ -50,4 +62,4 @@ services:
         limits:
           cpus: '1'
           memory: 256M
-    restart: unless-stopped 
+    restart: unless-stopped
