@@ -38,6 +38,7 @@ const (
 	firstTimeoutMs             = 200
 	secondTimeoutMs            = 200
 	batchSize                  = 50
+	maxReasonableTrackDuration = 12 * time.Hour
 )
 
 // Streamer manages audio streaming for a single "radio" stream.
@@ -802,7 +803,7 @@ func (s *Streamer) calculateDurationWithFFProbe(trackPath string) time.Duration 
 	duration := time.Duration(durationFloat * float64(time.Second))
 	
 	// Sanity check
-	if duration < time.Second || duration > 4*time.Hour {
+	if duration < time.Second || duration > maxReasonableTrackDuration {
 		s.logger.Error("ffprobe returned unreasonable duration", 
 			"trackPath", trackPath, 
 			"duration", duration.String())
