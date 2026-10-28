@@ -18,7 +18,7 @@ const (
 
 	defaultBitrate         = 128
 	defaultMaxClients      = 500
-	defaultBufferSize      = 65536               // 64KB
+	defaultBufferSize      = 8192                // 8KB: полсекунды звука при 128 kbps, данные идут клиентам ровно
 	defaultShuffle         = false               // Shuffle tracks is disabled by default
 	defaultNormalizeVolume = true                // Volume normalization is enabled by default
 	defaultRelayEnabled    = false               // Relay functionality disabled by default

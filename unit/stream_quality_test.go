@@ -104,8 +104,8 @@ func TestStreamerSendsAtRealTimeRate(t *testing.T) {
 	require.NoError(t, streamer.StreamTrack(path))
 	elapsed := time.Since(start)
 
-	// 4 s of audio; the first chunk goes out immediately, the last one 250 ms before its end.
-	assert.InDelta(t, 3.75, elapsed.Seconds(), 0.35, "track of 4 s must take about 4 s to stream")
+	// 4 s of audio: the last chunk waits for its time, then a 50 ms pause between tracks.
+	assert.InDelta(t, 4.05, elapsed.Seconds(), 0.3, "track of 4 s must take about 4 s to stream")
 	assert.Equal(t, 4*qualityBytesPerSec, len(c.bytes()))
 }
 
@@ -138,7 +138,26 @@ func TestStreamerNoDriftAcrossTracks(t *testing.T) {
 	c.mu.Lock()
 	maxGap := c.maxGap
 	c.mu.Unlock()
-	assert.Less(t, maxGap, 600*time.Millisecond, "no long silence between tracks")
+	// Chunks are 250 ms; a transition adds a short pause that the pace clock catches up.
+	assert.Less(t, maxGap, time.Second, "no long silence between tracks")
+}
+
+// TestLargeBufferSizeIsCapped: with the old 64 KB default a chunk held 4 s of audio and clients
+// got data in 4-second bursts, leaving the player almost empty before each burst.
+func TestLargeBufferSizeIsCapped(t *testing.T) {
+	streamer := audio.NewStreamer(65536, 10, qualityBitrate, slog.Default(), createTestSentryHelper())
+	defer streamer.Close()
+
+	path := patternFile(t, t.TempDir(), "big.mp3", 5*qualityBytesPerSec, 1)
+	ch, _, err := streamer.AddClient()
+	require.NoError(t, err)
+	c := collect(ch, 0)
+	require.NoError(t, streamer.StreamTrack(path))
+
+	c.mu.Lock()
+	maxGap := c.maxGap
+	c.mu.Unlock()
+	assert.LessOrEqual(t, maxGap, 1100*time.Millisecond, "data must arrive at least once a second")
 }
 
 // TestNewClientGetsBurst checks that a client connecting mid-track immediately gets

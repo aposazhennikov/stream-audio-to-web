@@ -18,15 +18,15 @@ import (
 // client from inside the broadcast deadlocked the streamer: the station went silent for all
 // listeners and new clients could not connect.
 func TestSlowClientDoesNotFreezeStream(t *testing.T) {
-	// High bitrate gives the minimal 10ms delay per 1KB chunk, so the client channel
-	// (32 chunks) overflows in well under a second.
+	// High bitrate makes the stream run very fast, so the client channel (at most 256 chunks)
+	// overflows in well under a second.
 	streamer := audio.NewStreamer(1024, 10, 100000, slog.Default(), createTestSentryHelper())
 	streamer.SetVolumeNormalization(false)
 	defer streamer.Close()
 
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.mp3")
-	data := make([]byte, 100*1024)
+	data := make([]byte, 600*1024)
 	copy(data, testdata.GetMinimumMP3Data())
 	require.NoError(t, os.WriteFile(testFile, data, 0644))
 

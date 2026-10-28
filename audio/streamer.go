@@ -30,9 +30,12 @@ const (
 	id3v2SyncSafeShift7  = 7
 	id3v2SyncSafeMask    = 0x7F // Mask for sync-safe integer (ID3v2).
 
-	// Канал клиента вмещает около 30 секунд звука. Клиент, который не принял очередной кусок
-	// при полном канале, считается зависшим и отключается: ждать его нельзя, это задержит всех.
-	defaultClientChannelBuffer = 32
+	// Канал клиента вмещает около clientBufferDuration звука. Клиент, который не принял очередной
+	// кусок при полном канале, считается зависшим и отключается: ждать его нельзя, это задержит всех.
+	clientBufferDuration   = 30 * time.Second
+	minClientChannelBuffer = 32
+	maxClientChannelBuffer = 256
+	maxChunkDuration       = time.Second // Кусок больше секунды звука приходит клиенту рывками
 
 	// burstDuration — сколько последнего звука новый клиент получает сразу при подключении.
 	// Это запас в буфере плеера, чтобы короткие сетевые задержки не прерывали звук.
@@ -54,6 +57,7 @@ const (
 // so that the amount of sent audio stays about one chunk ahead of wall time, across tracks.
 type Streamer struct {
 	bufferSize      int
+	clientBuffer    int // Ёмкость канала клиента в кусках
 	maxClients      int
 	bitrate         int // Битрейт потока в kbps; используется, если длительность файла неизвестна.
 	normalizeVolume bool
@@ -104,8 +108,25 @@ func NewStreamer(bufferSize, maxClients int, bitrate int, logger *slog.Logger, s
 		logger = slog.Default()
 	}
 
+	bytesPerSecond := 128000 / bitsPerByte
+	if bitrate > 0 {
+		bytesPerSecond = bitrate * 1000 / bitsPerByte
+	}
+	if maxChunk := int(maxChunkDuration.Seconds() * float64(bytesPerSecond)); bufferSize > maxChunk {
+		logger.Info("Buffer size is more than a second of audio, reducing it",
+			"configured", bufferSize, "used", maxChunk)
+		bufferSize = maxChunk
+	}
+	clientBuffer := int(clientBufferDuration.Seconds()*float64(bytesPerSecond)) / bufferSize
+	if clientBuffer < minClientChannelBuffer {
+		clientBuffer = minClientChannelBuffer
+	} else if clientBuffer > maxClientChannelBuffer {
+		clientBuffer = maxClientChannelBuffer
+	}
+
 	return &Streamer{
 		bufferSize:      bufferSize,
+		clientBuffer:    clientBuffer,
 		maxClients:      maxClients,
 		bitrate:         bitrate,
 		normalizeVolume: true,
@@ -451,7 +472,7 @@ func (s *Streamer) broadcastToClients(data []byte) {
 	for _, clientID := range stuckClients {
 		s.logger.Warn("Client does not read the stream, disconnecting",
 			"clientID", clientID,
-			"bufferedChunks", defaultClientChannelBuffer,
+			"bufferedChunks", s.clientBuffer,
 			"route", getRouteFromTrackPath(s.currentTrack()))
 		s.RemoveClient(clientID)
 	}
@@ -503,7 +524,7 @@ func (s *Streamer) AddClient() (<-chan []byte, int, error) {
 
 	s.nextClientID++
 	clientID := s.nextClientID
-	clientChannel := make(chan []byte, defaultClientChannelBuffer)
+	clientChannel := make(chan []byte, s.clientBuffer)
 	s.clientChannels[clientID] = clientChannel
 	atomic.StoreInt32(&s.clientCount, int32(len(s.clientChannels)))
 

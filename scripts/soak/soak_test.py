@@ -289,20 +289,30 @@ def main():
     ap.add_argument("--password", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--routes", default="short,long,ru")
+    ap.add_argument("--stall-seconds", type=float, default=600,
+                    help="how long the stalled client does not read; must exceed local TCP buffers")
+    ap.add_argument("--skip", default="",
+                    help="comma-separated parts to skip: icy,stalled,churn,switch,monitor")
     args = ap.parse_args()
     routes = args.routes.split(",")
     os.makedirs(args.out_dir, exist_ok=True)
 
+    skip = set(filter(None, args.skip.split(",")))
     threads = []
     for route in routes:
         for n in range(2):
             threads.append(threading.Thread(target=listener, args=(args.base_url, route, f"l{n}", 60, args.out_dir)))
-        threads.append(threading.Thread(target=icy_listener, args=(args.base_url, route)))
-    threads.append(threading.Thread(target=stalled_client, args=(args.base_url, routes[0], 120)))
-    threads.append(threading.Thread(target=churn, args=(args.base_url, routes)))
+        if "icy" not in skip:
+            threads.append(threading.Thread(target=icy_listener, args=(args.base_url, route)))
+    if "stalled" not in skip:
+        threads.append(threading.Thread(target=stalled_client, args=(args.base_url, routes[0], args.stall_seconds)))
+    if "churn" not in skip:
+        threads.append(threading.Thread(target=churn, args=(args.base_url, routes)))
     plan = [(routes[0], "prev", 8), (routes[1 % len(routes)], "next", 2), (routes[-1], "prev", 3)]
-    threads.append(threading.Thread(target=switcher, args=(args.base_url, args.password, plan, 180)))
-    threads.append(threading.Thread(target=monitor, args=(args.base_url,)))
+    if "switch" not in skip:
+        threads.append(threading.Thread(target=switcher, args=(args.base_url, args.password, plan, 180)))
+    if "monitor" not in skip:
+        threads.append(threading.Thread(target=monitor, args=(args.base_url,)))
     for t in threads:
         t.daemon = True
         t.start()
