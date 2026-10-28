@@ -70,7 +70,7 @@
                 <div class="track-info-container">
                     <div class="track-name-container">
                         <span class="track-name">{{.CurrentTrack}}</span>
-                        <button class="copy-button" onclick="copyToClipboard('{{.CurrentTrack}}', this)">
+                        <button class="copy-button" data-track="{{.CurrentTrack}}">
                             <span class="copy-icon">📋</span>
                             <span class="copy-feedback"></span>
                         </button>
@@ -102,8 +102,8 @@
                 <form method="post" action="/set-shuffle/{{.RouteID}}/off">
                     <button type="submit" class="disable-shuffle">Disable Shuffle</button>
                 </form>
-                <button onclick="toggleTrackList('{{.RouteID}}')" class="show-history">Show track history</button>
-                <button onclick="clearTrackHistory('{{.RouteID}}', '{{.Route}}')" class="clear-history">Clear history</button>
+                <button data-action="toggle-history" data-route-id="{{.RouteID}}" class="show-history">Show track history</button>
+                <button data-action="clear-history" data-route-id="{{.RouteID}}" data-route="{{.Route}}" class="clear-history">Clear history</button>
             </div>
             <div id="track-list-{{.RouteID}}" class="track-list">
                 {{.HistoryHTML}}
@@ -883,6 +883,24 @@
             });
         }
 
+        // Buttons carry their arguments in data attributes (escaped by the template engine).
+        // No JS strings are built from track names or routes.
+        // Server-rendered history buttons (history_html) carry data-track too.
+        document.addEventListener('click', e => {
+            const copyButton = e.target.closest ? e.target.closest('.copy-button[data-track]') : null;
+            if (copyButton) {
+                copyToClipboard(copyButton.dataset.track, copyButton);
+                return;
+            }
+            const actionButton = e.target.closest ? e.target.closest('button[data-action]') : null;
+            if (!actionButton) return;
+            if (actionButton.dataset.action === 'toggle-history') {
+                toggleTrackList(actionButton.dataset.routeId);
+            } else if (actionButton.dataset.action === 'clear-history') {
+                clearTrackHistory(actionButton.dataset.routeId, actionButton.dataset.route);
+            }
+        });
+
         function clearTrackHistory(routeID, route) {
             if (confirm('Are you sure you want to clear the track history for this stream?')) {
                 fetch(`/clear-history${route}`, {
@@ -1012,9 +1030,9 @@
                             currentTrackElement.textContent = newTrackName;
                             currentTrackElement.style.opacity = '1';
                             
-                            // Update copy button onclick attribute
+                            // Update copy button data-track (read by the delegated click handler)
                             if (copyButton) {
-                                copyButton.setAttribute('onclick', `copyToClipboard('${newTrackName}', this)`);
+                                copyButton.dataset.track = newTrackName;
                             }
                             
                             console.log('Updated track display for route:', route, 'to:', newTrackName);
@@ -1064,6 +1082,13 @@
             });
         }
 
+        // Cache-busting URL: keeps other query params, replaces any previous "t" instead of appending another one.
+        function withCacheBuster(src) {
+            const url = new URL(src, window.location.href);
+            url.searchParams.set('t', String(Date.now()));
+            return url.toString();
+        }
+
         // NEW FUNCTION: Reload audio player for specific route
         function reloadAudioPlayerForRoute(route) {
             // If this route is open in a separate tab/window, reload that player
@@ -1073,7 +1098,7 @@
                     const volume = audio.volume;
                     const originalSrc = audio.src;
                     audio.pause();
-                    audio.src = originalSrc + '?t=' + new Date().getTime();
+                    audio.src = withCacheBuster(originalSrc);
                     audio.volume = volume;
                     audio.play().catch(e => console.error('Playback error:', e));
                 }
@@ -1093,7 +1118,7 @@
                         const volume = audio.volume;
                         const originalSrc = audio.src;
                         audio.pause();
-                        audio.src = originalSrc + '?t=' + new Date().getTime();
+                        audio.src = withCacheBuster(originalSrc);
                         audio.volume = volume;
                         audio.play().catch(e => console.error('Playback error:', e));
                         console.log('Reloaded audio player for route:', route);

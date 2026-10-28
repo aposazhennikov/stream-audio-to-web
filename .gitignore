@@ -14,10 +14,6 @@
 # Go workspace file
 go.work
 
-# Go mod file
-
-go.sum
-
 # Environment files (contains sensitive information)
 .env
 .env.local
@@ -48,3 +44,4 @@ Thumbs.db
 audio-streamer
 stream-audio-to-web
 telegram_alerts.json
+backups/

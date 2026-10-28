@@ -7,26 +7,13 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
-// getEnvOrDefault returns the value of environment variable or the default value.
-func getEnvOrDefault(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	if key == "TEST_SERVER_URL" {
-		return "http://aposazhennikov.ru:8000"
-	}
-	return defaultValue
-}
-
 func TestNowPlayingEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	baseURL := liveServerURL(t)
 
 	// Send GET request to /now-playing.
 	resp, httpNowPlayingErr := http.Get(fmt.Sprintf("%s/now-playing", baseURL))
@@ -58,8 +45,7 @@ func TestNowPlayingEndpoint(t *testing.T) {
 }
 
 func TestStatusPageAccess(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	baseURL := liveServerURL(t)
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 
 	// Create HTTP client with cookie support.
@@ -139,8 +125,7 @@ func TestTrackControlEndpoints(t *testing.T) {
 
 // setupTrackControlTestEnv подготавливает тестовое окружение для контроля треков.
 func setupTrackControlTestEnv(t *testing.T) (string, string, *http.Client) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	baseURL := liveServerURL(t)
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 
 	// Get route for testing.

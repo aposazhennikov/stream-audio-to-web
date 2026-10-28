@@ -56,7 +56,7 @@ func TestPlaylistUpdate(t *testing.T) {
 	}
 
 	// Test server URL.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	baseURL := liveServerURL(t)
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 
 	// Create HTTP client with cookie support.

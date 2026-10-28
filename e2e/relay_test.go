@@ -132,10 +132,13 @@ func setupRelayEndToEndTest(t *testing.T) (*mockAudioServer, *httptest.Server, *
 	relayManager.SetActive(true)
 
 	// Создаем новый HTTP сервер.
-	server := httpServer.NewServer("mp3", 10)
+	server := httpServer.NewServer(10, slog.Default(), newTestSentryHelper())
 
 	// Устанавливаем менеджер релеев.
 	server.SetRelayManager(relayManager)
+
+	// Relay routes are registered only after the relay manager is set (as in main.go).
+	server.SetupRelayRoutes()
 
 	// Создаем тестовый сервер.
 	testServer := httptest.NewServer(server.Handler())

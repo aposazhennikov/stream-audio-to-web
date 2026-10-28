@@ -4,26 +4,29 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+	"github.com/aposazhennikov/stream-audio-to-web/telegram"
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/aposazhennikov/stream-audio-to-web/audio"
-	"github.com/aposazhennikov/stream-audio-to-web/relay"
-	"github.com/aposazhennikov/stream-audio-to-web/telegram"
 
 	html "html"
 )
@@ -52,40 +55,41 @@ type PlaylistManager interface {
 
 // Server represents HTTP server for audio streaming.
 type Server struct {
-	router            *mux.Router
-	streams           map[string]StreamHandler
-	playlists         map[string]PlaylistManager
-	maxClients        int
-	mutex             sync.RWMutex
-	currentTracks     map[string]string
-	trackMutex        sync.RWMutex
-	statusPassword    string                                    // Password for accessing /status page.
-	stationManager    interface{ RestartPlayback(string) bool } // Interface for restarting playback.
-	relayManager      *relay.Manager                            // Manager for relay functionality.
-	globalShuffleConfig bool                                   // Global shuffle configuration.
+	router              *mux.Router
+	streams             map[string]StreamHandler
+	playlists           map[string]PlaylistManager
+	maxClients          int
+	mutex               sync.RWMutex
+	currentTracks       map[string]string
+	trackMutex          sync.RWMutex
+	statusPassword      string                                    // Password for accessing /status page.
+	stationManager      interface{ RestartPlayback(string) bool } // Interface for restarting playback.
+	relayManager        *relay.Manager                            // Manager for relay functionality.
+	globalShuffleConfig bool                                      // Global shuffle configuration.
 	// Prometheus metrics.
-	listenerCount     *prometheus.GaugeVec   // Gauge for tracking active listeners.
-	bytesSent         *prometheus.CounterVec // Counter for bytes sent.
-	trackSecondsTotal *prometheus.CounterVec // Counter for audio playback time.
-	logger            *slog.Logger           // Logger for server operations.
-	sentryHelper      *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
-	telegramManager   *telegram.Manager      // Manager for telegram alerts.
-	telegramFunctionalityEnabled bool       // Whether telegram functionality is enabled via environment.
-	relayFunctionalityEnabled     bool       // Whether relay functionality is enabled via environment.
+	listenerCount                *prometheus.GaugeVec       // Gauge for tracking active listeners.
+	bytesSent                    *prometheus.CounterVec     // Counter for bytes sent.
+	trackSecondsTotal            *prometheus.CounterVec     // Counter for audio playback time.
+	logger                       *slog.Logger               // Logger for server operations.
+	sentryHelper                 *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry.
+	telegramManager              *telegram.Manager          // Manager for telegram alerts.
+	telegramFunctionalityEnabled bool                       // Whether telegram functionality is enabled via environment.
+	relayFunctionalityEnabled    bool                       // Whether relay functionality is enabled via environment.
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
 
 const (
-	defaultStatusPassword     = "1234554321"
-	asciiMax                  = 127
-	shortSleepMs              = 50
-	kb                        = 1024
-	mb                        = 1024 * 1024
-	cookieExpireHours         = 24
-	logIntervalSec            = 5
-	logEveryBytes             = mb // Log every sent megabyte.
-	streamSilenceThreshold    = 30 * time.Second // Stream without audio data for longer is considered down.
+	defaultStatusPassword  = "1234554321"
+	asciiMax               = 127
+	shortSleepMs           = 50
+	kb                     = 1024
+	mb                     = 1024 * 1024
+	cookieExpireHours      = 24
+	logIntervalSec         = 5
+	logEveryBytes          = mb               // Log every sent megabyte.
+	streamSilenceThreshold = 30 * time.Second // Stream without audio data for longer is considered down.
+	clientWriteTimeout     = 30 * time.Second // A client that accepts no data for longer is disconnected.
 )
 
 // NewServer creates a new HTTP server.
@@ -415,10 +419,10 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 	defer s.mutex.RUnlock()
 
 	type streamInfo struct {
-		Route       string `json:"route"`
-		Listeners   int    `json:"listeners"`
+		Route        string `json:"route"`
+		Listeners    int    `json:"listeners"`
 		CurrentTrack string `json:"current_track"`
-		HistoryHTML string `json:"history_html"`
+		HistoryHTML  string `json:"history_html"`
 	}
 
 	streams := make([]streamInfo, 0, len(s.streams))
@@ -430,21 +434,24 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 		// Generate history HTML for this stream
 		history := s.playlists[route].GetHistory()
 		var historyHTMLBuilder strings.Builder
-		
+
 		if len(history) == 0 {
 			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
 		} else {
 			historyHTMLBuilder.WriteString("<ul>")
 			for _, item := range history {
 				var trackName string
-				
+
 				// Extract track name properly based on item type
 				switch track := item.(type) {
 				case interface{ GetPath() string }:
 					trackName = filepath.Base(track.GetPath())
 				case interface{ GetNormalizedPath() string }:
 					trackName = filepath.Base(track.GetNormalizedPath())
-				case *struct{ Path string; Name string }:
+				case *struct {
+					Path string
+					Name string
+				}:
 					if track != nil {
 						trackName = track.Name
 						if trackName == "" {
@@ -461,14 +468,14 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 						trackName = filepath.Base(str)
 					}
 				}
-				
+
 				if trackName == "" {
 					trackName = "Unknown track"
 				}
-				
+
 				escapedTrackName := html.EscapeString(trackName)
 				historyHTMLBuilder.WriteString(fmt.Sprintf(
-					`<li><span>%s</span><button class="copy-button" onclick="copyToClipboard('%s', this)"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
+					`<li><span>%s</span><button class="copy-button" data-track="%s"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
 					escapedTrackName,
 					escapedTrackName,
 				))
@@ -629,18 +636,18 @@ func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	type PlaybackTimeInfo struct {
-		Route        string  `json:"route"`
-		TrackPath    string  `json:"track_path"`
-		TrackName    string  `json:"track_name"`
-		StartTime    string  `json:"start_time"`
-		ElapsedMs    int64   `json:"elapsed_ms"`
-		ElapsedText  string  `json:"elapsed_text"`
-		TotalMs      int64   `json:"total_ms"`
-		TotalText    string  `json:"total_text"`
-		RemainingMs  int64   `json:"remaining_ms"`
-		RemainingText string `json:"remaining_text"`
+		Route           string  `json:"route"`
+		TrackPath       string  `json:"track_path"`
+		TrackName       string  `json:"track_name"`
+		StartTime       string  `json:"start_time"`
+		ElapsedMs       int64   `json:"elapsed_ms"`
+		ElapsedText     string  `json:"elapsed_text"`
+		TotalMs         int64   `json:"total_ms"`
+		TotalText       string  `json:"total_text"`
+		RemainingMs     int64   `json:"remaining_ms"`
+		RemainingText   string  `json:"remaining_text"`
 		ProgressPercent float64 `json:"progress_percent"`
-		IsPlaying    bool    `json:"is_playing"`
+		IsPlaying       bool    `json:"is_playing"`
 	}
 
 	if route == "" {
@@ -653,19 +660,19 @@ func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
 			if trackName == "." || trackName == "" {
 				trackName = "No track"
 			}
-			
+
 			elapsedMs := elapsed.Milliseconds()
 			elapsedText := formatDuration(elapsed)
 			totalMs := totalDuration.Milliseconds()
 			totalText := formatDuration(totalDuration)
-			
+
 			remaining := totalDuration - elapsed
 			if remaining < 0 {
 				remaining = 0
 			}
 			remainingMs := remaining.Milliseconds()
 			remainingText := formatDuration(remaining)
-			
+
 			progressPercent := float64(0)
 			if totalDuration > 0 {
 				progressPercent = float64(elapsed) / float64(totalDuration) * 100
@@ -673,20 +680,20 @@ func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
 					progressPercent = 100
 				}
 			}
-			
+
 			allPlaybackInfo[r] = PlaybackTimeInfo{
-				Route:         r,
-				TrackPath:     trackPath,
-				TrackName:     trackName,
-				StartTime:     startTime.Format("15:04:05"),
-				ElapsedMs:     elapsedMs,
-				ElapsedText:   elapsedText,
-				TotalMs:       totalMs,
-				TotalText:     totalText,
-				RemainingMs:   remainingMs,
-				RemainingText: remainingText,
+				Route:           r,
+				TrackPath:       trackPath,
+				TrackName:       trackName,
+				StartTime:       startTime.Format("15:04:05"),
+				ElapsedMs:       elapsedMs,
+				ElapsedText:     elapsedText,
+				TotalMs:         totalMs,
+				TotalText:       totalText,
+				RemainingMs:     remainingMs,
+				RemainingText:   remainingText,
 				ProgressPercent: progressPercent,
-				IsPlaying:     !startTime.IsZero(),
+				IsPlaying:       !startTime.IsZero(),
 			}
 		}
 		s.mutex.RUnlock()
@@ -716,19 +723,19 @@ func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
 	if trackName == "." || trackName == "" {
 		trackName = "No track"
 	}
-	
+
 	elapsedMs := elapsed.Milliseconds()
 	elapsedText := formatDuration(elapsed)
 	totalMs := totalDuration.Milliseconds()
 	totalText := formatDuration(totalDuration)
-	
+
 	remaining := totalDuration - elapsed
 	if remaining < 0 {
 		remaining = 0
 	}
 	remainingMs := remaining.Milliseconds()
 	remainingText := formatDuration(remaining)
-	
+
 	progressPercent := float64(0)
 	if totalDuration > 0 {
 		progressPercent = float64(elapsed) / float64(totalDuration) * 100
@@ -738,18 +745,18 @@ func (s *Server) playbackTimeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	playbackInfo := PlaybackTimeInfo{
-		Route:         route,
-		TrackPath:     trackPath,
-		TrackName:     trackName,
-		StartTime:     startTime.Format("15:04:05"),
-		ElapsedMs:     elapsedMs,
-		ElapsedText:   elapsedText,
-		TotalMs:       totalMs,
-		TotalText:     totalText,
-		RemainingMs:   remainingMs,
-		RemainingText: remainingText,
+		Route:           route,
+		TrackPath:       trackPath,
+		TrackName:       trackName,
+		StartTime:       startTime.Format("15:04:05"),
+		ElapsedMs:       elapsedMs,
+		ElapsedText:     elapsedText,
+		TotalMs:         totalMs,
+		TotalText:       totalText,
+		RemainingMs:     remainingMs,
+		RemainingText:   remainingText,
 		ProgressPercent: progressPercent,
-		IsPlaying:     !startTime.IsZero(),
+		IsPlaying:       !startTime.IsZero(),
 	}
 
 	if encodeErr := json.NewEncoder(w).Encode(playbackInfo); encodeErr != nil {
@@ -763,7 +770,7 @@ func formatDuration(d time.Duration) string {
 	hours := totalSeconds / 3600
 	minutes := (totalSeconds % 3600) / 60
 	seconds := totalSeconds % 60
-	
+
 	if hours > 0 {
 		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 	}
@@ -779,7 +786,8 @@ func isConnectionClosedError(err error) bool {
 	errMsg := err.Error()
 	return strings.Contains(errMsg, "broken pipe") ||
 		strings.Contains(errMsg, "connection reset by peer") ||
-		strings.Contains(errMsg, "use of closed network connection")
+		strings.Contains(errMsg, "use of closed network connection") ||
+		strings.Contains(errMsg, "i/o timeout") // сработал дедлайн записи: клиент перестал принимать данные
 }
 
 // StreamAudioHandler creates HTTP handler for audio streaming.
@@ -810,23 +818,31 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		// Set up appropriate headers for streaming.
 		s.setupStreamingHeaders(w, contentType)
 
+		// Players that want the track title send "Icy-MetaData: 1"; others get plain MP3.
+		wantICYMetadata := r.Header.Get("Icy-MetaData") == "1"
+		if wantICYMetadata {
+			w.Header().Set("icy-metaint", strconv.Itoa(icyMetaInt))
+			w.Header().Set("icy-name", strings.TrimPrefix(route, "/"))
+			w.Header().Set("icy-pub", "0")
+		}
+
 		// For HEAD requests, check if stream is ready before returning OK.
 		if r.Method == http.MethodHead {
 			// Check if stream has a current track (files are ready for playback).
 			s.trackMutex.RLock()
 			currentTrack := s.currentTracks[route]
 			s.trackMutex.RUnlock()
-			
+
 			if currentTrack == "" {
-				s.logger.Debug("HEAD request - stream not ready, no current track", 
-					slog.String("route", route), 
+				s.logger.Debug("HEAD request - stream not ready, no current track",
+					slog.String("route", route),
 					slog.String("remoteAddr", r.RemoteAddr))
 				http.Error(w, "Stream not ready - files are being processed", http.StatusServiceUnavailable)
 				return
 			}
-			
-			s.logger.Debug("HEAD request - stream ready", 
-				slog.String("route", route), 
+
+			s.logger.Debug("HEAD request - stream ready",
+				slog.String("route", route),
 				slog.String("remoteAddr", r.RemoteAddr),
 				slog.String("currentTrack", currentTrack))
 			w.WriteHeader(http.StatusOK)
@@ -855,7 +871,14 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		defer stream.RemoveClient(clientData.clientID)
 
 		// Start streaming data to client.
-		s.streamDataToClient(w, flusher, clientData, route, r.Context().Done())
+		var out io.Writer = w
+		if wantICYMetadata {
+			out = newICYMetadataWriter(w, func() string {
+				trackPath, _, _, _ := stream.GetPlaybackInfo()
+				return trackTitleFromPath(trackPath)
+			})
+		}
+		s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done())
 	}
 }
 
@@ -940,8 +963,10 @@ func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr s
 }
 
 // streamDataToClient manages the streaming of audio data to a connected client.
+// out is where audio is written (w itself or a writer that adds ICY metadata).
 func (s *Server) streamDataToClient(
 	w http.ResponseWriter,
+	out io.Writer,
 	flusher http.Flusher,
 	clientData *clientStreamData,
 	route string,
@@ -953,16 +978,20 @@ func (s *Server) streamDataToClient(
 	var totalBytesSent int64
 	var lastLogTime = time.Now()
 
+	// Сервер запущен без WriteTimeout (поток бесконечный), поэтому дедлайн ставится на каждую
+	// запись: иначе пропавший без закрытия соединения клиент висит на Write до таймаута TCP.
+	responseController := http.NewResponseController(w)
+
 	// Send data to client.
 	for {
 		select {
 		case <-clientClosed:
 			// Client disconnected.
-					s.logger.Debug("Client disconnected from stream",
-			slog.String("route", route),
-			slog.String("remoteAddr", clientData.remoteAddr),
-			slog.Int("clientID", clientData.clientID),
-			slog.Int64("totalBytesSent", totalBytesSent))
+			s.logger.Debug("Client disconnected from stream",
+				slog.String("route", route),
+				slog.String("remoteAddr", clientData.remoteAddr),
+				slog.Int("clientID", clientData.clientID),
+				slog.Int64("totalBytesSent", totalBytesSent))
 			return
 		case data, ok := <-clientData.clientCh:
 			if !ok {
@@ -975,7 +1004,11 @@ func (s *Server) streamDataToClient(
 			}
 
 			// Send data and handle errors.
-			if err := s.sendDataToClient(w, data, clientData, route, &totalBytesSent); err != nil {
+			if deadlineErr := responseController.SetWriteDeadline(time.Now().Add(clientWriteTimeout)); deadlineErr != nil &&
+				!errors.Is(deadlineErr, http.ErrNotSupported) {
+				s.logger.Debug("Failed to set write deadline", slog.String("error", deadlineErr.Error()))
+			}
+			if err := s.sendDataToClient(out, data, clientData, route, &totalBytesSent); err != nil {
 				return
 			}
 
@@ -992,7 +1025,7 @@ func (s *Server) streamDataToClient(
 
 // sendDataToClient writes data to the client and handles potential errors.
 func (s *Server) sendDataToClient(
-	w http.ResponseWriter,
+	w io.Writer,
 	data []byte,
 	clientData *clientStreamData,
 	_ string,
@@ -1024,10 +1057,10 @@ func (s *Server) sendDataToClient(
 // logDataTransfer logs information about data transfer periodically.
 func (s *Server) logDataTransfer(clientData *clientStreamData, totalBytesSent *int64, lastLogTime *time.Time) {
 	if *totalBytesSent >= logEveryBytes && time.Since(*lastLogTime) > logIntervalSec*time.Second {
-			s.logger.Debug("Sent data to client",
-		slog.Int("mbytes", int(*totalBytesSent/mb)),
-		slog.Int("clientID", clientData.clientID),
-		slog.String("remoteAddr", clientData.remoteAddr))
+		s.logger.Debug("Sent data to client",
+			slog.Int("mbytes", int(*totalBytesSent/mb)),
+			slog.Int("clientID", clientData.clientID),
+			slog.String("remoteAddr", clientData.remoteAddr))
 		*lastLogTime = time.Now()
 	}
 }
@@ -1227,53 +1260,56 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		// Get playlist history.
 		history := s.playlists[route].GetHistory()
 		var historyHTMLBuilder strings.Builder
-		
+
 		if len(history) == 0 {
 			// Show message when no history is available
 			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
 		} else {
 			historyHTMLBuilder.WriteString("<ul>")
 			for _, item := range history {
-			var trackName string
-			
-			// Extract track name properly based on item type
-			switch track := item.(type) {
-			case interface{ GetPath() string }:
-				trackName = filepath.Base(track.GetPath())
-			case interface{ GetNormalizedPath() string }:
-				trackName = filepath.Base(track.GetNormalizedPath())
-			case *struct{ Path string; Name string }:
-				if track != nil {
-					trackName = track.Name
-					if trackName == "" {
-						trackName = filepath.Base(track.Path)
+				var trackName string
+
+				// Extract track name properly based on item type
+				switch track := item.(type) {
+				case interface{ GetPath() string }:
+					trackName = filepath.Base(track.GetPath())
+				case interface{ GetNormalizedPath() string }:
+					trackName = filepath.Base(track.GetNormalizedPath())
+				case *struct {
+					Path string
+					Name string
+				}:
+					if track != nil {
+						trackName = track.Name
+						if trackName == "" {
+							trackName = filepath.Base(track.Path)
+						}
+					}
+				case string:
+					trackName = filepath.Base(track)
+				default:
+					// Fallback to string representation but clean it up
+					str := fmt.Sprintf("%v", item)
+					if strings.Contains(str, "{") && strings.Contains(str, "}") {
+						// This looks like a struct, try to extract filename
+						trackName = "Unknown track"
+					} else {
+						trackName = filepath.Base(str)
 					}
 				}
-			case string:
-				trackName = filepath.Base(track)
-			default:
-				// Fallback to string representation but clean it up
-				str := fmt.Sprintf("%v", item)
-				if strings.Contains(str, "{") && strings.Contains(str, "}") {
-					// This looks like a struct, try to extract filename
+
+				if trackName == "" {
 					trackName = "Unknown track"
-				} else {
-					trackName = filepath.Base(str)
 				}
+
+				escapedTrackName := html.EscapeString(trackName)
+				historyHTMLBuilder.WriteString(fmt.Sprintf(
+					`<li><span>%s</span><button class="copy-button" data-track="%s"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
+					escapedTrackName,
+					escapedTrackName,
+				))
 			}
-			
-			if trackName == "" {
-				trackName = "Unknown track"
-			}
-			
-			escapedTrackName := html.EscapeString(trackName)
-			historyHTMLBuilder.WriteString(fmt.Sprintf(
-				`<li><span>%s</span><button class="copy-button" onclick="copyToClipboard('%s', this)"><span class="copy-icon">📋</span><span class="copy-feedback"></span></button></li>`,
-				escapedTrackName,
-				escapedTrackName,
-			))
-		}
-		historyHTMLBuilder.WriteString("</ul>")
+			historyHTMLBuilder.WriteString("</ul>")
 		}
 		historyHTML := historyHTMLBuilder.String()
 
@@ -1318,15 +1354,15 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
-		"Streams":            streams,
-		"Title":              "Audio Streams Status",
-		"RelayEnabled":       s.relayManager != nil,
-		"RelayActive":        s.relayManager != nil && s.relayManager.IsActive(),
-		"RelayClickable":     s.relayFunctionalityEnabled,
-		"TelegramEnabled":    s.telegramManager != nil,
-		"TelegramActive":     telegramActive,
-		"TelegramClickable":  s.telegramFunctionalityEnabled,
-		"GlobalShuffle":      s.getGlobalShuffleStatus(),
+		"Streams":           streams,
+		"Title":             "Audio Streams Status",
+		"RelayEnabled":      s.relayManager != nil,
+		"RelayActive":       s.relayManager != nil && s.relayManager.IsActive(),
+		"RelayClickable":    s.relayFunctionalityEnabled,
+		"TelegramEnabled":   s.telegramManager != nil,
+		"TelegramActive":    telegramActive,
+		"TelegramClickable": s.telegramFunctionalityEnabled,
+		"GlobalShuffle":     s.getGlobalShuffleStatus(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
@@ -1336,35 +1372,14 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleTrackSwitchHandler handles track switching.
 func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request, direction string) {
-	// Get route early for floyd detection
 	vars := mux.Vars(r)
 	route := "/" + vars["route"]
-	isFloydRoute := strings.Contains(route, "floyd")
-	
-	if isFloydRoute {
-		s.logger.Debug("HTTP handleTrackSwitchHandler called", 
-			slog.String("direction", direction),
-			slog.String("route", route),
-			slog.String("method", r.Method),
-			slog.String("remoteAddr", r.RemoteAddr),
-			slog.String("userAgent", r.UserAgent()),
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
-	} else {
-		s.logger.Info("TRACK SWITCH DEBUG: handleTrackSwitchHandler called", 
-			slog.String("direction", direction),
-			slog.String("method", r.Method),
-			slog.String("remoteAddr", r.RemoteAddr),
-			slog.String("userAgent", r.UserAgent()),
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
-	}
-	
+
 	// Check authentication.
 	if !s.checkAuth(r) {
-		if isFloydRoute {
-			s.logger.Debug("Authentication failed")
-		} else {
-			s.logger.Info("TRACK SWITCH DEBUG: Authentication failed")
-		}
+		s.logger.Info("Track switch rejected: not authenticated",
+			slog.String("route", route),
+			slog.String("remoteAddr", r.RemoteAddr))
 		s.handleUnauthenticatedTrackSwitch(w, r)
 		return
 	}
@@ -1372,38 +1387,18 @@ func (s *Server) handleTrackSwitchHandler(w http.ResponseWriter, r *http.Request
 	// Get playlist.
 	playlist, exists := s.getPlaylistForRoute(route)
 	if !exists {
-		if isFloydRoute {
-			s.logger.Debug("Playlist not found", slog.String("route", route))
-		}
 		s.handlePlaylistNotFound(w, r, route)
 		return
-	}
-
-	if isFloydRoute {
-		s.logger.Debug("About to get track for direction", 
-			slog.String("direction", direction), 
-			slog.String("route", route))
 	}
 
 	// Get track.
 	track := s.getTrackForDirection(playlist, direction)
 	if track == nil {
-		if isFloydRoute {
-			s.logger.Debug("Track not found", 
-				slog.String("direction", direction), 
-				slog.String("route", route))
-		}
 		s.handleTrackNotFound(w, r, route, direction)
 		return
 	}
 
-	if isFloydRoute {
-		s.logger.Debug("Manual track switch proceeding", 
-			slog.String("direction", direction), 
-			slog.String("route", route))
-	} else {
-		s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
-	}
+	s.logger.Info("Manual track switch", slog.String("direction", direction), slog.String("route", route))
 
 	// Handle track switching.
 	s.handleTrackSwitchResult(w, r, route, track)
@@ -1455,24 +1450,10 @@ func (s *Server) handlePlaylistNotFound(w http.ResponseWriter, r *http.Request, 
 
 // getTrackForDirection gets the track for the specified direction.
 func (s *Server) getTrackForDirection(playlist PlaylistManager, direction string) interface{} {
-	s.logger.Info("TRACK SWITCH DEBUG: getTrackForDirection called", 
-		slog.String("direction", direction),
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
-	
 	if direction == "next" {
-		s.logger.Info("TRACK SWITCH DEBUG: About to call NextTrack()", 
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
-		track := playlist.NextTrack()
-		s.logger.Info("TRACK SWITCH DEBUG: NextTrack() called and returned", 
-			slog.String("timestamp", time.Now().Format("15:04:05.000")))
-		return track
+		return playlist.NextTrack()
 	}
-	s.logger.Info("TRACK SWITCH DEBUG: About to call PreviousTrack()", 
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
-	track := playlist.PreviousTrack()
-	s.logger.Info("TRACK SWITCH DEBUG: PreviousTrack() called and returned", 
-		slog.String("timestamp", time.Now().Format("15:04:05.000")))
-	return track
+	return playlist.PreviousTrack()
 }
 
 // handleTrackNotFound handles case when track for direction is not found.
@@ -1617,23 +1598,13 @@ func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 
 // redirectToLogin redirects to login page.
 func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
+	// Пароль и значения cookie в лог не пишем.
 	s.logger.Info(
 		"Redirecting to login page",
 		slog.String("remoteAddr", r.RemoteAddr),
 		slog.String("path", r.URL.Path),
 		slog.String("userAgent", r.UserAgent()),
-		slog.String("cookie", fmt.Sprintf("%v", r.Cookies())),
 	)
-
-	// Проверим куки для диагностики.
-	cookie, cookieErr := r.Cookie("status_auth")
-	if cookieErr != nil {
-		s.logger.Info("Auth cookie not found", slog.String("error", cookieErr.Error()))
-	} else {
-		s.logger.Info("Auth cookie found", slog.String("value", cookie.Value))
-		s.logger.Info("Expected password", slog.String("password", s.statusPassword))
-		s.logger.Info("Cookie match", slog.Bool("match", cookie.Value == s.statusPassword))
-	}
 
 	// ИСПРАВЛЕНИЕ: Сохраняем оригинальный URL как query параметр
 	// чтобы после авторизации вернуть пользователя туда, где он хотел быть
@@ -1641,7 +1612,7 @@ func (s *Server) redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		originalURL += "?" + r.URL.RawQuery
 	}
-	
+
 	// Только сохраняем URL если это не сама страница логина
 	if originalURL != "/status" && originalURL != "/status-page" {
 		encodedURL := url.QueryEscape(originalURL)
@@ -1816,7 +1787,7 @@ func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Reques
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
-	
+
 	if !exists {
 		s.logger.Error("Route not found for shuffle mode setting", slog.String("route", route))
 		isAjax := isAjaxRequest(r)
@@ -1835,13 +1806,13 @@ func (s *Server) processShuffleModeSetting(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	
+
 	// Set shuffle mode on the playlist.
 	shuffleEnabled := mode == "on"
 	playlist.SetShuffleEnabled(shuffleEnabled)
-	
-	s.logger.Info("Shuffle mode updated for route", 
-		slog.String("route", route), 
+
+	s.logger.Info("Shuffle mode updated for route",
+		slog.String("route", route),
 		slog.Bool("enabled", shuffleEnabled))
 
 	isAjax := isAjaxRequest(r)
@@ -1914,31 +1885,31 @@ func (s *Server) SetStatusPassword(password string) {
 func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	route := vars["route"]
-	
+
 	if route == "" {
 		s.logger.Error("No route provided for clear history")
 		http.Error(w, "Route parameter is required", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Add leading slash if not present
 	if !strings.HasPrefix(route, "/") {
 		route = "/" + route
 	}
-	
+
 	s.logger.Info("Clearing track history for route", slog.String("route", route))
-	
+
 	// Get the playlist manager for this route
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
-	
+
 	if !exists {
 		s.logger.Error("Playlist not found for route", slog.String("route", route))
 		http.Error(w, "Playlist not found", http.StatusNotFound)
 		return
 	}
-	
+
 	// Clear the history (implement ClearHistory method in playlist interface)
 	if clearablePlaylist, ok := playlist.(interface{ ClearHistory() }); ok {
 		clearablePlaylist.ClearHistory()
@@ -1948,10 +1919,10 @@ func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Clear history not supported", http.StatusNotImplemented)
 		return
 	}
-	
+
 	// Check if this is an AJAX request
 	isAjax := r.Header.Get("X-Requested-With") == "XMLHttpRequest"
-	
+
 	if isAjax {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1974,12 +1945,12 @@ func (s *Server) getShuffleStatusForRoute(route string) bool {
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
-	
+
 	if !exists {
 		// If route doesn't exist, return global shuffle setting as fallback.
 		return s.globalShuffleConfig
 	}
-	
+
 	// Get shuffle status from playlist.
 	return playlist.GetShuffleEnabled()
 }
@@ -2004,17 +1975,17 @@ func (s *Server) IsStreamAvailable(route string) bool {
 	s.mutex.RLock()
 	stream, exists := s.streams[route]
 	s.mutex.RUnlock()
-	
+
 	// If stream doesn't exist, it's not available
 	if !exists {
 		return false
 	}
-	
+
 	// Check if stream is actually playing audio
 	s.trackMutex.RLock()
 	currentTrack := s.currentTracks[route]
 	s.trackMutex.RUnlock()
-	
+
 	// A station can have a current track and still send nothing (stuck streamer).
 	// If the stream reports its last activity, treat a long silence as unavailable.
 	if activity, ok := stream.(interface{ GetLastActivity() time.Time }); ok {
@@ -2049,16 +2020,16 @@ func (s *Server) streamStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	statuses := make([]StreamStatus, 0, len(routes))
-	
+
 	for i, route := range routes {
 		status := "offline"
-		
+
 		// Make HEAD request to check stream availability
 		url := fmt.Sprintf("http://localhost:8000%s", route)
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 		}
-		
+
 		resp, err := client.Head(url)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			status = "online"
@@ -2066,7 +2037,7 @@ func (s *Server) streamStatusHandler(w http.ResponseWriter, r *http.Request) {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		
+
 		statuses = append(statuses, StreamStatus{
 			Route:  route,
 			Status: status,
@@ -2089,17 +2060,17 @@ func (s *Server) ClearHistoryForRoute(route string) error {
 	s.mutex.RLock()
 	playlist, exists := s.playlists[route]
 	s.mutex.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("playlist not found for route: %s", route)
 	}
-	
+
 	// Clear the history if playlist supports it
 	if clearablePlaylist, ok := playlist.(interface{ ClearHistory() }); ok {
 		clearablePlaylist.ClearHistory()
 		return nil
 	}
-	
+
 	return fmt.Errorf("playlist does not support clearing history for route: %s", route)
 }
 

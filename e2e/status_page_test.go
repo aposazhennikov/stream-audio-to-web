@@ -12,8 +12,8 @@ import (
 )
 
 func TestStatusPageContent(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 
 	// Create HTTP client with cookie support.
@@ -94,8 +94,8 @@ func TestStatusPageContent(t *testing.T) {
 }
 
 func TestAuthenticationFailure(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 
 	// 1. Check access to status-page without authentication.
 	client := &http.Client{

@@ -1,5 +1,5 @@
 # Stage 1: Building the application
-FROM golang:1.22-alpine AS builder
+FROM golang:1.22-alpine3.20 AS builder
 
 # Installing build dependencies
 RUN apk add --no-cache git
@@ -7,28 +7,23 @@ RUN apk add --no-cache git
 # Creating working directory
 WORKDIR /app
 
-# Copying only go.mod first
-COPY go.mod ./
+# Copying go.mod and go.sum first, so the module download is cached until they change
+COPY go.mod go.sum ./
 
-# Running go mod tidy to create/update go.sum
-RUN go mod tidy
-
-# Downloading all dependencies (explicitly)
-RUN go mod download all
+# Downloading dependencies at the exact versions pinned in go.sum
+RUN go mod download
 
 # Copying source code
 COPY . .
 
-# Re-running go mod tidy after copying code
-RUN go mod tidy && go mod verify
-
 # Building the application
 # Flag CGO_ENABLED=0 for static compilation
+# Flag -trimpath removes local build paths from the binary
 # Flag -ldflags="-s -w" for optimizing binary file size
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o audio-streamer .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o audio-streamer .
 
 # Stage 2: Creating the final image
-FROM alpine:latest
+FROM alpine:3.20
 
 # Installing basic utilities and FFmpeg for accurate MP3 duration detection
 RUN apk add --no-cache ca-certificates tzdata curl findutils ffmpeg
@@ -61,4 +56,4 @@ HEALTHCHECK --interval=30s --timeout=2s --start-period=5s --retries=3 \
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default arguments - running audio-streamer without explicitly specifying directory
-CMD ["/app/audio-streamer"] 
+CMD ["/app/audio-streamer"]
