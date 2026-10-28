@@ -1,4 +1,4 @@
-package unit
+package unit_test
 
 import (
 	"log/slog"

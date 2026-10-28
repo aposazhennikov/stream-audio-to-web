@@ -99,6 +99,11 @@ func (m *MockAudioStreamer) Close() {
 	m.streaming.Store(false)
 }
 
+// GetClientCount returns the number of connected clients (always zero for the mock).
+func (m *MockAudioStreamer) GetClientCount() int {
+	return 0
+}
+
 // MockPlaylistManager implements radio.PlaylistManager for testing.
 type MockPlaylistManager struct {
 	tracks               []string

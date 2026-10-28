@@ -427,19 +427,9 @@ func (rs *Station) handleTrackInterruption(trackFinished chan error, trackPath s
 		slog.String("route", rs.route),
 	)
 
-	// Wait to make sure playback goroutine has finished.
-	select {
-	case <-trackFinished:
-		rs.logger.Info(
-			"DIAGNOSTICS: Track playback goroutine successfully completed after interruption",
-			slog.String("trackPath", trackPath),
-		)
-	case <-time.After(trackInterruptTimeoutMs * time.Millisecond):
-		rs.logger.Info(
-			"DIAGNOSTICS: Timeout waiting for track playback goroutine to complete",
-			slog.String("trackPath", trackPath),
-		)
-	}
+	// Wait until playback goroutine has finished. Starting the next track while the old one
+	// is still streaming makes two goroutines write into the same stream.
+	rs.waitForPlaybackGoroutine(trackFinished, trackPath)
 
 	// Check if restart was requested.
 	if isRestartRequested {
@@ -451,6 +441,31 @@ func (rs *Station) handleTrackInterruption(trackFinished chan error, trackPath s
 	}
 
 	return isRestartRequested
+}
+
+// waitForPlaybackGoroutine ждёт завершения горутины проигрывания и повторяет остановку,
+// если она не завершилась за trackInterruptTimeoutMs (например, стартовала уже после StopCurrentTrack).
+func (rs *Station) waitForPlaybackGoroutine(trackFinished chan error, trackPath string) {
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-trackFinished:
+			rs.logger.Info(
+				"DIAGNOSTICS: Track playback goroutine successfully completed after interruption",
+				slog.String("trackPath", trackPath),
+			)
+			return
+		case <-rs.stop:
+			return
+		case <-time.After(trackInterruptTimeoutMs * time.Millisecond):
+			rs.logger.Warn(
+				"DIAGNOSTICS: Track playback goroutine still running after interruption, stopping it again",
+				slog.String("trackPath", trackPath),
+				slog.String("route", rs.route),
+				slog.Int("attempt", attempt),
+			)
+			rs.streamer.StopCurrentTrack()
+		}
+	}
 }
 
 // handleTrackCompletion обрабатывает завершение проигрывания трека.

@@ -85,6 +85,7 @@ const (
 	cookieExpireHours         = 24
 	logIntervalSec            = 5
 	logEveryBytes             = mb // Log every sent megabyte.
+	streamSilenceThreshold    = 30 * time.Second // Stream without audio data for longer is considered down.
 )
 
 // NewServer creates a new HTTP server.
@@ -2014,6 +2015,19 @@ func (s *Server) IsStreamAvailable(route string) bool {
 	currentTrack := s.currentTracks[route]
 	s.trackMutex.RUnlock()
 	
+	// A station can have a current track and still send nothing (stuck streamer).
+	// If the stream reports its last activity, treat a long silence as unavailable.
+	if activity, ok := stream.(interface{ GetLastActivity() time.Time }); ok {
+		lastActivity := activity.GetLastActivity()
+		if lastActivity.IsZero() || time.Since(lastActivity) > streamSilenceThreshold {
+			s.logger.Warn("Stream sends no audio data",
+				slog.String("route", route),
+				slog.String("currentTrack", currentTrack),
+				slog.Time("lastActivity", lastActivity))
+			return false
+		}
+	}
+
 	// Stream is available only if it exists, has a current track and is properly initialized
 	return currentTrack != "" && stream.GetClientCount() >= 0
 }

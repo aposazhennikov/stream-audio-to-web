@@ -62,8 +62,11 @@ type Streamer struct {
 	metricMutex        sync.RWMutex           // Мьютекс для защиты метрики.
 	logger             *slog.Logger           // Logger for streamer operations
 	sentryHelper       *sentryhelper.SentryHelper  // Helper для безопасной работы с Sentry.
-	streamingStopped   chan struct{}          // НОВЫЙ канал для синхронизации остановки стриминга
+	streamDone         chan struct{}          // Закрывается, когда текущий вызов StreamTrack завершился
+	quitMutex          sync.Mutex             // Защищает quit и streamDone
+	stopMutex          sync.Mutex             // Не даёт двум StopCurrentTrack выполняться одновременно
 	isStreaming        int32                  // НОВЫЙ атомарный флаг состояния стриминга
+	lastActivityNano   int64                  // Время (UnixNano) последнего прочитанного и разосланного куска аудио
 	trackStartTime     time.Time              // НОВЫЙ: время начала воспроизведения текущего трека
 	currentTrackPath   string                 // НОВЫЙ: путь к текущему треку
 	trackDuration      time.Duration          // НОВЫЙ: длительность текущего трека
@@ -103,7 +106,7 @@ func NewStreamer(bufferSize, maxClients int, bitrate int, logger *slog.Logger, s
 		metricMutex:        sync.RWMutex{},
 		logger:             logger,
 		sentryHelper:       sentryHelper,
-		streamingStopped:   make(chan struct{}),
+		streamDone:         nil,
 		isStreaming:        0,
 		trackStartTime:     time.Time{},
 		currentTrackPath:   "",
@@ -121,7 +124,13 @@ func (s *Streamer) SetVolumeNormalization(enabled bool) {
 // Close closes the streamer and all client connections.
 func (s *Streamer) Close() {
 	// Signal closing.
-	close(s.quit)
+	s.quitMutex.Lock()
+	select {
+	case <-s.quit:
+	default:
+		close(s.quit)
+	}
+	s.quitMutex.Unlock()
 
 	// Clear the last buffer.
 	s.lastChunkMutex.Lock()
@@ -150,20 +159,25 @@ func (s *Streamer) Close() {
 // StopCurrentTrack immediately stops the playback of the current track.
 // Used when manually switching tracks.
 func (s *Streamer) StopCurrentTrack() {
+	// Остановку может одновременно запросить HTTP-обработчик и цикл станции.
+	s.stopMutex.Lock()
+	defer s.stopMutex.Unlock()
+
 	startTime := time.Now()
-	
+
 	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
 	s.trackMutex.RLock()
 	currentTrack := s.currentTrackPath
 	s.trackMutex.RUnlock()
-	
-	
+
+
 	s.logger.Debug("STREAMER StopCurrentTrack called",
 		"currentTrack", currentTrack,
 		"isStreaming", atomic.LoadInt32(&s.isStreaming),
 		"timestamp", startTime.Format("15:04:05.000"))
-	
+
 	// Закрываем quit канал для немедленной остановки
+	s.quitMutex.Lock()
 	select {
 	case <-s.quit:
 		s.logger.Debug("Quit channel already closed, creating new one")
@@ -171,23 +185,24 @@ func (s *Streamer) StopCurrentTrack() {
 		close(s.quit)
 		s.logger.Debug("Quit channel closed - track MUST stop NOW")
 	}
+	streamDone := s.streamDone
+	s.quitMutex.Unlock()
 
 	// Очищаем буфер немедленно чтобы предотвратить воспроизведение старых данных
 	s.lastChunkMutex.Lock()
 	s.lastChunk = nil
 	s.lastChunkMutex.Unlock()
 
-	// КРИТИЧЕСКОЕ ОЖИДАНИЕ: ждём только если стриминг действительно активен
-	if atomic.LoadInt32(&s.isStreaming) == 1 {
-		s.logger.Debug("Waiting for active streaming to stop...")
-		
+	// Ждём завершения последнего StreamTrack. Если он уже завершён, канал закрыт и ожидания нет.
+	if streamDone != nil {
 		select {
-		case <-s.streamingStopped:
+		case <-streamDone:
 			s.logger.Debug("Streaming stopped successfully",
 				"stopDurationMs", time.Since(startTime).Milliseconds())
 		case <-time.After(1 * time.Second): // Уменьшили с 2 до 1 секунды
+			// Зависший StreamTrack держит старый, уже закрытый quit и завершится, как только продолжит работу.
 			criticalErr := fmt.Errorf("CRITICAL: 1-second track stop timeout")
-			s.logger.Debug("Track stop timeout after 1 second",
+			s.logger.Warn("Track stop timeout after 1 second",
 				"isStreaming", atomic.LoadInt32(&s.isStreaming))
 			s.sentryHelper.CaptureError(criticalErr, "audio", "streaming")
 		}
@@ -195,9 +210,10 @@ func (s *Streamer) StopCurrentTrack() {
 		s.logger.Debug("No active streaming detected - stop immediate")
 	}
 
-	// Создаём новые каналы для следующего трека
+	// Создаём новый канал для следующего трека
+	s.quitMutex.Lock()
 	s.quit = make(chan struct{})
-	s.streamingStopped = make(chan struct{})
+	s.quitMutex.Unlock()
 
 	totalTime := time.Since(startTime)
 	s.logger.Debug("STREAMER Track stop COMPLETED",
@@ -211,15 +227,16 @@ func (s *Streamer) GetCurrentTrackChannel() <-chan string {
 
 // StreamTrack streams a track to all connected clients.
 func (s *Streamer) StreamTrack(trackPath string) error {
+	// quit фиксируется один раз на весь трек: StopCurrentTrack закрывает именно его,
+	// и трек не подхватит новый канал, созданный для следующего трека.
+	quit, streamDone := s.beginStreaming()
+
 	// КРИТИЧЕСКИ ВАЖНО: устанавливаем флаг стриминга в начале
 	atomic.StoreInt32(&s.isStreaming, 1)
 	defer func() {
 		// И сбрасываем в конце + сигнализируем об остановке
 		atomic.StoreInt32(&s.isStreaming, 0)
-		select {
-		case s.streamingStopped <- struct{}{}:
-		default:
-		}
+		close(streamDone)
 	}()
 
 	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
@@ -291,9 +308,9 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 
 	// Check if normalization should be used.
 	if !s.normalizeVolume {
-		s.logger.Debug("Using raw audio streaming (normalization disabled)", 
+		s.logger.Debug("Using raw audio streaming (normalization disabled)",
 			"trackPath", trackPath)
-		err := s.processRawAudio(file, fileInfo, trackPath, startTime)
+		err := s.processRawAudio(file, fileInfo, trackPath, startTime, quit)
 		
 		s.logger.Debug("STREAMER StreamTrack completed",
 			"trackPath", trackPath,
@@ -307,8 +324,8 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	s.logger.Debug("Normalization is enabled but forcing raw audio",
 		"trackPath", trackPath)
 	
-	err := s.processRawAudio(file, fileInfo, trackPath, startTime)
-	
+	err := s.processRawAudio(file, fileInfo, trackPath, startTime, quit)
+
 	s.logger.Debug("STREAMER StreamTrack completed",
 		"trackPath", trackPath,
 		"error", fmt.Sprintf("%v", err),
@@ -317,8 +334,32 @@ func (s *Streamer) StreamTrack(trackPath string) error {
 	return err
 }
 
+// beginStreaming registers a new StreamTrack call and returns its quit channel
+// and the channel to close when the call finishes.
+func (s *Streamer) beginStreaming() (chan struct{}, chan struct{}) {
+	s.quitMutex.Lock()
+	defer s.quitMutex.Unlock()
+
+	streamDone := make(chan struct{})
+	s.streamDone = streamDone
+	return s.quit, streamDone
+}
+
+// currentQuit returns the current quit channel.
+func (s *Streamer) currentQuit() chan struct{} {
+	s.quitMutex.Lock()
+	defer s.quitMutex.Unlock()
+	return s.quit
+}
+
 // processRawAudio handles streaming of raw (non-normalized) audio.
-func (s *Streamer) processRawAudio(file *os.File, fileInfo os.FileInfo, trackPath string, startTime time.Time) error {
+func (s *Streamer) processRawAudio(
+	file *os.File,
+	fileInfo os.FileInfo,
+	trackPath string,
+	startTime time.Time,
+	quit chan struct{},
+) error {
 	// Skip ID3v2 if it exists.
 	header := make([]byte, id3v2HeaderSize)
 	_, headerErr := io.ReadFull(file, header)
@@ -364,7 +405,7 @@ func (s *Streamer) processRawAudio(file *os.File, fileInfo os.FileInfo, trackPat
 	s.logger.Debug("Starting to read file", "trackPath", trackPath)
 
 	// Process file in streaming loop.
-	err = s.streamAudioLoop(file, trackPath, &bytesRead)
+	err = s.streamAudioLoop(file, trackPath, &bytesRead, quit)
 	if err != nil {
 		return err
 	}
@@ -379,7 +420,7 @@ func (s *Streamer) processRawAudio(file *os.File, fileInfo os.FileInfo, trackPat
 	select {
 	case <-time.After(time.Duration(pauseMs) * time.Millisecond):
 		// Continue processing.
-	case <-s.quit:
+	case <-quit:
 		s.logger.Debug("Pause between tracks interrupted", "trackPath", trackPath)
 	}
 
@@ -545,7 +586,7 @@ func (s *Streamer) streamFromPipe(reader *io.PipeReader, trackPath string) (int6
 // isPlaybackInterrupted checks if playback should be interrupted.
 func (s *Streamer) isPlaybackInterrupted(trackPath string) bool {
 	select {
-	case <-s.quit:
+	case <-s.currentQuit():
 		s.logger.Debug("Playback interrupted", "trackPath", trackPath)
 		return true
 	default:
@@ -581,7 +622,7 @@ func (s *Streamer) processAudioChunk(data []byte, bytesRead int64, trackPath str
 	delayMs := s.calculateAndLogDelay(len(data))
 
 	// Wait for delay with completion check.
-	s.waitForDelayOrQuit(delayMs, trackPath, bytesRead)
+	s.waitForDelayOrQuit(delayMs, trackPath, bytesRead, s.currentQuit())
 }
 
 // calculateAndLogDelay calculates delay based on bitrate and logs it periodically.
@@ -634,7 +675,7 @@ func (s *Streamer) addPauseBetweenTracks(trackPath string) {
 	select {
 	case <-time.After(time.Duration(pauseMs) * time.Millisecond):
 		// Continue processing.
-	case <-s.quit:
+	case <-s.currentQuit():
 		s.logger.Debug("Pause between tracks interrupted", "trackPath", trackPath)
 	}
 }
@@ -865,13 +906,24 @@ func (s *Streamer) calculateDurationBySimpleEstimation(trackPath string) time.Du
 
 // broadcastToClients sends data to all connected clients.
 func (s *Streamer) broadcastToClients(data []byte) {
+	stuckClients := s.sendToAllClients(data)
+
+	// Stuck clients are removed only after the read lock is released:
+	// RemoveClient takes the write lock, and taking it while holding RLock deadlocks the stream.
+	for _, clientID := range stuckClients {
+		s.RemoveClient(clientID)
+	}
+}
+
+// sendToAllClients sends data to all clients under the read lock and returns IDs of clients that did not accept it.
+func (s *Streamer) sendToAllClients(data []byte) []int {
 	s.clientMutex.RLock()
 	defer s.clientMutex.RUnlock()
 
 	// If there are no clients, just return.
 	clientCount := len(s.clientChannels)
 	if clientCount == 0 {
-		return
+		return nil
 	}
 
 	// Log client status if needed.
@@ -881,7 +933,7 @@ func (s *Streamer) broadcastToClients(data []byte) {
 	clients := s.getClientsList(clientCount)
 
 	// Process clients in batches.
-	s.processBatches(clients, data)
+	return s.processBatches(clients, data)
 }
 
 // logClientStatusIfNeeded logs client status information periodically.
@@ -926,12 +978,15 @@ func (s *Streamer) getClientsList(clientCount int) []struct {
 }
 
 // processBatches processes clients in batches for better performance.
+// Returns IDs of clients that did not accept data and must be disconnected.
 func (s *Streamer) processBatches(clients []struct {
 	id int
 	ch chan []byte
-}, data []byte) {
+}, data []byte) []int {
 	clientCount := len(clients)
 	var wg sync.WaitGroup
+	var stuckMutex sync.Mutex
+	var stuckClients []int
 
 	for i := 0; i < clientCount; i += batchSize {
 		end := i + batchSize
@@ -940,59 +995,76 @@ func (s *Streamer) processBatches(clients []struct {
 		}
 
 		wg.Add(1)
-		go s.processBatch(clients[i:end], data, &wg)
+		go func(batch []struct {
+			id int
+			ch chan []byte
+		}) {
+			defer wg.Done()
+			stuck := s.processBatch(batch, data)
+			if len(stuck) > 0 {
+				stuckMutex.Lock()
+				stuckClients = append(stuckClients, stuck...)
+				stuckMutex.Unlock()
+			}
+		}(clients[i:end])
 	}
 
 	wg.Wait()
+	return stuckClients
 }
 
-// processBatch processes a batch of clients.
+// processBatch processes a batch of clients and returns IDs of clients that did not accept data.
 func (s *Streamer) processBatch(
 	batch []struct {
 		id int
 		ch chan []byte
 	},
 	data []byte,
-	wg *sync.WaitGroup,
-) {
-	defer wg.Done()
-
+) []int {
+	var stuck []int
 	for _, client := range batch {
-		s.sendDataToClient(client.id, client.ch, data)
+		if !s.sendDataToClient(client.id, client.ch, data) {
+			stuck = append(stuck, client.id)
+		}
 	}
+	return stuck
 }
 
 // sendDataToClient sends data to a specific client with retry logic.
-func (s *Streamer) sendDataToClient(clientID int, clientCh chan []byte, data []byte) {
+// Returns false if the client did not accept data and must be disconnected.
+func (s *Streamer) sendDataToClient(clientID int, clientCh chan []byte, data []byte) bool {
 	select {
 	case clientCh <- data: // Use original buffer, not a copy
 		// Data successfully sent.
+		return true
 	case <-time.After(time.Duration(firstTimeoutMs) * time.Millisecond):
 		// First timeout, retry.
-		s.handleFirstTimeout(clientID, clientCh, data)
+		return s.handleFirstTimeout(clientID, clientCh, data)
 	}
 }
 
 // handleFirstTimeout handles first timeout when sending data to client.
-func (s *Streamer) handleFirstTimeout(clientID int, clientCh chan []byte, data []byte) {
+func (s *Streamer) handleFirstTimeout(clientID int, clientCh chan []byte, data []byte) bool {
 	s.logger.Info("First timeout sending data to client, retrying...", "clientID", clientID)
 
 	select {
 	case clientCh <- data:
 		s.logger.Info("Resending data to client successful", "clientID", clientID)
+		return true
 	case <-time.After(time.Duration(secondTimeoutMs) * time.Millisecond):
 		// Second timeout, disconnect client.
 		s.handleSecondTimeout(clientID)
+		return false
 	}
 }
 
 // handleSecondTimeout handles second timeout when sending data to client.
+// The client itself is removed by broadcastToClients after the read lock is released.
 func (s *Streamer) handleSecondTimeout(clientID int) {
-	s.logger.Info(
+	s.logger.Warn(
 		"Second timeout sending data to client, disconnecting...",
 		"clientID", clientID,
 	)
-	s.RemoveClient(clientID)
 }
 
 // SetTrackSecondsMetric sets the metric for the streamer.
@@ -1041,7 +1113,7 @@ func (s *Streamer) CloseClient(clientID int) {
 }
 
 // streamAudioLoop handles the main stream reading and broadcasting loop.
-func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *int64) error {
+func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *int64, quit chan struct{}) error {
 	
 	s.logger.Debug("Starting streamAudioLoop", 
 		"trackPath", trackPath,
@@ -1072,8 +1144,8 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 
 		// Check completion signal before reading.
 		select {
-		case <-s.quit:
-			s.logger.Debug("Quit signal received in streamAudioLoop", 
+		case <-quit:
+			s.logger.Debug("Quit signal received in streamAudioLoop",
 				"trackPath", trackPath,
 				"bytesRead", *bytesRead,
 				"iteration", loopCounter)
@@ -1116,7 +1188,7 @@ func (s *Streamer) streamAudioLoop(file io.Reader, trackPath string, bytesRead *
 
 		// Handle delay.
 		delayMs := s.calculateDelay(n)
-		s.waitForDelayOrQuit(delayMs, trackPath, *bytesRead)
+		s.waitForDelayOrQuit(delayMs, trackPath, *bytesRead, quit)
 	}
 
 	s.logger.Debug("streamAudioLoop completed normally", 
@@ -1139,6 +1211,18 @@ func (s *Streamer) saveAndBroadcastChunk(data []byte) {
 
 	// Send data to all clients.
 	s.broadcastToClients(data)
+
+	atomic.StoreInt64(&s.lastActivityNano, time.Now().UnixNano())
+}
+
+// GetLastActivity returns the time when the last audio chunk was streamed (zero if nothing was streamed yet).
+// Used by monitoring to detect a station that is "playing" a track but sends no data.
+func (s *Streamer) GetLastActivity() time.Time {
+	nano := atomic.LoadInt64(&s.lastActivityNano)
+	if nano == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nano)
 }
 
 // calculateDelay calculates delay based on bitrate and data size.
@@ -1155,14 +1239,14 @@ func (s *Streamer) calculateDelay(dataSize int) int {
 }
 
 // waitForDelayOrQuit waits for calculated delay or quit signal.
-func (s *Streamer) waitForDelayOrQuit(delayMs int, trackPath string, bytesRead int64) {
+func (s *Streamer) waitForDelayOrQuit(delayMs int, trackPath string, bytesRead int64, quit chan struct{}) {
 	if delayMs <= 0 {
 		return
 	}
 
 
 	select {
-	case <-s.quit:
+	case <-quit:
 		s.logger.Debug("Audio streaming interrupted during delay",
 			"trackPath", trackPath,
 			"bytesRead", bytesRead,
