@@ -11,6 +11,43 @@ import (
 	"time"
 )
 
+// bitrateCheckSlots limits how many directories are checked at the same time: ffprobe and
+// ffmpeg share the CPU with the running streams, which must keep real-time pace.
+var bitrateCheckSlots = make(chan struct{}, 2)
+
+// startBackgroundBitrateCheck checks and converts the bitrate of a route's files without
+// delaying the station: it starts playing right away. A conversion writes a temporary file
+// and replaces the original by rename, so a track that is playing keeps its open file.
+func startBackgroundBitrateCheck(logger *slog.Logger, dir, route string, targetBitrate int) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("PANIC in background bitrate check", "route", route, "panic", r)
+			}
+		}()
+		bitrateCheckSlots <- struct{}{}
+		defer func() { <-bitrateCheckSlots }()
+		if !checkAndConvertBitrate(logger, dir, route, targetBitrate) {
+			logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
+			if globalSentryHelper != nil {
+				globalSentryHelper.CaptureError(fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir), "main", "operation")
+			}
+		}
+	}()
+}
+
+// isAudioFileName reports whether a directory entry is a visible audio file.
+func isAudioFileName(fileName string) bool {
+	if strings.HasPrefix(fileName, ".") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".mp3", ".ogg", ".aac", ".wav", ".flac":
+		return true
+	}
+	return false
+}
+
 // checkAndConvertBitrate checks all audio files in directory and converts them to target bitrate if needed.
 func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrate int) bool {
 	logger.Info("BITRATE CONVERSION: Starting bitrate check for directory",
@@ -30,33 +67,25 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 		return false
 	}
 
-	convertedFiles := 0
-	skippedFiles := 0
-	totalAudioFiles := 0
-	filesToProcess := 0
+	type pendingFile struct {
+		name    string
+		bitrate int
+	}
 
-	// First pass: count total audio files and files that need conversion.
+	convertedFiles := 0
+	totalAudioFiles := 0
+	var toConvert []pendingFile
+
+	// One ffprobe per file: collect the files that need conversion.
 	for _, file := range files {
 		fileName := file.Name()
-		lowerFileName := strings.ToLower(fileName)
-
-		// Check if it's an audio file.
-		isMP3 := strings.HasSuffix(lowerFileName, ".mp3")
-		isOGG := strings.HasSuffix(lowerFileName, ".ogg")
-		isAAC := strings.HasSuffix(lowerFileName, ".aac")
-		isWAV := strings.HasSuffix(lowerFileName, ".wav")
-		isFLAC := strings.HasSuffix(lowerFileName, ".flac")
-		isHidden := strings.HasPrefix(fileName, ".")
-
-		// Skip non-audio files, directories, and hidden files.
-		if file.IsDir() || isHidden || !(isMP3 || isOGG || isAAC || isWAV || isFLAC) {
+		if file.IsDir() || !isAudioFileName(fileName) {
 			continue
 		}
 
 		totalAudioFiles++
 		filePath := filepath.Join(dir, fileName)
 
-		// Check current bitrate of the file.
 		currentBitrate, err := getAudioBitrate(logger, filePath)
 		if err != nil {
 			logger.Error("BITRATE CONVERSION: Failed to get bitrate for file",
@@ -65,12 +94,18 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 			continue
 		}
 
-		// Check if conversion is needed.
+		logger.Debug("BITRATE CONVERSION: File bitrate detected",
+			slog.String("file", fileName),
+			slog.Int("currentBitrate", currentBitrate),
+			slog.Int("targetBitrate", targetBitrate))
+
 		if currentBitrate != targetBitrate {
-			filesToProcess++
+			toConvert = append(toConvert, pendingFile{name: fileName, bitrate: currentBitrate})
 		}
 	}
 
+	filesToProcess := len(toConvert)
+	skippedFiles := totalAudioFiles - filesToProcess
 	if filesToProcess == 0 {
 		logger.Info("BITRATE CONVERSION: All files already have target bitrate",
 			slog.String("route", route),
@@ -87,48 +122,10 @@ func checkAndConvertBitrate(logger *slog.Logger, dir, route string, targetBitrat
 
 	startTime := time.Now()
 
-	// Second pass: convert files that need conversion.
-	for _, file := range files {
-		fileName := file.Name()
-		lowerFileName := strings.ToLower(fileName)
-
-		// Check if it's an audio file.
-		isMP3 := strings.HasSuffix(lowerFileName, ".mp3")
-		isOGG := strings.HasSuffix(lowerFileName, ".ogg")
-		isAAC := strings.HasSuffix(lowerFileName, ".aac")
-		isWAV := strings.HasSuffix(lowerFileName, ".wav")
-		isFLAC := strings.HasSuffix(lowerFileName, ".flac")
-		isHidden := strings.HasPrefix(fileName, ".")
-
-		// Skip non-audio files, directories, and hidden files.
-		if file.IsDir() || isHidden || !(isMP3 || isOGG || isAAC || isWAV || isFLAC) {
-			continue
-		}
-
+	for _, file := range toConvert {
+		fileName := file.name
+		currentBitrate := file.bitrate
 		filePath := filepath.Join(dir, fileName)
-
-		// Check current bitrate of the file.
-		currentBitrate, err := getAudioBitrate(logger, filePath)
-		if err != nil {
-			logger.Error("BITRATE CONVERSION: Failed to get bitrate for file",
-				slog.String("file", filePath),
-				slog.String("error", err.Error()))
-			continue
-		}
-
-		logger.Debug("BITRATE CONVERSION: File bitrate detected",
-			slog.String("file", fileName),
-			slog.Int("currentBitrate", currentBitrate),
-			slog.Int("targetBitrate", targetBitrate))
-
-		// Check if conversion is needed.
-		if currentBitrate == targetBitrate {
-			logger.Debug("BITRATE CONVERSION: File already has target bitrate, skipping",
-				slog.String("file", fileName),
-				slog.Int("bitrate", currentBitrate))
-			skippedFiles++
-			continue
-		}
 
 		// Convert file to target bitrate.
 		fileStartTime := time.Now()
