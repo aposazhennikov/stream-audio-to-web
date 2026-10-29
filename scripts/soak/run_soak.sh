@@ -5,14 +5,15 @@
 #
 # Usage: scripts/soak/run_soak.sh            (40 minutes, image from the working tree)
 #        MINUTES=5 REF=HEAD scripts/soak/run_soak.sh   (image from a git ref)
-# Env: MINUTES, PORT, IMAGE, NAME, WORK, REF, KEEP=1 (leave the container running).
+# Env: MINUTES, PORT, IMAGE, SOAK_NAME, WORK, REF, KEEP=1 (leave the container running).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MINUTES="${MINUTES:-40}"
 PORT="${PORT:-18000}"
 IMAGE="${IMAGE:-audio-streamer:soak}"
-NAME="${NAME:-audio-streamer-soak}"
+# Not NAME: login shells (WSL among them) already set it to the host name.
+NAME="${SOAK_NAME:-audio-streamer-soak}"
 WORK="${WORK:-$HOME/.cache/audio-streamer-soak}"
 REF="${REF:-}"
 PASSWORD="soak-$(date +%s)-$RANDOM"

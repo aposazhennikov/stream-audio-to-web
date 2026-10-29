@@ -11,6 +11,8 @@ import (
 	"time"
 
 	html "html"
+
+	"github.com/aposazhennikov/stream-audio-to-web/version"
 )
 
 // healthzHandler returns 200 OK if server is running.
@@ -103,6 +105,15 @@ func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Additional logging of successful response.
 	s.logger.Info("Sent successful readyz response to client", slog.String("remoteAddr", r.RemoteAddr))
+}
+
+// versionHandler returns the build information of the running application as JSON.
+func (s *Server) versionHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if encodeErr := json.NewEncoder(w).Encode(version.Get()); encodeErr != nil {
+		s.logger.Error("Failed to write version response", slog.String("error", encodeErr.Error()))
+	}
 }
 
 // streamsHandler handles requests for stream information.

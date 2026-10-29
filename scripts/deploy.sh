@@ -10,6 +10,7 @@
 #      existing state files are never overwritten
 #   5. docker compose pull + up -d, waits for the container to be healthy
 #   6. checks every route from DIRECTORY_ROUTES streams audio/mpeg
+#   7. logs the running version and warns if it is not the deployed commit
 #
 # Environment variables:
 #   APP_DIR, REPO_URL, BRANCH, DOCKER     paths and commands (defaults below)
@@ -286,6 +287,23 @@ verify_routes() {
   log "all ${#routes[@]} routes stream audio/mpeg"
 }
 
+# Logs the version of the running container and warns if it was not built from the
+# deployed commit (for example, the image push lagged behind). Never fails the deploy.
+report_version() {
+  local body expected commit
+  body="$(curl -s -m 4 "http://localhost:$APP_PORT/version" || true)"
+  if [ -z "$body" ]; then
+    log "version: not reported by the running container"
+    return 0
+  fi
+  log "running version: $body"
+  expected="$(git -C "$APP_DIR" rev-parse FETCH_HEAD 2>/dev/null || true)"
+  commit="$(printf '%s' "$body" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')"
+  if [ -n "$expected" ] && [ -n "$commit" ] && [ "$commit" != "$expected" ]; then
+    log "WARNING: running commit $commit differs from deployed $BRANCH $expected"
+  fi
+}
+
 main() {
   ensure_repo
   log "fetching $BRANCH from origin"
@@ -301,6 +319,7 @@ main() {
   wait_healthy
   cd "$APP_DIR"
   verify_routes
+  report_version
   log "deploy finished"
 }
 

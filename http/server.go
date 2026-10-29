@@ -229,6 +229,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/healthz", s.healthzHandler).Methods("GET", "HEAD")
 	s.router.HandleFunc("/readyz", s.readyzHandler).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", promhttp.Handler()).Methods("GET")
+	s.router.HandleFunc("/version", s.versionHandler).Methods("GET")
 
 	// API for playlist management.
 	s.router.HandleFunc("/streams", s.streamsHandler).Methods("GET")

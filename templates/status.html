@@ -19,6 +19,11 @@
                     {{if .GlobalShuffle}}Enabled{{else}}Disabled{{end}}
                 </span>
             </div>
+            <div class="global-shuffle-info version-info" title="Built {{.Version.BuildTime}}, running since {{.Version.StartedAt}}">
+                <span class="shuffle-icon">🏷️</span>
+                Version:
+                {{if .Version.Commit}}<a href="https://github.com/aposazhennikov/stream-audio-to-web/commit/{{.Version.Commit}}" target="_blank" rel="noopener">{{.Version.Version}}</a>{{else}}{{.Version.Version}}{{end}}
+            </div>
             {{if .RelayEnabled}}
             <div class="relay-management-link">
                 {{if .RelayClickable}}

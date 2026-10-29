@@ -209,6 +209,17 @@
             to { transform: rotate(360deg); }
         }
 
+        .app-version {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--color-text-secondary);
+        }
+
+        .app-version a {
+            color: inherit;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 0 15px;
@@ -237,6 +248,7 @@
         <div id="streams" class="stream-list">
             <div class="loading">Loading streams...</div>
         </div>
+        <footer id="app-version" class="app-version"></footer>
     </div>
 
     <script>
@@ -568,10 +580,33 @@
             }
         }
         
+        // Shows the running build at the bottom of the page.
+        async function loadVersion() {
+            const footer = document.getElementById('app-version');
+            try {
+                const response = await fetch('/version', { cache: 'no-store' });
+                if (!response.ok) return;
+                const info = await response.json();
+                let text = `Version ${escapeHtml(info.version)}`;
+                if (info.commit) {
+                    const url = `https://github.com/aposazhennikov/stream-audio-to-web/commit/${encodeURIComponent(info.commit)}`;
+                    text = `Version <a href="${url}" target="_blank" rel="noopener">${escapeHtml(info.version)}</a>`;
+                }
+                if (info.buildTime) {
+                    const built = new Date(info.buildTime);
+                    if (!isNaN(built)) text += ` · built ${escapeHtml(built.toLocaleString())}`;
+                }
+                footer.innerHTML = text;
+            } catch (error) {
+                console.error('Error loading version:', error);
+            }
+        }
+
         // Load streams when the page loads.
         window.addEventListener('DOMContentLoaded', () => {
             loadStreams();
-            
+            loadVersion();
+
             // Update information about stream list every 30 seconds.
             setInterval(loadStreams, 30000);
             

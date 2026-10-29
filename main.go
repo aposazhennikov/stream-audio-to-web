@@ -19,6 +19,7 @@ import (
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	"github.com/aposazhennikov/stream-audio-to-web/telegram"
+	"github.com/aposazhennikov/stream-audio-to-web/version"
 
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/gorilla/mux"
@@ -48,6 +49,11 @@ func main() {
 	}
 	logger.Info("APPLICATION STARTUP: Logger initialized",
 		slog.String("log_level_env", logLevelEnv))
+	buildInfo := version.Get()
+	logger.Info("APPLICATION STARTUP: Version",
+		slog.String("version", buildInfo.Version),
+		slog.String("commit", buildInfo.Commit),
+		slog.String("buildTime", buildInfo.BuildTime))
 
 	// Загружаем конфигурацию
 	logger.Info("APPLICATION STARTUP: Loading configuration...")

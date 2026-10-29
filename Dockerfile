@@ -16,11 +16,21 @@ RUN go mod download
 # Copying source code
 COPY . .
 
+# Build information shown on the web page and at /version (passed by CI)
+ARG VERSION=""
+ARG COMMIT=""
+ARG BUILD_TIME=""
+
 # Building the application
 # Flag CGO_ENABLED=0 for static compilation
 # Flag -trimpath removes local build paths from the binary
-# Flag -ldflags="-s -w" for optimizing binary file size
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o audio-streamer .
+# Flag -ldflags="-s -w" for optimizing binary file size, -X sets the build information
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w \
+      -X github.com/aposazhennikov/stream-audio-to-web/version.Version=${VERSION} \
+      -X github.com/aposazhennikov/stream-audio-to-web/version.Commit=${COMMIT} \
+      -X github.com/aposazhennikov/stream-audio-to-web/version.BuildTime=${BUILD_TIME}" \
+    -o audio-streamer .
 
 # Stage 2: Creating the final image
 FROM alpine:3.20

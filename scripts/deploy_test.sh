@@ -107,7 +107,9 @@ EOF
 cat > "$STUB/curl" <<'EOF'
 #!/bin/bash
 url="${*: -1}"
-if [ -n "${FAKE_404_ROUTE:-}" ] && [ "$url" = "http://localhost:8000/$FAKE_404_ROUTE" ]; then
+if [ "$url" = "http://localhost:8000/version" ]; then
+  printf '{"version":"test","commit":"%s"}\n' "${FAKE_COMMIT:-0000000}"
+elif [ -n "${FAKE_404_ROUTE:-}" ] && [ "$url" = "http://localhost:8000/$FAKE_404_ROUTE" ]; then
   printf '404 text/html 15'
 else
   printf '200 audio/mpeg 1000'
@@ -128,6 +130,8 @@ check "(a) .env created" test -f "$APP_A/.env"
 check "(a) .env has STATUS_PASSWORD with / & |" has_line "$APP_A/.env" "STATUS_PASSWORD=$SECRET_PASSWORD"
 check "(a) .env has SENTRY_DSN with &" has_line "$APP_A/.env" "SENTRY_DSN=$SECRET_DSN"
 check "(a) .env keeps other template keys" has_line "$APP_A/.env" "LOG_LEVEL=info"
+check "(a) running version is logged" grep -q 'running version: {"version":"test"' "$OUT"
+check "(a) commit mismatch is reported" grep -q 'WARNING: running commit 0000000 differs' "$OUT"
 check "(a) telegram_alerts.json is valid JSON" python3 -m json.tool "$APP_A/telegram_alerts.json"
 check "(a) telegram bot_token survives escaping" json_field_is "$APP_A/telegram_alerts.json" bot_token "$SECRET_TOKEN"
 check "(a) telegram chat_id written" json_field_is "$APP_A/telegram_alerts.json" chat_id "$SECRET_CHAT"

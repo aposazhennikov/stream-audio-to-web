@@ -12,6 +12,8 @@ import (
 	"time"
 
 	html "html"
+
+	"github.com/aposazhennikov/stream-audio-to-web/version"
 )
 
 // statusLoginHandler displays login form page.
@@ -243,6 +245,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		"TelegramActive":    telegramActive,
 		"TelegramClickable": s.telegramFunctionalityEnabled,
 		"GlobalShuffle":     s.getGlobalShuffleStatus(),
+		"Version":           version.Get(),
 	}); executeErr != nil {
 		s.logger.Error("Failed to execute status template", slog.String("error", executeErr.Error()))
 		http.Error(w, "Server error: "+executeErr.Error(), http.StatusInternalServerError)
