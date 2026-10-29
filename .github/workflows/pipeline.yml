@@ -45,7 +45,7 @@ jobs:
         run: go mod download
 
       - name: Run unit tests
-        run: go test -race -count=1 -timeout 15m ./unit/...
+        run: go test -race -count=1 -timeout 15m . ./unit/...
 
   build-and-push:
     needs: unit-tests

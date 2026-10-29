@@ -211,16 +211,6 @@ func configureSyncRoute(
 		return false
 	}
 
-	// Step 2.5: Check/convert bitrate.
-	if !checkAndConvertBitrate(logger, dir, route, config.Bitrate) {
-		err := fmt.Errorf("bitrate conversion failed for route %s: %s", route, dir)
-		logger.Error("Bitrate conversion failed", "route", route, "directory", dir)
-		if globalSentryHelper != nil {
-			globalSentryHelper.CaptureError(err, "main", "operation")
-		}
-		return false
-	}
-
 	// Step 3: Create playlist.
 	pl := createPlaylistOrNil(logger, dir, route, config)
 	if pl == nil {
@@ -256,6 +246,9 @@ func configureSyncRoute(
 		}
 		return false
 	}
+
+	// Step 7: Check/convert bitrate in the background; the station is already playing.
+	startBackgroundBitrateCheck(logger, dir, route, config.Bitrate)
 
 	// Check if normalization should be used.
 	switch config.NormalizeRuntime {
