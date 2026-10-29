@@ -86,9 +86,9 @@ decode_rc=0
 for f in "$OUT"/*.mp3; do
   [ -s "$f" ] || { log "EMPTY capture: $f"; decode_rc=1; continue; }
   # volumedetect prints at info level; decode problems are counted from the error-level run.
-  report="$(docker run --rm --entrypoint ffmpeg -v "$OUT:/o" "$IMAGE" -nostdin -hide_banner -i "/o/$(basename "$f")" -af volumedetect -f null - 2>&1 || true)"
+  report="$(docker run --rm --entrypoint ffmpeg -v "$OUT:/o" "$IMAGE" -nostdin -hide_banner -f mp3 -i "/o/$(basename "$f")" -af volumedetect -f null - 2>&1 || true)"
   mean="$(printf '%s\n' "$report" | sed -n 's/.*mean_volume: \(-*[0-9.]*\) dB.*/\1/p' | tail -1)"
-  errors="$(docker run --rm --entrypoint ffmpeg -v "$OUT:/o" "$IMAGE" -nostdin -v error -i "/o/$(basename "$f")" -f null - 2>&1 | grep -c . || true)"
+  errors="$(docker run --rm --entrypoint ffmpeg -v "$OUT:/o" "$IMAGE" -nostdin -v error -f mp3 -i "/o/$(basename "$f")" -f null - 2>&1 | grep -c . || true)"
   printf '  %-12s %8s bytes  mean_volume=%s dB  decode_errors=%s\n' "$(basename "$f")" "$(stat -c %s "$f")" "${mean:-?}" "$errors"
   if [ -z "$mean" ] || awk -v m="$mean" 'BEGIN { exit !(m < -40) }'; then
     log "SILENT or undecodable: $f"

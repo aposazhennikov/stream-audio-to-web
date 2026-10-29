@@ -243,7 +243,7 @@
         // Stream player watchdog and reconnect.
         // The stream is an endless chunked MP3, so a dead connection shows up as
         // currentTime that stops advancing. The watchdog watches for that.
-        // intent: true while the user wants playback (autoplay counts), false after a user pause.
+        // intent: true after the player started (user play or allowed autoplay), false after a user pause.
         // Every 2 s: reconnect if currentTime has not advanced for 10 s, or if error/ended/stalled
         // was seen without progress since. Never reconnect while intent is false.
         // Reconnect: src = base URL with a fresh ?t=, then load() and play(). Attempts are spaced
@@ -290,7 +290,9 @@
                 const st = {
                     audio: audio,
                     base: base,
-                    intent: true,          // user wants to listen
+                    // Watch only players that actually started (by the user or an allowed autoplay):
+                    // the page has a player per station, idle ones must not be "reconnected".
+                    intent: false,
                     blocked: false,        // play() refused by autoplay policy, wait for a user play
                     reconnecting: false,   // one attempt in flight
                     inFlightUntil: 0,
@@ -319,6 +321,13 @@
             function wantsPlayback(audio) {
                 const st = players.get(audio);
                 return st ? st.intent : true;
+            }
+
+            // Autoplay was requested but failed for a reason other than the autoplay policy
+            // (for example the server was down at page load). Keep watching it so it recovers.
+            function markWanted(audio) {
+                const st = players.get(audio);
+                if (st && !st.blocked) st.intent = true;
             }
 
             function onPlay(st) {
@@ -429,7 +438,7 @@
             });
 
             watchdogId = setInterval(tick, WATCHDOG_MS);
-            return { attach, wantsPlayback };
+            return { attach, wantsPlayback, markWanted };
         })();
 
         let renderedRoutesKey = null;
@@ -507,6 +516,8 @@
                         // Try to start playback.
                         audioElement.play().catch(error => {
                             console.log(`Autoplay blocked: ${error.message}`);
+                            // Only the autoplay policy means "wait for the user". Other failures (server down) are retried.
+                            if (!error || error.name !== 'NotAllowedError') StreamPlayer.markWanted(audioElement);
                             // Show message about autoplay blocking.
                             autoplayMessage.style.display = 'block';
                             
@@ -543,68 +554,13 @@
                 streamItems.forEach(item => {
                     const route = item.dataset.route;
                     const currentTrackElement = item.querySelector('.now-playing');
-                    const audioElement = item.querySelector('audio');
-                    
-                    // If a new track is received and it differs from the current one.
+
+                    // Only the title changes. The stream is live: the new track's audio comes over
+                    // the same connection, so the player must not be recreated (that restarted
+                    // playback and replayed the buffered last seconds).
                     if (route && tracksData[route] && currentTrackElement.dataset.track !== tracksData[route]) {
-                        console.log(`Track changed on ${route}: ${tracksData[route]}`);
-                        
-                        // Update current track display.
                         currentTrackElement.textContent = `Now playing: ${tracksData[route]}`;
                         currentTrackElement.dataset.track = tracksData[route];
-                        
-                        // Forcibly replace the audio player completely.
-                        if (audioElement) {
-                            const streamItem = audioElement.closest('.stream-item');
-                            const volume = audioElement.volume;
-                            const muted = audioElement.muted;
-                            const wantsPlayback = StreamPlayer.wantsPlayback(audioElement);
-                            
-                            // Create a new audio element.
-                            const newAudio = document.createElement('audio');
-                            newAudio.controls = true;
-                            newAudio.autoplay = wantsPlayback;
-                            newAudio.volume = volume;
-                            newAudio.muted = muted;
-                            
-                            // Add timestamp to URL to bypass caching.
-                            const timestamp = new Date().getTime();
-                            const source = document.createElement('source');
-                            source.src = `${route}?t=${timestamp}`;
-                            source.type = 'audio/mpeg';
-                            
-                            newAudio.appendChild(source);
-                            newAudio.appendChild(document.createTextNode('Your browser does not support the audio element.'));
-                            
-                            // Stop the old player and replace it with the new one.
-                            audioElement.pause();
-                            audioElement.parentNode.replaceChild(newAudio, audioElement);
-
-                            // Errors, stalls and ends are handled by the StreamPlayer watchdog.
-                            StreamPlayer.attach(newAudio);
-                            
-                            // Start playback.
-                            if (wantsPlayback) newAudio.play().catch(error => {
-                                console.error('Playback error:', error);
-                                // Show message about autoplay blocking.
-                                const autoplayMessage = streamItem.querySelector('.autoplay-message') || 
-                                    document.createElement('div');
-                                
-                                autoplayMessage.className = 'autoplay-message';
-                                autoplayMessage.textContent = 'Autoplay has been blocked. Please click the Play button.';
-                                
-                                if (!streamItem.querySelector('.autoplay-message')) {
-                                    newAudio.parentNode.insertBefore(autoplayMessage, newAudio.nextSibling);
-                                } else {
-                                    autoplayMessage.style.display = 'block';
-                                }
-                                
-                                // Hide message after playback starts.
-                                newAudio.addEventListener('play', () => {
-                                    autoplayMessage.style.display = 'none';
-                                });
-                            });
-                        }
                     }
                 });
             } catch (error) {

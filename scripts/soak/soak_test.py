@@ -57,7 +57,8 @@ def listener(base, route, name, keep_seconds, out_dir):
     total, max_gap, reconnects = 0, 0.0, 0
     tail = bytearray()
     keep_bytes = keep_seconds * BYTES_PER_SEC
-    start = time.time()
+    # Monotonic clock: the WSL wall clock is corrected in steps and skews the measured rate.
+    start = time.monotonic()
     window_start, window_bytes = start, 0
     while not stop_event.is_set():
         try:
@@ -67,10 +68,10 @@ def listener(base, route, name, keep_seconds, out_dir):
                 reconnects += 1
                 time.sleep(2)
                 continue
-            last = time.time()
+            last = time.monotonic()
             while not stop_event.is_set():
                 data = resp.read1(8192) if hasattr(resp, "read1") else resp.read(8192)
-                now = time.time()
+                now = time.monotonic()
                 if not data:
                     raise ConnectionError("stream closed by server")
                 gap = now - last
@@ -94,7 +95,7 @@ def listener(base, route, name, keep_seconds, out_dir):
             reconnects += 1
             problem(f"{key}: connection lost: {e}")
             time.sleep(1)
-    elapsed = time.time() - start
+    elapsed = time.monotonic() - start
     with open(os.path.join(out_dir, f"{route}_{name}.mp3"), "wb") as f:
         f.write(tail)
     with lock:
@@ -317,10 +318,10 @@ def main():
         t.daemon = True
         t.start()
 
-    deadline = time.time() + args.minutes * 60
-    while time.time() < deadline:
+    deadline = time.monotonic() + args.minutes * 60
+    while time.monotonic() < deadline:
         time.sleep(30)
-        log(f"running, {int((deadline - time.time()) / 60)} min left, problems so far: {len(problems)}")
+        log(f"running, {int((deadline - time.monotonic()) / 60)} min left, problems so far: {len(problems)}")
     stop_event.set()
     for t in threads:
         t.join(timeout=30)
