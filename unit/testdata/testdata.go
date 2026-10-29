@@ -1,20 +1,33 @@
 // Package testdata предоставляет общие тестовые данные для всех тестов.
 package testdata
 
+// minTestFileSize больше порога playlist.minAudioFileSize (1 КБ): файлы меньше него плейлист отбрасывает.
+const minTestFileSize = 2048
+
+// padToMinSize дополняет данные нулями до minTestFileSize.
+func padToMinSize(data []byte) []byte {
+	if len(data) >= minTestFileSize {
+		return data
+	}
+	padded := make([]byte, minTestFileSize)
+	copy(padded, data)
+	return padded
+}
+
 // GetMinimumMP3Data возвращает минимальный набор байтов для MP3 файла.
 func GetMinimumMP3Data() []byte {
-	return []byte{
+	return padToMinSize([]byte{
 		0xFF, 0xFB, 0x90, 0x64, // MPEG-1 Layer 3 header
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Minimal data
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	}
+	})
 }
 
 // GetMinimumWAVData возвращает минимальный корректный WAV файл.
 func GetMinimumWAVData() []byte {
-	return []byte{
+	return padToMinSize([]byte{
 		// RIFF header.
 		0x52, 0x49, 0x46, 0x46, // "RIFF"
 		0x24, 0x00, 0x00, 0x00, // Chunk size (36 + data size)
@@ -33,12 +46,12 @@ func GetMinimumWAVData() []byte {
 		0x00, 0x00, 0x00, 0x00, // Data size (0 bytes)
 		// Minimal data (1 sample).
 		0x00, 0x00,
-	}
+	})
 }
 
 // GetMinimumOGGData возвращает минимальный корректный OGG файл.
 func GetMinimumOGGData() []byte {
-	return []byte{
+	return padToMinSize([]byte{
 		// OGG header.
 		0x4F, 0x67, 0x67, 0x53, // "OggS"
 		0x00,                                           // Version
@@ -58,5 +71,5 @@ func GetMinimumOGGData() []byte {
 		0x00, 0x00, 0x00, 0x00, // Bitrate nominal
 		0x00, 0x00, 0x00, 0x00, // Bitrate minimum
 		0x00, // Blocksize
-	}
+	})
 }

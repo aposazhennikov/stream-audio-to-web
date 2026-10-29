@@ -14,10 +14,6 @@
 # Go workspace file
 go.work
 
-# Go mod file
-
-go.sum
-
 # Environment files (contains sensitive information)
 .env
 .env.local
@@ -43,8 +39,10 @@ Thumbs.db
 # Docker volumes and temp files
 *.tmp
 *.log
+__pycache__/
 
 # Application specific
 audio-streamer
 stream-audio-to-web
 telegram_alerts.json
+backups/

@@ -1,81 +1,85 @@
-name: Build and Push Docker Image
+name: CI and Deploy
 
 on:
   push:
-    branches: [ main ]
+    branches: [ '**' ]
+  pull_request:
   # Ability to run workflow manually
   workflow_dispatch:
 
 jobs:
-  lint:
+  vet:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      
+          cache: true
+
       - name: Download dependencies
-        run: |
-          go mod download
-          go mod tidy
-      
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
-      
-    #   - name: Run golangci-lint
-    #     run: |
-    #       $(go env GOPATH)/bin/golangci-lint run
+        run: go mod download
+
+      - name: Run go vet
+        run: go vet ./...
 
   unit-tests:
-    needs: lint
+    needs: vet
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      
+          cache: true
+
       - name: Download dependencies
-        run: |
-          go mod download
-          go mod tidy
-      
-    #   - name: Run unit tests
-    #     run: |
-    #       go test -v ./unit/...
+        run: go mod download
+
+      - name: Run unit tests
+        run: go test -race -count=1 -timeout 15m ./unit/...
 
   build-and-push:
     needs: unit-tests
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
+
+      - name: Compute version
+        id: version
+        run: |
+          echo "version=$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:${{ github.sha }}
@@ -84,61 +88,38 @@ jobs:
 
   deploy:
     needs: build-and-push
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    
+    # One deploy at a time; a running deploy is never cancelled by a newer push.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
     steps:
       - name: Deploy to server
         uses: appleboy/ssh-action@master
+        env:
+          STATUS_PASSWORD: ${{ secrets.STATUS_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           timeout: 60s
-          command_timeout: 10m
+          command_timeout: 15m
+          envs: STATUS_PASSWORD,SENTRY_DSN,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
           script: |
-            clear
-            cd /home/
-            rm -rf ./stream-audio-to-web
-            git clone https://github.com/aposazhennikov/stream-audio-to-web.git
-            cd stream-audio-to-web/
-            
-            # Create .env file from template and replace values
-            cp .env.template .env
-            # Replace template values with actual values from secrets
-            sed -i "s/STATUS_PASSWORD=.*/STATUS_PASSWORD=${{ secrets.STATUS_PASSWORD }}/g" .env
-            sed -i "s/SENTRY_DSN=.*/SENTRY_DSN=${{ secrets.SENTRY_DSN }}/g" .env
-            
-            # Create telegram_alerts.json with proper configuration
-            echo '{
-              "enabled": true,
-              "bot_token": "${{ secrets.TELEGRAM_BOT_TOKEN }}",
-              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
-              "routes": {},
-              "relay_routes": {},
-              "updated_at": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-            }' > telegram_alerts.json
-            
-            docker pull aposazhennikov/audio-streamer:latest
-            docker compose down
-            docker compose up -d
-            docker ps
-            
-            # Check container status
-            echo "Waiting for container to become healthy..."
-            for i in {1..30}; do
-              STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker ps -q -f name=audio-streamer))
-              if [ "$STATUS" = "healthy" ]; then
-                echo "Container is healthy! Deployment successful."
-                exit 0
-              fi
-              echo "Container status: $STATUS. Waiting 10 seconds..."
-              sleep 10
-            done
-            
-            echo "Container did not become healthy in time. Deployment might have failed."
-            docker logs $(docker ps -q -f name=audio-streamer)
-            exit 1
-      
+            set -e
+            if [ ! -d /home/stream-audio-to-web/.git ]; then
+              git clone https://github.com/aposazhennikov/stream-audio-to-web.git /home/stream-audio-to-web
+            fi
+            cd /home/stream-audio-to-web
+            git fetch origin main
+            git checkout FETCH_HEAD -- scripts/deploy.sh
+            bash scripts/deploy.sh
+
       # Fallback webhook deploy if SSH fails
       - name: Deploy via webhook (fallback)
         if: failure()
@@ -153,102 +134,6 @@ jobs:
               "branch": "${{ github.ref_name }}"
             }' || echo "Webhook deploy also failed"
 
-  test-streams:
-    needs: deploy
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Test stream endpoints
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          timeout: 60s
-          command_timeout: 5m
-          script: |
-            echo "Testing stream endpoints with HEAD requests..."
-            
-            # Save base URL for testing
-            BASE_URL="http://localhost:8000"
-            
-            # Check basic endpoints
-            echo "Testing basic endpoints..."
-            curl -s -I $BASE_URL/healthz
-            curl -s -I $BASE_URL/readyz
-            
-            # Check /healthz and /readyz content for diagnostics
-            echo "Checking response content:"
-            echo "/healthz content: $(curl -s $BASE_URL/healthz)"
-            echo "/readyz content: $(curl -s $BASE_URL/readyz)"
-            
-            # Install jq if it's missing
-            if ! command -v jq &> /dev/null; then
-              echo "Installing jq..."
-              apt-get update && apt-get install -y jq
-            fi
-            
-            # Get all routes list from API with debug output
-            echo "Fetching streams JSON..."
-            STREAMS_JSON=$(curl -s $BASE_URL/streams)
-            echo "Raw JSON response: $STREAMS_JSON"
-            
-            # Try to extract routes list with error handling
-            echo "Extracting and testing stream routes..."
-            if ! echo "$STREAMS_JSON" | jq -e '.streams' > /dev/null 2>&1; then
-              echo "Warning: Could not parse JSON response from /streams endpoint"
-              echo "Testing default routes instead"
-              # Use hardcoded default routes when parse error occurs
-              ROUTES="/humor /science /troshin /politics /nature /shaov"
-            else
-              # Extract routes from JSON
-              ROUTES=$(echo $STREAMS_JSON | jq -r '.streams[].route' 2>/dev/null || echo "")
-              if [ -z "$ROUTES" ]; then
-                echo "No routes found in streams JSON, testing default routes"
-                ROUTES="/humor /science /troshin /politics /nature /shaov"
-              fi
-            fi
-            
-            echo "Found the following routes to test:"
-            echo "$ROUTES"
-            
-            # Test each route
-            for ROUTE in $ROUTES; do
-              echo "Testing route: $ROUTE"
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -I $BASE_URL$ROUTE)
-              if [ $HTTP_CODE -ge 200 ] && [ $HTTP_CODE -lt 300 ]; then
-                echo "✅ Route $ROUTE returned HTTP $HTTP_CODE (Success)"
-              else
-                echo "❌ Route $ROUTE returned HTTP $HTTP_CODE (Failure)"
-                # Don't interrupt execution even if route is not responding
-                # exit 1
-              fi
-            done
-            
-            echo "All stream endpoints testing completed!"
-
-  e2e-tests:
-    needs: deploy
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-      
-      - name: Download dependencies
-        run: |
-          go mod download
-          go mod tidy
-      
-    #   - name: Run E2E tests
-    #     env:
-    #       TEST_SERVER_URL: http://${{ secrets.SERVER_IP }}:8000
-    #       STATUS_PASSWORD: ${{ secrets.STATUS_PASSWORD }}
-    #     run: |
-    #       echo "Running E2E tests against $TEST_SERVER_URL"
-    #       go test -v ./e2e/... 
+  # The e2e tests in ./e2e need a live server, so they do not run in CI.
+  # scripts/deploy.sh checks every stream route on the server after each deploy.
+  # To run them by hand, set TEST_SERVER_URL and STATUS_PASSWORD and run: go test -v ./e2e/...

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aposazhennikov/stream-audio-to-web/playlist"
+	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 )
 
 // TestParallelPlaylistInitialization tests initialization of multiple playlists in parallel.
@@ -82,7 +83,7 @@ func createPlaylistFiles(t *testing.T, dir string, playlistIdx, filesCount int) 
 	for j := range make([]struct{}, filesCount) {
 		filename := filepath.Join(dir, fmt.Sprintf("track-%03d.mp3", j))
 		// Create a minimal MP3 file with some bytes.
-		data := []byte{0xFF, 0xFB, 0x50, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		data := testdata.GetMinimumMP3Data()
 		if err := os.WriteFile(filename, data, 0644); err != nil {
 			t.Fatalf("Failed to create dummy file: %v", err)
 		}
@@ -227,7 +228,7 @@ func TestConcurrentShuffling(t *testing.T) {
 	const numFiles = 250
 	for i := range make([]struct{}, numFiles) {
 		filename := filepath.Join(tmpDir, fmt.Sprintf("track-%03d.mp3", i))
-		data := []byte{0xFF, 0xFB, 0x50, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		data := testdata.GetMinimumMP3Data()
 		if err := os.WriteFile(filename, data, 0644); err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
@@ -330,7 +331,7 @@ func TestShufflePerformance(t *testing.T) {
 			// Create test files.
 			for i := range make([]struct{}, size) {
 				filename := filepath.Join(tmpDir, fmt.Sprintf("track-%05d.mp3", i))
-				data := []byte{0xFF, 0xFB, 0x50, 0x40, 0x00, 0x00, 0x00}
+				data := testdata.GetMinimumMP3Data()
 				if err := os.WriteFile(filename, data, 0644); err != nil {
 					t.Fatalf("Failed to create test file: %v", err)
 				}

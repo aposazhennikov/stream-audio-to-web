@@ -11,9 +11,18 @@ should_log_info() {
 
 should_log_warning() {
     case "${LOG_LEVEL:-warning}" in
-        "debug"|"info"|"warning") return 0 ;;
+        "debug"|"info"|"warning"|"warn") return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# warn prints a warning if the log level allows it and always succeeds:
+# under set -e a failed "should_log_warning && echo" would stop the container.
+warn() {
+    if should_log_warning; then
+        echo "$1"
+    fi
+    return 0
 }
 
 # List of directories to check (removed /app/audio)
@@ -67,7 +76,7 @@ for dir in $AUDIO_DIRS; do
             # Attempt to apply permissions only if running as root
             if [ "$(id -u)" = "0" ]; then
                 should_log_info && echo "Setting read permissions for directory: $dir"
-                chmod -R +r "$dir" || (should_log_warning && echo "Failed to set read permissions for $dir")
+                chmod -R +r "$dir" || warn "Failed to set read permissions for $dir"
             else
                 should_log_warning && echo "WARNING: Insufficient permissions to change access rights. Directory $dir may be unavailable."
             fi
@@ -95,7 +104,7 @@ for dir in $AUDIO_DIRS; do
             # Attempt to apply permissions only if running as root
             if [ "$(id -u)" = "0" ]; then
                 should_log_info && echo "Setting read permissions for file: $file"
-                chmod +r "$file" || (should_log_warning && echo "Failed to set read permissions for $file")
+                chmod +r "$file" || warn "Failed to set read permissions for $file"
             else
                 should_log_warning && echo "WARNING: Insufficient permissions to change access rights. File $file may be unavailable."
             fi
@@ -109,10 +118,11 @@ done
 
 # Configuring network stack for reliable HTTP server operation
 should_log_info && echo "Configuring network stack for reliable HTTP server operation..."
-sysctl -w net.ipv4.tcp_tw_reuse=1 || (should_log_warning && echo "WARNING: Failed to configure TCP TIME_WAIT reuse")
+# Без privileged sysctl недоступен (значение задаётся через sysctls в docker-compose) — запуск не прерываем.
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || warn "WARNING: Failed to configure TCP TIME_WAIT reuse"
 
 # Increasing file descriptor limit if possible
-ulimit -n 4096 2>/dev/null || (should_log_info && echo "Skipping descriptor limit increase (not supported)")
+ulimit -n 4096 2>/dev/null || { should_log_info && echo "Skipping descriptor limit increase (not supported)"; true; }
 
 should_log_info && echo "Preparation completed, starting the application..."
 

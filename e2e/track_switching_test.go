@@ -13,8 +13,8 @@ import (
 )
 
 func TestTrackSwitchingEndpoints(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 	password := getEnvOrDefault("STATUS_PASSWORD", "1234554321")
 
 	// Get information about available streams.

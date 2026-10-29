@@ -10,8 +10,8 @@ import (
 )
 
 func TestHealthzEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 
 	// Send GET request to /healthz.
 	resp, getHealthzRespErr := http.Get(fmt.Sprintf("%s/healthz", baseURL))
@@ -37,8 +37,8 @@ func TestHealthzEndpoint(t *testing.T) {
 }
 
 func TestReadyzEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 
 	// Send GET request to /readyz.
 	resp, getReadyzRespErr := http.Get(fmt.Sprintf("%s/readyz", baseURL))
@@ -64,8 +64,8 @@ func TestReadyzEndpoint(t *testing.T) {
 }
 
 func TestStreamsEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 
 	// Send GET request to /streams.
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))
@@ -95,8 +95,8 @@ func TestStreamsEndpoint(t *testing.T) {
 }
 
 func TestAudioStreamEndpoint(t *testing.T) {
-	// Get base URL from environment variable or use default value.
-	baseURL := getEnvOrDefault("TEST_SERVER_URL", "http://localhost:8000")
+	// Base URL of the live test server (skips the test when TEST_SERVER_URL is empty).
+	baseURL := liveServerURL(t)
 
 	// Get list of routes from /streams.
 	resp, err := http.Get(fmt.Sprintf("%s/streams", baseURL))

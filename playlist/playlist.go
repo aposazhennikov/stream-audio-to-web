@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
+	"github.com/fsnotify/fsnotify"
 )
 
 // Track represents information about a track.
@@ -41,24 +41,18 @@ type Playlist struct {
 	mutex        sync.RWMutex
 	watcher      *fsnotify.Watcher
 	onChange     func()
-	shuffle      bool         // Flag determining whether to shuffle tracks
-	history      []Track      // History of played tracks
-	startTime    time.Time    // Playlist start time
-	historyMutex sync.RWMutex // Mutex for history
-	logger       *slog.Logger // Инстанс логгера
+	shuffle      bool                       // Flag determining whether to shuffle tracks
+	history      []Track                    // History of played tracks
+	startTime    time.Time                  // Playlist start time
+	historyMutex sync.RWMutex               // Mutex for history
+	logger       *slog.Logger               // Инстанс логгера
 	sentryHelper *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry
 }
 
 const (
-	maxShowTracks       = 3
-	maxAttempts         = 3
-	getTrackTimeout     = 500 * time.Millisecond // Базовый таймаут
-	maxHistorySize      = 100
-	mutexTryLockTimeout = 50 * time.Millisecond
+	maxShowTracks  = 3
+	maxHistorySize = 100
 
-	// Увеличенный таймаут для стрессовых тестов.
-	testTrackTimeout = 2000 * time.Millisecond
-	
 	// Минимальный размер аудиофайла в байтах (1KB).
 	minAudioFileSize = 1024
 )
@@ -74,8 +68,8 @@ func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.L
 		history:      []Track{},
 		current:      0,
 		onChange:     onChange,
-		shuffle:      shuffle,      // Save shuffle parameter
-		startTime:    time.Now(),   // Remember start time
+		shuffle:      shuffle,    // Save shuffle parameter
+		startTime:    time.Now(), // Remember start time
 		logger:       logger,
 		sentryHelper: sentryHelper,
 	}
@@ -400,240 +394,85 @@ func isAudioFile(fileName string) bool {
 	return ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".m4a"
 }
 
-// getTimeoutForEnvironment возвращает таймаут для операций плейлиста в зависимости от окружения.
-func getTimeoutForEnvironment() time.Duration {
-	// Проверяем, запущены ли тесты.
-	if os.Getenv("GO_TEST") == "1" ||
-		os.Getenv("TEST_ENVIRONMENT") == "1" ||
-		strings.Contains(os.Args[0], "test") {
-		return testTrackTimeout
-	}
-	return getTrackTimeout
-}
-
-// GetCurrentTrack returns the current track.
+// GetCurrentTrack returns a copy of the current track, or nil if the playlist is empty.
+// Returns interface{} (not *Track) so that an empty playlist gives a plain nil interface.
 func (p *Playlist) GetCurrentTrack() interface{} {
-	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
-	tracksEmpty := len(p.tracks) == 0
-	hasCurrentIndex := p.current < len(p.tracks) && p.current >= 0
-	p.mutex.RUnlock()
+	defer p.mutex.RUnlock()
 
-	// Если треков нет или недопустимый индекс, сразу возвращаем nil без запуска горутин и логирования.
-	if tracksEmpty || !hasCurrentIndex {
+	if p.current < 0 || p.current >= len(p.tracks) {
 		return nil
 	}
 
-	// Определяем таймаут в зависимости от окружения.
-	timeout := getTimeoutForEnvironment()
-
-	// Используем канал с буфером для предотвращения утечек горутин.
-	c := make(chan interface{}, 1)
-
-	go func() {
-		// Используем RLock вместо Lock для повышения производительности.
-		p.mutex.RLock()
-		defer p.mutex.RUnlock()
-
-		if len(p.tracks) == 0 || p.current >= len(p.tracks) {
-			c <- nil
-			return
-		}
-
-		// Создаем копию трека, чтобы избежать проблем с параллельным доступом.
-		track := p.tracks[p.current]
-		c <- &track
-	}()
-
-	// Ожидаем с таймаутом и возвращаем результат.
-	select {
-	case track := <-c:
-		return track
-	case <-time.After(timeout):
-		p.logger.Warn(
-			"WARNING: GetCurrentTrack timed out",
-			slog.String("timeout", timeout.String()),
-		)
-		return nil
-	}
+	// Копия трека, чтобы вызывающий не держал ссылку на внутренний слайс.
+	track := p.tracks[p.current]
+	return &track
 }
 
 // NextTrack moves to the next track and returns it.
 func (p *Playlist) NextTrack() interface{} {
-	startTime := time.Now()
-	
-	// СПЕЦИАЛЬНОЕ ЛОГИРОВАНИЕ ДЛЯ /floyd
-	p.logger.Debug("NextTrack() called", 
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if len(p.tracks) == 0 {
+		return nil
+	}
+
+	oldCurrent := p.current
+	if p.current >= 0 && p.current < len(p.tracks) {
+		p.addTrackToHistory(p.tracks[p.current])
+	}
+
+	newCurrent := (p.current + 1) % len(p.tracks)
+	if newCurrent < 0 {
+		newCurrent = 0
+	}
+
+	// В режиме перемешивания в конце круга перемешиваем заново. Только что сыгранный трек
+	// не должен оказаться первым, иначе он прозвучит дважды подряд.
+	if newCurrent == 0 && p.shuffle && len(p.tracks) > 1 {
+		lastPath := ""
+		if oldCurrent >= 0 && oldCurrent < len(p.tracks) {
+			lastPath = p.tracks[oldCurrent].Path
+		}
+		p.shuffleTracks()
+		if p.tracks[0].Path == lastPath {
+			last := len(p.tracks) - 1
+			p.tracks[0], p.tracks[last] = p.tracks[last], p.tracks[0]
+		}
+	}
+	p.current = newCurrent
+
+	track := p.tracks[p.current]
+	p.logger.Debug("Playlist moved to next track",
 		slog.String("directory", p.directory),
-		slog.String("timestamp", startTime.Format("15:04:05.000")))
-	
-	// Быстрая проверка с минимальной блокировкой.
-	p.mutex.RLock()
-	tracksEmpty := len(p.tracks) == 0
-	currentIndex := p.current
-	totalTracks := len(p.tracks)
-	var currentTrackName string
-	if currentIndex < len(p.tracks) {
-		currentTrackName = filepath.Base(p.tracks[currentIndex].Path)
-	}
-	p.mutex.RUnlock()
-
-	p.logger.Debug("Current state", 
-		slog.Bool("tracksEmpty", tracksEmpty),
-		slog.Int("currentIndex", currentIndex),
-		slog.Int("totalTracks", totalTracks),
-		slog.String("currentTrack", currentTrackName))
-
-	// Если треков нет, сразу возвращаем nil без запуска горутин.
-	if tracksEmpty {
-		p.logger.Debug("No tracks available, returning nil")
-		return nil
-	}
-
-	// Определяем таймаут в зависимости от окружения.
-	timeout := getTimeoutForEnvironment()
-
-	// Используем канал с буфером для предотвращения утечек горутин.
-	c := make(chan interface{}, 1)
-
-	go func() {
-		// Захватываем блокировку в горутине.
-		p.mutex.Lock()
-		defer p.mutex.Unlock()
-
-		if len(p.tracks) == 0 {
-			p.logger.Debug("NextTrack() called but no tracks available")
-			c <- nil
-			return
-		}
-
-		// Добавляем текущий трек в историю.
-		if p.current < len(p.tracks) {
-			currentTrack := p.tracks[p.current]
-			p.addTrackToHistory(currentTrack)
-		}
-
-		// КРИТИЧЕСКАЯ ДИАГНОСТИКА: Логируем ДО изменения индекса
-		oldCurrent := p.current
-		oldTrackName := ""
-		if oldCurrent < len(p.tracks) {
-			oldTrackName = filepath.Base(p.tracks[oldCurrent].Path)
-		}
-		
-		p.logger.Debug("BEFORE track switch", 
-			slog.Int("oldIndex", oldCurrent),
-			slog.String("oldTrack", oldTrackName))
-
-		// Переходим к следующему треку.
-		newCurrent := (p.current + 1) % len(p.tracks)
-		
-		// Проверяем необходимость повторного перемешивания ПЕРЕД изменением current.
-		if newCurrent == 0 && p.shuffle && len(p.tracks) > 1 {
-			p.logger.Debug("Reshuffling playlist (reached end)")
-			p.reshufflePlaylistPreservingCurrent()
-			// После reshuffling НЕ меняем current - он уже установлен в reshufflePlaylistPreservingCurrent()
-		} else {
-			// Обычный переход к следующему треку.
-			p.current = newCurrent
-		}
-		
-		// КРИТИЧЕСКАЯ ДИАГНОСТИКА: Логируем ПОСЛЕ изменения индекса
-		newTrackName := ""
-		if p.current < len(p.tracks) {
-			newTrackName = filepath.Base(p.tracks[p.current].Path)
-		}
-		
-		p.logger.Debug("AFTER track switch", 
-			slog.Int("from", oldCurrent),
-			slog.Int("to", p.current),
-			slog.String("newTrack", newTrackName))
-
-		// Создаем копию трека для безопасного возврата.
-		track := p.tracks[p.current]
-		trackName := track.Name
-		if trackName == "" {
-			trackName = filepath.Base(track.Path)
-		}
-		
-		p.logger.Debug("Returning new track", 
-			slog.String("trackName", trackName),
-			slog.Int("newIndex", p.current),
-			slog.Int64("executionTimeMs", time.Since(startTime).Milliseconds()))
-		
-		c <- &track
-	}()
-
-	// Ожидаем результат с таймаутом.
-	select {
-	case result := <-c:
-		p.logger.Debug("NextTrack() COMPLETED",
-			slog.Int64("totalTimeMs", time.Since(startTime).Milliseconds()))
-		return result
-	case <-time.After(timeout):
-		p.logger.Warn(
-			"WARNING: NextTrack timed out",
-			slog.String("timeout", timeout.String()),
-		)
-		return nil
-	}
+		slog.Int("from", oldCurrent),
+		slog.Int("to", p.current),
+		slog.String("track", track.Name))
+	return &track
 }
 
 // PreviousTrack moves to the previous track and returns it.
 func (p *Playlist) PreviousTrack() interface{} {
-	// Быстрая проверка с минимальной блокировкой.
-	p.mutex.RLock()
-	tracksEmpty := len(p.tracks) == 0
-	p.mutex.RUnlock()
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 
-	// Если треков нет, сразу возвращаем nil без запуска горутин.
-	if tracksEmpty {
+	if len(p.tracks) == 0 {
 		return nil
 	}
 
-	// Определяем таймаут в зависимости от окружения.
-	timeout := getTimeoutForEnvironment()
-
-	// Используем канал с буфером для предотвращения утечек горутин.
-	c := make(chan interface{}, 1)
-
-	go func() {
-		p.mutex.Lock()
-		defer p.mutex.Unlock()
-
-		if len(p.tracks) == 0 {
-			c <- nil
-			return
-		}
-
-		// Добавляем текущий трек в историю перед переходом к предыдущему.
-		if p.current < len(p.tracks) {
-			currentTrack := p.tracks[p.current]
-			p.addTrackToHistory(currentTrack)
-		}
-
-		// Переходим к предыдущему треку с учетом возможности отрицательного индекса.
-		if p.current == 0 {
-			p.current = len(p.tracks) - 1
-		} else {
-			p.current--
-		}
-
-		// Создаем копию трека для безопасного возврата.
-		track := p.tracks[p.current]
-		c <- &track
-	}()
-
-	// Ожидаем результат с таймаутом.
-	select {
-	case result := <-c:
-		return result
-	case <-time.After(timeout):
-		p.logger.Warn(
-			"WARNING: PreviousTrack timed out",
-			slog.String("timeout", timeout.String()),
-		)
-		return nil
+	if p.current >= 0 && p.current < len(p.tracks) {
+		p.addTrackToHistory(p.tracks[p.current])
 	}
+
+	if p.current <= 0 || p.current >= len(p.tracks) {
+		p.current = len(p.tracks) - 1
+	} else {
+		p.current--
+	}
+
+	track := p.tracks[p.current]
+	return &track
 }
 
 // addTrackToHistory adds a track to history.
@@ -690,9 +529,9 @@ func (p *Playlist) GetHistory() []interface{} {
 func (p *Playlist) ClearHistory() {
 	p.historyMutex.Lock()
 	defer p.historyMutex.Unlock()
-	
+
 	p.history = make([]Track, 0, maxHistorySize)
-	p.logger.Info("Track history cleared", 
+	p.logger.Info("Track history cleared",
 		slog.String("directory", p.directory))
 }
 
@@ -701,164 +540,28 @@ func (p *Playlist) GetStartTime() time.Time {
 	return p.startTime
 }
 
-// Shuffle randomizes the track list.
+// Shuffle randomizes the track list, keeping the current track current.
 func (p *Playlist) Shuffle() {
-	p.logger.Info("SHUFFLE: Starting playlist shuffle for directory", slog.String("directory", p.directory))
-
-	// Создаем локальные переменные для передачи между функциями.
-	var tracksToShuffle []Track
-	var originalTrackPath string
-
-	// Получаем копию треков с блокировкой.
-	if !p.copyTracksWithLock(&tracksToShuffle, &originalTrackPath) {
-		return
-	}
-
-	// Перемешиваем треки.
-	newPosition := p.shuffleTracksCopy(tracksToShuffle, originalTrackPath)
-
-	// Применяем изменения.
-	p.applyShuffledTracks(tracksToShuffle, newPosition)
-}
-
-// copyTracksWithLock пытается захватить мьютекс и скопировать треки.
-func (p *Playlist) copyTracksWithLock(tracksToShuffle *[]Track, originalTrackPath *string) bool {
-	// Пытаемся захватить мьютекс с таймаутом.
-	if !p.tryAcquireMutexWithTimeout() {
-		p.logger.Info("SHUFFLE: Could not acquire mutex, skipping shuffle")
-		return false
-	}
-
-	// Успешно захватили мьютекс, выполняем быстрое копирование.
+	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	// Если треков мало или нет, нечего перемешивать.
 	if len(p.tracks) <= 1 {
-		p.logger.Info("SHUFFLE: Not enough tracks to shuffle")
-		return false
-	}
-
-	// Сохраняем текущий трек.
-	if p.current < len(p.tracks) {
-		*originalTrackPath = p.tracks[p.current].Path
-	}
-
-	// Создаем копию треков.
-	*tracksToShuffle = make([]Track, len(p.tracks))
-	copy(*tracksToShuffle, p.tracks)
-
-	return true
-}
-
-// tryAcquireMutexWithTimeout пытается захватить мьютекс с таймаутом.
-func (p *Playlist) tryAcquireMutexWithTimeout() bool {
-	if p.mutex.TryLock() {
-		return true
-	}
-
-	// Не удалось захватить мьютекс мгновенно, пробуем с таймаутом.
-	timer := time.NewTimer(mutexTryLockTimeout)
-	defer timer.Stop()
-
-	select {
-	case <-timer.C:
-		return false
-	default:
-		p.mutex.Lock()
-		return true
-	}
-}
-
-// shuffleTracksCopy перемешивает копию треков и возвращает новую позицию текущего трека.
-func (p *Playlist) shuffleTracksCopy(tracksToShuffle []Track, originalTrackPath string) int {
-	p.logger.Info("SHUFFLE: Shuffling tracks")
-
-	// Реализация алгоритма Fisher-Yates с использованием crypto/rand.
-	for i := len(tracksToShuffle) - 1; i > 0; i-- {
-		maxNum := big.NewInt(int64(i + 1))
-		jBig, err := rand.Int(rand.Reader, maxNum)
-		if err != nil {
-			p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
-			jBig = big.NewInt(int64(i))
-		}
-		j := int(jBig.Int64())
-		tracksToShuffle[i], tracksToShuffle[j] = tracksToShuffle[j], tracksToShuffle[i]
-	}
-
-	// Находим позицию оригинального трека в перемешанном массиве.
-	newPosition := 0
-	if originalTrackPath != "" {
-		for i, track := range tracksToShuffle {
-			if track.Path == originalTrackPath {
-				newPosition = i
-				break
-			}
-		}
-	}
-
-	return newPosition
-}
-
-// applyShuffledTracks применяет перемешанные треки с захватом мьютекса.
-func (p *Playlist) applyShuffledTracks(tracksToShuffle []Track, newPosition int) {
-	// Пытаемся снова захватить мьютекс для применения изменений.
-	if !p.tryAcquireMutexWithTimeout() {
-		p.logger.Info("SHUFFLE: Could not acquire mutex to apply changes")
+		p.logger.Info("SHUFFLE: Not enough tracks to shuffle", slog.String("directory", p.directory))
 		return
 	}
 
-	// Успешно захватили мьютекс, применяем изменения.
-	defer p.mutex.Unlock()
-
-	// Применяем перемешанные треки.
-	p.tracks = tracksToShuffle
-
-	// Восстанавливаем позицию текущего трека.
-	p.current = newPosition
-	p.logger.Info("SHUFFLE: Restored current track position to", slog.Int("position", newPosition))
-	p.logger.Info("SHUFFLE: Playlist shuffled successfully")
+	p.shuffleTracksInternal()
+	p.logger.Info("SHUFFLE: Playlist shuffled successfully", slog.String("directory", p.directory))
 }
 
 // GetTracks returns a copy of the track list.
 func (p *Playlist) GetTracks() []Track {
-	// Быстрая проверка с минимальной блокировкой.
 	p.mutex.RLock()
-	tracksEmpty := len(p.tracks) == 0
-	p.mutex.RUnlock()
+	defer p.mutex.RUnlock()
 
-	// Если треков нет, сразу возвращаем пустой слайс.
-	if tracksEmpty {
-		return []Track{}
-	}
-
-	// Определяем таймаут в зависимости от окружения.
-	timeout := getTimeoutForEnvironment()
-
-	// Используем канал с буфером для предотвращения утечек горутин.
-	c := make(chan []Track, 1)
-
-	go func() {
-		// Используем RLock для множественного чтения.
-		p.mutex.RLock()
-		defer p.mutex.RUnlock()
-
-		// Создаем копию треков для безопасного возврата.
-		tracks := make([]Track, len(p.tracks))
-		copy(tracks, p.tracks)
-		c <- tracks
-	}()
-
-	// Ожидаем результат с таймаутом.
-	select {
-	case tracks := <-c:
-		return tracks
-	case <-time.After(timeout):
-		p.logger.Warn(
-			"WARNING: GetTracks timed out",
-			slog.String("timeout", timeout.String()),
-		)
-		return []Track{}
-	}
+	tracks := make([]Track, len(p.tracks))
+	copy(tracks, p.tracks)
+	return tracks
 }
 
 // watchDirectory monitors changes in the playlist directory.
@@ -933,38 +636,6 @@ func minInt(a, b int) int {
 	return b
 }
 
-// reshufflePlaylistPreservingCurrent перемешивает плейлист, сохраняя текущий трек.
-// Должен вызываться с захваченной блокировкой.
-func (p *Playlist) reshufflePlaylistPreservingCurrent() {
-	currentPos := p.current
-	currentTrackPath := p.tracks[currentPos].Path
-
-	// Fisher-Yates с crypto/rand.
-	for i := len(p.tracks) - 1; i > 0; i-- {
-		maxNum := big.NewInt(int64(i + 1))
-		jBig, err := rand.Int(rand.Reader, maxNum)
-		if err != nil {
-			p.logger.Info("CRYPTO ERROR: %v, fallback to i", slog.Any("error", err))
-			jBig = big.NewInt(int64(i))
-		}
-		j := int(jBig.Int64())
-		p.tracks[i], p.tracks[j] = p.tracks[j], p.tracks[i]
-	}
-
-	// Находим текущий трек в перемешанном плейлисте.
-	for i, track := range p.tracks {
-		if track.Path == currentTrackPath {
-			p.current = i
-			break
-		}
-	}
-
-	p.logger.Info(
-		"DIAGNOSTICS: Playlist shuffled in NextTrack, current track at position",
-		slog.Int("position", p.current),
-	)
-}
-
 // GetShuffleEnabled returns current shuffle status.
 func (p *Playlist) GetShuffleEnabled() bool {
 	p.mutex.RLock()
@@ -976,21 +647,21 @@ func (p *Playlist) GetShuffleEnabled() bool {
 func (p *Playlist) SetShuffleEnabled(enabled bool) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	
+
 	oldShuffle := p.shuffle
 	p.shuffle = enabled
-	
-	p.logger.Info("Shuffle status changed", 
-		slog.Bool("from", oldShuffle), 
+
+	p.logger.Info("Shuffle status changed",
+		slog.Bool("from", oldShuffle),
 		slog.Bool("to", enabled),
 		slog.String("directory", p.directory))
-	
+
 	// If shuffle was just enabled and we have tracks, shuffle them.
 	if !oldShuffle && enabled && len(p.tracks) > 1 {
 		p.logger.Info("Shuffling tracks due to shuffle being enabled")
 		p.shuffleTracksInternal()
 	}
-	
+
 	// If shuffle was disabled, sort tracks by name for consistent order.
 	if oldShuffle && !enabled && len(p.tracks) > 1 {
 		p.logger.Info("Sorting tracks by name due to shuffle being disabled")
@@ -999,12 +670,12 @@ func (p *Playlist) SetShuffleEnabled(enabled bool) {
 		if p.current < len(p.tracks) {
 			currentTrackPath = p.tracks[p.current].Path
 		}
-		
+
 		// Sort tracks by name.
 		sort.Slice(p.tracks, func(i, j int) bool {
 			return p.tracks[i].Name < p.tracks[j].Name
 		})
-		
+
 		// Restore current track position.
 		if currentTrackPath != "" {
 			for i, track := range p.tracks {
@@ -1014,8 +685,8 @@ func (p *Playlist) SetShuffleEnabled(enabled bool) {
 				}
 			}
 		}
-		
-		p.logger.Info("Tracks sorted by name", 
+
+		p.logger.Info("Tracks sorted by name",
 			slog.Int("trackCount", len(p.tracks)),
 			slog.Int("currentIndex", p.current))
 	}
@@ -1028,7 +699,7 @@ func (p *Playlist) shuffleTracksInternal() {
 	if p.current < len(p.tracks) {
 		currentTrackPath = p.tracks[p.current].Path
 	}
-	
+
 	// Используем криптографически безопасный генератор для перемешивания.
 	for i := len(p.tracks) - 1; i > 0; i-- {
 		// Генерируем случайное число от 0 до i включительно.
@@ -1043,7 +714,7 @@ func (p *Playlist) shuffleTracksInternal() {
 		// Меняем местами элементы.
 		p.tracks[i], p.tracks[j.Int64()] = p.tracks[j.Int64()], p.tracks[i]
 	}
-	
+
 	// Restore current track position.
 	if currentTrackPath != "" {
 		for i, track := range p.tracks {
@@ -1054,7 +725,7 @@ func (p *Playlist) shuffleTracksInternal() {
 		}
 	}
 
-	p.logger.Info("Tracks shuffled internally", 
+	p.logger.Info("Tracks shuffled internally",
 		slog.Int("trackCount", len(p.tracks)),
 		slog.Int("currentIndex", p.current))
 }
