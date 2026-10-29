@@ -39,6 +39,7 @@ Thumbs.db
 # Docker volumes and temp files
 *.tmp
 *.log
+__pycache__/
 
 # Application specific
 audio-streamer
