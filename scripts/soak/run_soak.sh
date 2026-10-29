@@ -49,7 +49,7 @@ enc "/w/ru/03 Вальс VBR.mp3" 659 60 "-q:a 4" "Вальс"
 
 log "starting container $NAME on port $PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" -p "$PORT:8000" --memory 256m --cpus 1 \
+docker run -d --name "$NAME" -p "$PORT:8000" --memory 256m --cpus 1 --sysctl net.ipv4.tcp_tw_reuse=1 \
   -e DIRECTORY_ROUTES='{"short":"/app/short","long":"/app/long","ru":"/app/ru"}' \
   -e STATUS_PASSWORD="$PASSWORD" -e LOG_LEVEL=info -e BITRATE=128 -e MAX_CLIENTS=30 \
   -e TG_ALERT=false -e RELAY=false -e SENTRY_DSN= \
