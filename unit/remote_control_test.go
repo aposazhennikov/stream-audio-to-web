@@ -25,9 +25,10 @@ import (
 var remoteSignalStart = []byte{0xFF, 0xFB, 0x90, 0x64}
 
 const (
-	remoteTestHold      = 400 * time.Millisecond
-	remoteTestMinListen = 300 * time.Millisecond
-	remoteTestPass      = 100 * time.Millisecond // a preset passed while scrolling
+	remoteTestHold       = 800 * time.Millisecond
+	remoteTestSeriesHold = 100 * time.Millisecond
+	remoteTestMinListen  = 300 * time.Millisecond
+	remoteTestPass       = 50 * time.Millisecond // a preset passed while scrolling
 )
 
 // remoteListener is a receiver that asks for titles; it reads the stream in the background.
@@ -127,8 +128,8 @@ func TestRemoteControlButtons(t *testing.T) {
 	server := getTestServer()
 	server.SetStationManager(stations)
 	server.SetRemoteControlRoutes("/rc-next", "/rc-prev")
-	server.SetRemoteControlTiming(remoteTestHold, remoteTestMinListen)
-	defer server.SetRemoteControlTiming(0, 0)
+	server.SetRemoteControlTiming(remoteTestHold, remoteTestSeriesHold, remoteTestMinListen)
+	defer server.SetRemoteControlTiming(0, 0, 0)
 	defer server.SetRemoteControlRoutes("", "")
 
 	// The station the listener uses, another one passed while scrolling, and the two
@@ -220,16 +221,26 @@ func TestRemoteControlButtons(t *testing.T) {
 	eventually(func() bool { return back.lastTitle() == "01 first" }, "previous track title")
 	back.close()
 
-	// "Next" twice: step to the neighbouring preset and back.
+	// "Next" twice: step to the neighbouring preset and back. The repeat right after a
+	// switch acts after the short series hold.
 	again := listenRemote(t, ts.URL+"/rc-next")
 	eventually(again.heardSignal, "first next")
 	again.close()
 	assert.Equal(t, "02 second", currentTrackName(t, station))
 	passRemote(t, ts.URL+"/rc-prev")
 	again = listenRemote(t, ts.URL+"/rc-next")
-	eventually(again.heardSignal, "second next")
+	require.Eventually(t, again.heardSignal, remoteTestHold/2, 10*time.Millisecond,
+		"a repeated press in a series must act sooner than the full hold")
 	assert.Equal(t, "03 third", currentTrackName(t, station))
 	again.close()
+
+	// Leaving the buttons by scrolling past the other one: it keeps the full hold, so a
+	// moment longer than the series hold on it does not switch back.
+	leaving := listenRemote(t, ts.URL+"/rc-prev")
+	time.Sleep(3 * remoteTestSeriesHold)
+	leaving.close()
+	afterHold()
+	assert.Equal(t, "03 third", currentTrackName(t, station), "the other button must not use the series hold")
 
 	// Turned on straight on the preset (nothing listened to recently): its own station plays.
 	server.SetRemoteControlRoutes("/rc-next", "/rc-prev") // forgets recent listening

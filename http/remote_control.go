@@ -23,7 +23,10 @@ import (
 //
 // A press is told from a reconnect by the URL: reconnects and the duplicate connections some
 // receivers open are to the same URL, a press comes from another one. To press the same
-// button again, the listener steps to the neighbouring preset and back.
+// button again, the listener steps to the neighbouring preset and back; within
+// remoteSeriesWindow of the last switch the same button acts after remoteSeriesHold, so
+// several tracks can be skipped quickly. The other button keeps the full hold: leaving the
+// buttons by scrolling past it must not switch back.
 
 const (
 	// remotePressWindow: the listened station can be switched this long after the listener
@@ -33,6 +36,9 @@ const (
 	remoteMinListenDefault = 30 * time.Second
 	// remoteHoldDefault: how long the listener must stay on a button for it to act.
 	remoteHoldDefault = 6 * time.Second
+	// remoteSeriesHold: the hold for the same button again within remoteSeriesWindow.
+	remoteSeriesHold   = 2 * time.Second
+	remoteSeriesWindow = time.Minute
 	// remoteSessionTTL: sessions of clients that are gone are forgotten after this.
 	remoteSessionTTL = time.Hour
 
@@ -78,7 +84,9 @@ type remoteControl struct {
 	nextGen    uint64
 	nextConn   uint64
 	hold       time.Duration
+	seriesHold time.Duration
 	minListen  time.Duration
+	lastSwitch map[string]remoteSwitch // last switch by client address
 	now        func() time.Time
 	// switchTrack moves a station one track in a direction; set by the server.
 	switchTrack func(route, direction string) error
@@ -90,11 +98,13 @@ func newRemoteControl(nextRoute, prevRoute string, hold time.Duration, logger *s
 		hold = remoteHoldDefault
 	}
 	rc := &remoteControl{
-		sessions:  make(map[string]*listenerSession),
-		hold:      hold,
-		minListen: remoteMinListenDefault,
-		now:       time.Now,
-		logger:    logger,
+		sessions:   make(map[string]*listenerSession),
+		hold:       hold,
+		seriesHold: remoteSeriesHold,
+		minListen:  remoteMinListenDefault,
+		lastSwitch: make(map[string]remoteSwitch),
+		now:        time.Now,
+		logger:     logger,
 	}
 	rc.setRoutes(nextRoute, prevRoute)
 	return rc
@@ -113,6 +123,7 @@ func (rc *remoteControl) setRoutes(nextRoute, prevRoute string) {
 	// Forget who listened to what: a new configuration starts clean.
 	rc.nextGen++
 	rc.sessions = make(map[string]*listenerSession)
+	rc.lastSwitch = make(map[string]remoteSwitch)
 }
 
 func normalizeRoute(route string) string {
@@ -198,10 +209,20 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 	decision.tracked = true
 
 	if decision.direction != "" {
+		hold := rc.hold
+		if last, ok := rc.lastSwitch[ip]; ok && last.direction == decision.direction && now.Sub(last.at) <= remoteSeriesWindow {
+			hold = rc.seriesHold
+		}
 		gen, target, direction := sess.gen, decision.target, decision.direction
-		time.AfterFunc(rc.hold, func() { rc.fire(ip, gen, target, direction) })
+		time.AfterFunc(hold, func() { rc.fire(ip, gen, target, direction) })
 	}
 	return decision
+}
+
+// remoteSwitch is a switch made by a button press.
+type remoteSwitch struct {
+	direction string
+	at        time.Time
 }
 
 // fire performs a press if the listener is still on the button it pressed.
@@ -219,6 +240,7 @@ func (rc *remoteControl) fire(ip string, gen uint64, target, direction string) {
 		channels = append(channels, ch)
 	}
 	switchTrack := rc.switchTrack
+	rc.lastSwitch[ip] = remoteSwitch{direction: direction, at: rc.now()}
 	rc.mu.Unlock()
 
 	rc.logger.Info("Remote control press: switching station",
@@ -262,6 +284,11 @@ func (rc *remoteControl) pruneLocked(now time.Time) {
 			delete(rc.sessions, ip)
 		}
 	}
+	for ip, last := range rc.lastSwitch {
+		if now.Sub(last.at) > remoteSeriesWindow {
+			delete(rc.lastSwitch, ip)
+		}
+	}
 }
 
 // remoteSignal returns the sound played after a button press switched the station.
@@ -293,17 +320,22 @@ func (s *Server) SetRemoteControlRoutes(nextRoute, prevRoute string) {
 		slog.String("prev", normalizeRoute(prevRoute)))
 }
 
-// SetRemoteControlTiming sets how long a listener must stay on a button for it to act and
-// how long on a station for it to count as listened. Zero keeps the default.
-func (s *Server) SetRemoteControlTiming(hold, minListen time.Duration) {
+// SetRemoteControlTiming sets how long a listener must stay on a button for it to act (the
+// first time and again in a series) and how long on a station for it to count as listened.
+// Zero keeps the default.
+func (s *Server) SetRemoteControlTiming(hold, seriesHold, minListen time.Duration) {
 	s.remote.mu.Lock()
 	defer s.remote.mu.Unlock()
 	if hold <= 0 {
 		hold = remoteHoldDefault
 	}
+	if seriesHold <= 0 {
+		seriesHold = remoteSeriesHold
+	}
 	if minListen <= 0 {
 		minListen = remoteMinListenDefault
 	}
 	s.remote.hold = hold
+	s.remote.seriesHold = seriesHold
 	s.remote.minListen = minListen
 }
