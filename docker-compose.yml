@@ -55,6 +55,8 @@ services:
       - REMOTE_NEXT_ROUTE=${REMOTE_NEXT_ROUTE-/shaov}
       - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
       - REMOTE_HOLD_SECONDS=${REMOTE_HOLD_SECONDS:-6}
+      # A station counts as the one being listened to after this many seconds on it.
+      - REMOTE_MIN_LISTEN_SECONDS=${REMOTE_MIN_LISTEN_SECONDS:-15}
     sysctls:
       - net.ipv4.tcp_tw_reuse=1
     healthcheck:

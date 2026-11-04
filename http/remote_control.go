@@ -33,7 +33,7 @@ const (
 	// left it, enough to scroll through all presets to a button.
 	remotePressWindow = 5 * time.Minute
 	// remoteMinListenDefault: staying on a station this long makes it the listened one.
-	remoteMinListenDefault = 30 * time.Second
+	remoteMinListenDefault = 15 * time.Second
 	// remoteHoldDefault: how long the listener must stay on a button for it to act.
 	remoteHoldDefault = 6 * time.Second
 	// remoteSeriesHold: the hold for the same button again within remoteSeriesWindow.
@@ -93,15 +93,18 @@ type remoteControl struct {
 	logger      *slog.Logger
 }
 
-func newRemoteControl(nextRoute, prevRoute string, hold time.Duration, logger *slog.Logger) *remoteControl {
+func newRemoteControl(nextRoute, prevRoute string, hold, minListen time.Duration, logger *slog.Logger) *remoteControl {
 	if hold <= 0 {
 		hold = remoteHoldDefault
+	}
+	if minListen <= 0 {
+		minListen = remoteMinListenDefault
 	}
 	rc := &remoteControl{
 		sessions:   make(map[string]*listenerSession),
 		hold:       hold,
 		seriesHold: remoteSeriesHold,
-		minListen:  remoteMinListenDefault,
+		minListen:  minListen,
 		lastSwitch: make(map[string]remoteSwitch),
 		now:        time.Now,
 		logger:     logger,
