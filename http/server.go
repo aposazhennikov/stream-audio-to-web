@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -62,6 +63,7 @@ type Server struct {
 	telegramManager              *telegram.Manager          // Manager for telegram alerts.
 	telegramFunctionalityEnabled bool                       // Whether telegram functionality is enabled via environment.
 	relayFunctionalityEnabled    bool                       // Whether relay functionality is enabled via environment.
+	remote                       *remoteControl             // Station URLs that work as next/previous buttons.
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
@@ -132,6 +134,10 @@ func NewServer(maxClients int, logger *slog.Logger, sentryHelper *sentryhelper.S
 		logger:            logger,
 		sentryHelper:      sentryHelper,
 	}
+	remoteHold, _ := strconv.Atoi(os.Getenv("REMOTE_HOLD_SECONDS"))
+	server.remote = newRemoteControl(os.Getenv("REMOTE_NEXT_ROUTE"), os.Getenv("REMOTE_PREV_ROUTE"),
+		time.Duration(remoteHold)*time.Second, logger)
+	server.remote.switchTrack = server.SwitchTrack
 
 	// Setup routes.
 	server.setupRoutes()

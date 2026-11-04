@@ -49,6 +49,12 @@ services:
       - TG_ALERT=${TG_ALERT:-true}
       - TG_ALERT_CONFIG_FILE=${TG_ALERT_CONFIG_FILE:-/app/telegram_alerts.json}
       - TG_ALERT_TIMEZONE=${TG_ALERT_TIMEZONE:-Europe/Moscow}
+      # Presets 1 and 2 of the receiver: staying on them for REMOTE_HOLD_SECONDS right after
+      # another station moves that station one track forward / back (passing them while
+      # scrolling through the presets does nothing). An empty route makes it an ordinary station.
+      - REMOTE_NEXT_ROUTE=${REMOTE_NEXT_ROUTE-/shaov}
+      - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
+      - REMOTE_HOLD_SECONDS=${REMOTE_HOLD_SECONDS:-6}
     sysctls:
       - net.ipv4.tcp_tw_reuse=1
     healthcheck:

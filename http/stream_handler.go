@@ -43,77 +43,99 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 			slog.String("remoteAddr", r.RemoteAddr),
 		)
 
-		// Verify stream exists.
-		stream, exists := s.getStream(route, w)
-		if !exists {
-			return
-		}
-
-		// Set up appropriate headers for streaming.
-		s.setupStreamingHeaders(w, contentType)
-
-		// Players that want the track title send "Icy-MetaData: 1"; others get plain MP3.
-		wantICYMetadata := r.Header.Get("Icy-MetaData") == "1"
-		if wantICYMetadata {
-			w.Header().Set("icy-metaint", strconv.Itoa(icyMetaInt))
-			w.Header().Set("icy-name", strings.TrimPrefix(route, "/"))
-			w.Header().Set("icy-pub", "0")
-		}
-
-		// For HEAD requests, check if stream is ready before returning OK.
-		if r.Method == http.MethodHead {
-			// Check if stream has a current track (files are ready for playback).
-			s.trackMutex.RLock()
-			currentTrack := s.currentTracks[route]
-			s.trackMutex.RUnlock()
-
-			if currentTrack == "" {
-				s.logger.Debug("HEAD request - stream not ready, no current track",
-					slog.String("route", route),
-					slog.String("remoteAddr", r.RemoteAddr))
-				http.Error(w, "Stream not ready - files are being processed", http.StatusServiceUnavailable)
-				return
-			}
-
-			s.logger.Debug("HEAD request - stream ready",
-				slog.String("route", route),
+		// The URL may be a remote control button: then another station is streamed.
+		decision := s.remote.resolve(r, route, s.IsStreamRegistered)
+		defer s.remote.release(decision)
+		if decision.direction != "" {
+			s.logger.Info("Remote control button pressed, waiting for the hold time",
+				slog.String("button", route),
+				slog.String("direction", decision.direction),
+				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr),
-				slog.String("currentTrack", currentTrack))
-			w.WriteHeader(http.StatusOK)
-			return
+				slog.String("userAgent", r.UserAgent()))
+		} else if decision.target != route {
+			s.logger.Info("Remote control reconnect, continuing station",
+				slog.String("button", route),
+				slog.String("station", decision.target),
+				slog.String("remoteAddr", r.RemoteAddr))
 		}
-
-		// Verify flushing capability.
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			errorMsg := "Streaming not supported"
-			s.logger.Error("ERROR: Streaming not supported")
-			s.sentryHelper.CaptureInfo(errorMsg, "http", "handler") // Save as this is an error
-			http.Error(w, errorMsg, http.StatusInternalServerError)
-			return
-		}
-
-		// Flush headers immediately - critical for streaming.
-		flusher.Flush()
-
-		// Connect client to stream.
-		clientData, err := s.connectClientToStream(stream, route, r.RemoteAddr)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		defer stream.RemoveClient(clientData.clientID)
-
-		// Start streaming data to client.
-		var out io.Writer = w
-		if wantICYMetadata {
-			out = newICYMetadataWriter(w, func() string {
-				trackPath, _, _, _ := stream.GetPlaybackInfo()
-				return trackTitleFromPath(trackPath)
-			})
-		}
-		s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done())
+		s.serveStream(w, r, decision.target, contentType, decision.signals)
 	}
+}
+
+// serveStream streams the station route to the client. Sounds received from signals (the
+// remote control confirmation) are inserted into the audio when they arrive.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, route, contentType string, signals <-chan []byte) {
+	// Verify stream exists.
+	stream, exists := s.getStream(route, w)
+	if !exists {
+		return
+	}
+
+	// Set up appropriate headers for streaming.
+	s.setupStreamingHeaders(w, contentType)
+
+	// Players that want the track title send "Icy-MetaData: 1"; others get plain MP3.
+	wantICYMetadata := r.Header.Get("Icy-MetaData") == "1"
+	if wantICYMetadata {
+		w.Header().Set("icy-metaint", strconv.Itoa(icyMetaInt))
+		w.Header().Set("icy-name", strings.TrimPrefix(route, "/"))
+		w.Header().Set("icy-pub", "0")
+	}
+
+	// For HEAD requests, check if stream is ready before returning OK.
+	if r.Method == http.MethodHead {
+		// Check if stream has a current track (files are ready for playback).
+		s.trackMutex.RLock()
+		currentTrack := s.currentTracks[route]
+		s.trackMutex.RUnlock()
+
+		if currentTrack == "" {
+			s.logger.Debug("HEAD request - stream not ready, no current track",
+				slog.String("route", route),
+				slog.String("remoteAddr", r.RemoteAddr))
+			http.Error(w, "Stream not ready - files are being processed", http.StatusServiceUnavailable)
+			return
+		}
+
+		s.logger.Debug("HEAD request - stream ready",
+			slog.String("route", route),
+			slog.String("remoteAddr", r.RemoteAddr),
+			slog.String("currentTrack", currentTrack))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Verify flushing capability.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		errorMsg := "Streaming not supported"
+		s.logger.Error("ERROR: Streaming not supported")
+		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler") // Save as this is an error
+		http.Error(w, errorMsg, http.StatusInternalServerError)
+		return
+	}
+
+	// Flush headers immediately - critical for streaming.
+	flusher.Flush()
+
+	// Connect client to stream.
+	clientData, err := s.connectClientToStream(stream, route, r.RemoteAddr, r.UserAgent())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer stream.RemoveClient(clientData.clientID)
+
+	// Start streaming data to client.
+	var out io.Writer = w
+	if wantICYMetadata {
+		out = newICYMetadataWriter(w, func() string {
+			trackPath, _, _, _ := stream.GetPlaybackInfo()
+			return trackTitleFromPath(trackPath)
+		})
+	}
+	s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done(), signals)
 }
 
 // determineContentType sets the appropriate MIME type for audio streaming.
@@ -162,7 +184,7 @@ type clientStreamData struct {
 }
 
 // connectClientToStream adds a client to the stream.
-func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr string) (*clientStreamData, error) {
+func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr, userAgent string) (*clientStreamData, error) {
 	s.logger.Info("Adding client to stream", slog.String("route", route))
 
 	// Get data channel and client ID.
@@ -186,6 +208,7 @@ func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr s
 		"Client connected to stream",
 		slog.String("route", route),
 		slog.String("remoteAddr", remoteAddr),
+		slog.String("userAgent", userAgent),
 		slog.Int("clientID", clientID),
 	)
 
@@ -205,6 +228,7 @@ func (s *Server) streamDataToClient(
 	clientData *clientStreamData,
 	route string,
 	clientClosed <-chan struct{},
+	signals <-chan []byte, // sounds inserted into this client's audio; nil for none
 ) {
 	s.logger.Info("Starting data transmission", slog.Int("clientID", clientData.clientID), slog.String("route", route))
 
@@ -218,6 +242,7 @@ func (s *Server) streamDataToClient(
 
 	// Send data to client.
 	for {
+		var data []byte
 		select {
 		case <-clientClosed:
 			// Client disconnected.
@@ -227,7 +252,8 @@ func (s *Server) streamDataToClient(
 				slog.Int("clientID", clientData.clientID),
 				slog.Int64("totalBytesSent", totalBytesSent))
 			return
-		case data, ok := <-clientData.clientCh:
+		case data = <-signals:
+		case chunk, ok := <-clientData.clientCh:
 			if !ok {
 				// Channel closed.
 				s.logger.Info("Channel closed for client",
@@ -236,24 +262,25 @@ func (s *Server) streamDataToClient(
 					slog.Int64("totalBytesSent", totalBytesSent))
 				return
 			}
-
-			// Send data and handle errors.
-			if deadlineErr := responseController.SetWriteDeadline(time.Now().Add(clientWriteTimeout)); deadlineErr != nil &&
-				!errors.Is(deadlineErr, http.ErrNotSupported) {
-				s.logger.Debug("Failed to set write deadline", slog.String("error", deadlineErr.Error()))
-			}
-			if err := s.sendDataToClient(out, data, clientData, route, &totalBytesSent); err != nil {
-				return
-			}
-
-			// Update metrics and log periodically.
-			s.bytesSent.WithLabelValues(route).Add(float64(len(data)))
-			s.logDataTransfer(clientData, &totalBytesSent, &lastLogTime)
-
-			// MUST call Flush after EACH data sent!.
-			// This ensures data is sent immediately to client.
-			flusher.Flush()
+			data = chunk
 		}
+
+		// Send data and handle errors.
+		if deadlineErr := responseController.SetWriteDeadline(time.Now().Add(clientWriteTimeout)); deadlineErr != nil &&
+			!errors.Is(deadlineErr, http.ErrNotSupported) {
+			s.logger.Debug("Failed to set write deadline", slog.String("error", deadlineErr.Error()))
+		}
+		if err := s.sendDataToClient(out, data, clientData, route, &totalBytesSent); err != nil {
+			return
+		}
+
+		// Update metrics and log periodically.
+		s.bytesSent.WithLabelValues(route).Add(float64(len(data)))
+		s.logDataTransfer(clientData, &totalBytesSent, &lastLogTime)
+
+		// MUST call Flush after EACH data sent!.
+		// This ensures data is sent immediately to client.
+		flusher.Flush()
 	}
 }
 
