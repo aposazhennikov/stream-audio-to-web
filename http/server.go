@@ -134,11 +134,10 @@ func NewServer(maxClients int, logger *slog.Logger, sentryHelper *sentryhelper.S
 		logger:            logger,
 		sentryHelper:      sentryHelper,
 	}
-	remoteHold, _ := strconv.Atoi(os.Getenv("REMOTE_HOLD_SECONDS"))
+	remoteRepeatGap, _ := strconv.Atoi(os.Getenv("REMOTE_REPEAT_GAP_SECONDS"))
 	remoteMinListen, _ := strconv.Atoi(os.Getenv("REMOTE_MIN_LISTEN_SECONDS"))
 	server.remote = newRemoteControl(os.Getenv("REMOTE_NEXT_ROUTE"), os.Getenv("REMOTE_PREV_ROUTE"),
-		time.Duration(remoteHold)*time.Second, time.Duration(remoteMinListen)*time.Second, logger)
-	server.remote.switchTrack = server.SwitchTrack
+		time.Duration(remoteRepeatGap)*time.Second, time.Duration(remoteMinListen)*time.Second)
 
 	// Setup routes.
 	server.setupRoutes()

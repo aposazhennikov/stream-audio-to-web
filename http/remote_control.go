@@ -16,17 +16,16 @@ import (
 // "next" and "previous" buttons for the station the listener was listening to: the last
 // station of ours it stayed on for at least remoteMinListenDefault. Stations passed on the
 // way (a receiver without number keys is scrolled preset by preset) do not count.
-// On the button that station keeps playing, and if the listener stays on the button for
-// remoteHoldDefault, it moves one track forward or back and a short signal is played.
-// Passing a button while scrolling does nothing. A receiver turned on straight on such a
-// preset gets the preset's own station as usual.
 //
-// A press is told from a reconnect by the URL: reconnects and the duplicate connections some
-// receivers open are to the same URL, a press comes from another one. To press the same
-// button again, the listener steps to the neighbouring preset and back; within
-// remoteSeriesWindow of the last switch the same button acts after remoteSeriesHold, so
-// several tracks can be skipped quickly. The other button keeps the full hold: leaving the
-// buttons by scrolling past it must not switch back.
+// Arriving on a button switches nothing: the button introduces itself with a short sound and
+// the listened station keeps playing. Pressing the same preset again (the receiver opens a
+// new connection to the same URL) is the press: the station moves one track and a signal is
+// played. A listener who stays on a preset to find out by ear what is playing can stay as
+// long as it likes; only the repeated press acts. The other button undoes a wrong press the
+// same way. A receiver turned on straight on such a preset gets the preset's own station.
+//
+// Some receivers open two connections for one press within a few seconds: a connection to
+// the same URL sooner than remoteRepeatGap after the previous one is that duplicate.
 
 const (
 	// remotePressWindow: the listened station can be switched this long after the listener
@@ -34,11 +33,9 @@ const (
 	remotePressWindow = 5 * time.Minute
 	// remoteMinListenDefault: staying on a station this long makes it the listened one.
 	remoteMinListenDefault = 15 * time.Second
-	// remoteHoldDefault: how long the listener must stay on a button for it to act.
-	remoteHoldDefault = 6 * time.Second
-	// remoteSeriesHold: the hold for the same button again within remoteSeriesWindow.
-	remoteSeriesHold   = 2 * time.Second
-	remoteSeriesWindow = time.Minute
+	// remoteRepeatGapDefault: a new connection to the same button sooner than this after the
+	// previous one is a duplicate of it, later — a repeated press.
+	remoteRepeatGapDefault = 8 * time.Second
 	// remoteSessionTTL: sessions of clients that are gone are forgotten after this.
 	remoteSessionTTL = time.Hour
 
@@ -46,23 +43,26 @@ const (
 	remoteDirectionPrev = "prev"
 )
 
-// Short rising and falling double beeps, MP3 at 128 kbps, 44.1 kHz, stereo, without tags.
+// Sounds inserted into the stream, MP3 at 128 kbps, 44.1 kHz, stereo, without tags:
+// rising and falling double beeps after a switch, three soft ticks when arriving on a button.
 var (
 	//go:embed sounds/next.mp3
 	remoteNextSound []byte
 	//go:embed sounds/prev.mp3
 	remotePrevSound []byte
+	//go:embed sounds/button.mp3
+	remoteButtonSound []byte
 )
 
-// listenerSession is what one client address listens to.
+// listenerSession is what one client (address and receiver model) listens to.
 type listenerSession struct {
-	via       string    // URL the client requested
-	route     string    // station actually streamed
-	open      int       // open connections of this session
-	gen       uint64    // changes when the client starts listening to something else
-	startedAt time.Time // first connection of this session
-	lastSeen  time.Time // last connect or disconnect
-	signals   map[uint64]chan []byte
+	via           string    // URL the client requested
+	route         string    // station actually streamed
+	open          int       // open connections of this session
+	gen           uint64    // changes when the client starts listening to something else
+	startedAt     time.Time // first connection of this session
+	lastConnectAt time.Time // latest connection of this session
+	lastSeen      time.Time // last connect or disconnect
 
 	// The station the client really listened to (stayed on long enough) and when it left it.
 	listened     string
@@ -82,32 +82,23 @@ type remoteControl struct {
 	directions map[string]string // button URL -> "next" or "prev"
 	sessions   map[string]*listenerSession
 	nextGen    uint64
-	nextConn   uint64
-	hold       time.Duration
-	seriesHold time.Duration
+	repeatGap  time.Duration
 	minListen  time.Duration
-	lastSwitch map[string]remoteSwitch // last switch by client address
 	now        func() time.Time
-	// switchTrack moves a station one track in a direction; set by the server.
-	switchTrack func(route, direction string) error
-	logger      *slog.Logger
 }
 
-func newRemoteControl(nextRoute, prevRoute string, hold, minListen time.Duration, logger *slog.Logger) *remoteControl {
-	if hold <= 0 {
-		hold = remoteHoldDefault
+func newRemoteControl(nextRoute, prevRoute string, repeatGap, minListen time.Duration) *remoteControl {
+	if repeatGap <= 0 {
+		repeatGap = remoteRepeatGapDefault
 	}
 	if minListen <= 0 {
 		minListen = remoteMinListenDefault
 	}
 	rc := &remoteControl{
-		sessions:   make(map[string]*listenerSession),
-		hold:       hold,
-		seriesHold: remoteSeriesHold,
-		minListen:  minListen,
-		lastSwitch: make(map[string]remoteSwitch),
-		now:        time.Now,
-		logger:     logger,
+		sessions:  make(map[string]*listenerSession),
+		repeatGap: repeatGap,
+		minListen: minListen,
+		now:       time.Now,
 	}
 	rc.setRoutes(nextRoute, prevRoute)
 	return rc
@@ -126,7 +117,6 @@ func (rc *remoteControl) setRoutes(nextRoute, prevRoute string) {
 	// Forget who listened to what: a new configuration starts clean.
 	rc.nextGen++
 	rc.sessions = make(map[string]*listenerSession)
-	rc.lastSwitch = make(map[string]remoteSwitch)
 }
 
 func normalizeRoute(route string) string {
@@ -143,31 +133,43 @@ func normalizeRoute(route string) string {
 // remoteDecision is the result of resolving a stream request.
 type remoteDecision struct {
 	target    string // station to stream
-	direction string // set when this request is a button press
-	clientIP  string
+	direction string // set when this request is a button press: switch the target this way
+	arrived   bool   // the client has just come to a button: play the button sound
+	duplicate bool   // another connection of the same press or a reconnect
+	clientKey string
 	gen       uint64
-	connID    uint64
-	signals   chan []byte // signals to insert into this connection's audio
 	tracked   bool
 }
 
+// intro returns the sound to send before the station audio.
+func (d remoteDecision) intro() []byte {
+	switch {
+	case d.direction == remoteDirectionNext:
+		return remoteNextSound
+	case d.direction == remoteDirectionPrev:
+		return remotePrevSound
+	case d.arrived:
+		return remoteButtonSound
+	}
+	return nil
+}
+
 // resolve decides which station a GET request to route streams and whether it is a button
-// press, and records the client's session. A press acts after the hold time if the listener
-// is still on the button. hasStream reports whether a station exists.
+// press, and records the client's session. hasStream reports whether a station exists.
 func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(string) bool) remoteDecision {
 	decision := remoteDecision{target: route}
 	if r.Method != http.MethodGet {
 		return decision
 	}
-	ip := clientIP(r)
-	decision.clientIP = ip
+	key := clientKey(r)
+	decision.clientKey = key
 	now := rc.now()
 
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	rc.pruneLocked(now)
 
-	sess := rc.sessions[ip]
+	sess := rc.sessions[key]
 	listened, listenedLeft := "", time.Time{}
 	if sess != nil {
 		listened, listenedLeft = sess.listened, sess.listenedLeft
@@ -177,17 +179,25 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 		}
 	}
 	listenedRecently := listened != "" && now.Sub(listenedLeft) <= remotePressWindow && hasStream(listened)
-	if direction, isButton := rc.directions[route]; isButton && listenedRecently {
+
+	direction, isButton := rc.directions[route]
+	sameSession := sess != nil && sess.via == route && (sess.open > 0 || now.Sub(sess.lastSeen) <= remotePressWindow)
+	switch {
+	case isButton && listenedRecently && sameSession && sess.route == listened:
 		decision.target = listened
-		if sess.via != route {
-			// Came from another URL: the listener pressed this button.
-			decision.direction = direction
+		if now.Sub(sess.lastConnectAt) >= rc.repeatGap {
+			decision.direction = direction // the same preset pressed again
+		} else {
+			decision.duplicate = true
 		}
+	case isButton && listenedRecently:
+		decision.target = listened
+		decision.arrived = true
+	case sameSession && sess.route == route:
+		decision.duplicate = true
 	}
 
-	if sess != nil && sess.via == route && sess.route == decision.target &&
-		(sess.open > 0 || now.Sub(sess.lastSeen) <= remotePressWindow) {
-		// A reconnect or a duplicate connection of the same session.
+	if sameSession && sess.route == decision.target {
 		sess.open++
 	} else {
 		rc.nextGen++
@@ -197,71 +207,16 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 			open:         1,
 			gen:          rc.nextGen,
 			startedAt:    now,
-			signals:      make(map[uint64]chan []byte),
 			listened:     listened,
 			listenedLeft: listenedLeft,
 		}
-		rc.sessions[ip] = sess
+		rc.sessions[key] = sess
 	}
+	sess.lastConnectAt = now
 	sess.lastSeen = now
-	rc.nextConn++
-	decision.connID = rc.nextConn
-	decision.signals = make(chan []byte, 1)
-	sess.signals[decision.connID] = decision.signals
 	decision.gen = sess.gen
 	decision.tracked = true
-
-	if decision.direction != "" {
-		hold := rc.hold
-		if last, ok := rc.lastSwitch[ip]; ok && last.direction == decision.direction && now.Sub(last.at) <= remoteSeriesWindow {
-			hold = rc.seriesHold
-		}
-		gen, target, direction := sess.gen, decision.target, decision.direction
-		time.AfterFunc(hold, func() { rc.fire(ip, gen, target, direction) })
-	}
 	return decision
-}
-
-// remoteSwitch is a switch made by a button press.
-type remoteSwitch struct {
-	direction string
-	at        time.Time
-}
-
-// fire performs a press if the listener is still on the button it pressed.
-func (rc *remoteControl) fire(ip string, gen uint64, target, direction string) {
-	rc.mu.Lock()
-	sess := rc.sessions[ip]
-	if sess == nil || sess.gen != gen || sess.open == 0 {
-		rc.mu.Unlock()
-		rc.logger.Info("Remote control press dropped: the listener moved on before the hold time",
-			slog.String("station", target), slog.String("direction", direction), slog.String("client", ip))
-		return
-	}
-	channels := make([]chan []byte, 0, len(sess.signals))
-	for _, ch := range sess.signals {
-		channels = append(channels, ch)
-	}
-	switchTrack := rc.switchTrack
-	rc.lastSwitch[ip] = remoteSwitch{direction: direction, at: rc.now()}
-	rc.mu.Unlock()
-
-	rc.logger.Info("Remote control press: switching station",
-		slog.String("station", target), slog.String("direction", direction), slog.String("client", ip))
-	if switchTrack != nil {
-		if err := switchTrack(target, direction); err != nil {
-			rc.logger.Error("Remote control track switch failed",
-				slog.String("station", target), slog.String("error", err.Error()))
-			return
-		}
-	}
-	signal := remoteSignal(direction)
-	for _, ch := range channels {
-		select {
-		case ch <- signal:
-		default:
-		}
-	}
 }
 
 // release records that a connection resolved by resolve has ended.
@@ -272,37 +227,26 @@ func (rc *remoteControl) release(decision remoteDecision) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	// A connection of an older session (the station the listener left) must not touch the new one.
-	if sess := rc.sessions[decision.clientIP]; sess != nil && sess.gen == decision.gen {
+	if sess := rc.sessions[decision.clientKey]; sess != nil && sess.gen == decision.gen {
 		if sess.open > 0 {
 			sess.open--
 		}
-		delete(sess.signals, decision.connID)
 		sess.lastSeen = rc.now()
 	}
 }
 
 func (rc *remoteControl) pruneLocked(now time.Time) {
-	for ip, sess := range rc.sessions {
+	for key, sess := range rc.sessions {
 		if sess.open == 0 && now.Sub(sess.lastSeen) > remoteSessionTTL {
-			delete(rc.sessions, ip)
-		}
-	}
-	for ip, last := range rc.lastSwitch {
-		if now.Sub(last.at) > remoteSeriesWindow {
-			delete(rc.lastSwitch, ip)
+			delete(rc.sessions, key)
 		}
 	}
 }
 
-// remoteSignal returns the sound played after a button press switched the station.
-func remoteSignal(direction string) []byte {
-	switch direction {
-	case remoteDirectionNext:
-		return remoteNextSound
-	case remoteDirectionPrev:
-		return remotePrevSound
-	}
-	return nil
+// clientKey identifies a listener: its address and receiver model, so that a phone behind the
+// same router as the receiver has a session of its own.
+func clientKey(r *http.Request) string {
+	return clientIP(r) + "|" + r.UserAgent()
 }
 
 // clientIP returns the client address without the port.
@@ -323,22 +267,18 @@ func (s *Server) SetRemoteControlRoutes(nextRoute, prevRoute string) {
 		slog.String("prev", normalizeRoute(prevRoute)))
 }
 
-// SetRemoteControlTiming sets how long a listener must stay on a button for it to act (the
-// first time and again in a series) and how long on a station for it to count as listened.
-// Zero keeps the default.
-func (s *Server) SetRemoteControlTiming(hold, seriesHold, minListen time.Duration) {
+// SetRemoteControlTiming sets the gap after which a new connection to the same button is a
+// repeated press (sooner — a duplicate) and how long a client must stay on a station for it
+// to count as listened. Zero keeps the default.
+func (s *Server) SetRemoteControlTiming(repeatGap, minListen time.Duration) {
 	s.remote.mu.Lock()
 	defer s.remote.mu.Unlock()
-	if hold <= 0 {
-		hold = remoteHoldDefault
-	}
-	if seriesHold <= 0 {
-		seriesHold = remoteSeriesHold
+	if repeatGap <= 0 {
+		repeatGap = remoteRepeatGapDefault
 	}
 	if minListen <= 0 {
 		minListen = remoteMinListenDefault
 	}
-	s.remote.hold = hold
-	s.remote.seriesHold = seriesHold
+	s.remote.repeatGap = repeatGap
 	s.remote.minListen = minListen
 }
