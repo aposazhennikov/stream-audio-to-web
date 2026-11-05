@@ -29,6 +29,7 @@ services:
       - /home/monosov10:/app/monosov10
       - /home/monosov11:/app/monosov11
       - ./relay_data:/app/relay_data:rw
+      - ./state:/app/state:rw
       - ./telegram_alerts.json:/app/telegram_alerts.json:rw
     env_file:
       - .env
@@ -51,11 +52,13 @@ services:
       - TG_ALERT_TIMEZONE=${TG_ALERT_TIMEZONE:-Europe/Moscow}
       # Presets 1 and 2 of the receiver: arriving on them only plays a short sound; pressing
       # the same preset again moves the station listened to one track forward / back.
-      # A new connection to the same preset sooner than REMOTE_REPEAT_GAP_SECONDS is a
-      # duplicate the receiver opens itself. An empty route makes it an ordinary station.
+      # A new connection to the same preset sooner than REMOTE_REPEAT_GAP_SECONDS is never
+      # a press. An empty route makes it an ordinary station. The sessions are kept in
+      # REMOTE_STATE_FILE, so a restart does not make a button lose its station.
       - REMOTE_NEXT_ROUTE=${REMOTE_NEXT_ROUTE-/shaov}
       - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
-      - REMOTE_REPEAT_GAP_SECONDS=${REMOTE_REPEAT_GAP_SECONDS:-8}
+      - REMOTE_REPEAT_GAP_SECONDS=${REMOTE_REPEAT_GAP_SECONDS:-3}
+      - REMOTE_STATE_FILE=/app/state/remote_sessions.json
       # A station counts as the one being listened to after this many seconds on it.
       - REMOTE_MIN_LISTEN_SECONDS=${REMOTE_MIN_LISTEN_SECONDS:-15}
     sysctls:

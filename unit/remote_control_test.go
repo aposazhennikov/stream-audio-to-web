@@ -242,11 +242,13 @@ func TestRemoteControlButtons(t *testing.T) {
 	assert.Equal(t, "02 second", currentTrackName(t, station))
 	phone.close()
 
-	// Turned on straight on the preset (nothing listened to recently): its own station plays,
-	// and pressing it again does not move anything either.
+	// Turned on straight on the preset (nothing listened to recently): its own station plays.
+	// Even after listening to it for a while, pressing it again does not switch the button's
+	// own station (a button station is never the one listened to).
 	server.SetRemoteControlRoutes("/rc-next", "/rc-prev") // forgets recent listening
 	own := listenRemote(t, ts.URL+"/rc-next")
 	eventually(func() bool { return own.lastTitle() == "next own" }, "own station title")
+	time.Sleep(remoteTestMinListen + 100*time.Millisecond)
 	own.close()
 	afterGap()
 	ownAgain := listenRemote(t, ts.URL+"/rc-next")

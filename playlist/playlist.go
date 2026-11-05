@@ -81,6 +81,13 @@ func NewPlaylist(directory string, onChange func(), shuffle bool, logger *slog.L
 		return nil, err
 	}
 	pl.watcher = watcher
+	// Without this the watcher watches nothing: new, removed and renamed files would only be
+	// picked up after a restart.
+	if addErr := watcher.Add(directory); addErr != nil {
+		pl.logger.Warn("Cannot watch playlist directory, changes need a restart",
+			slog.String("directory", directory), slog.String("error", addErr.Error()))
+		pl.sentryHelper.CaptureError(addErr, "playlist", "watcher_add")
+	}
 
 	// Load tracks from directory.
 	if err2 := pl.Reload(); err2 != nil {
