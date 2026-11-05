@@ -46,26 +46,38 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		// The URL may be a remote control button: then another station is streamed.
 		decision := s.remote.resolve(r, route, s.IsStreamRegistered)
 		defer s.remote.release(decision)
-		if decision.direction != "" {
-			s.logger.Info("Remote control button pressed, waiting for the hold time",
+		switch {
+		case decision.direction != "":
+			s.logger.Info("Remote control: button pressed again, switching station",
 				slog.String("button", route),
 				slog.String("direction", decision.direction),
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr),
 				slog.String("userAgent", r.UserAgent()))
-		} else if decision.target != route {
-			s.logger.Info("Remote control reconnect, continuing station",
+			if switchErr := s.SwitchTrack(decision.target, decision.direction); switchErr != nil {
+				s.logger.Error("Remote control track switch failed",
+					slog.String("station", decision.target),
+					slog.String("error", switchErr.Error()))
+			}
+		case decision.arrived:
+			s.logger.Info("Remote control: arrived on button, station keeps playing",
+				slog.String("button", route),
+				slog.String("station", decision.target),
+				slog.String("remoteAddr", r.RemoteAddr),
+				slog.String("userAgent", r.UserAgent()))
+		case decision.duplicate && decision.target != route:
+			s.logger.Info("Remote control: duplicate connection, not a press",
 				slog.String("button", route),
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr))
 		}
-		s.serveStream(w, r, decision.target, contentType, decision.signals)
+		s.serveStream(w, r, route, decision.target, contentType, decision.intro())
 	}
 }
 
-// serveStream streams the station route to the client. Sounds received from signals (the
-// remote control confirmation) are inserted into the audio when they arrive.
-func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, route, contentType string, signals <-chan []byte) {
+// serveStream streams the station to the client; requested is the URL the client asked for
+// (a button URL streams another station). intro, if any, is sent before the station audio.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, route, contentType string, intro []byte) {
 	// Verify stream exists.
 	stream, exists := s.getStream(route, w)
 	if !exists {
@@ -135,7 +147,24 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, route, cont
 			return trackTitleFromPath(trackPath)
 		})
 	}
-	s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done(), signals)
+	startedAt := time.Now()
+	// The intro goes out before the station audio queued for this client.
+	if len(intro) > 0 {
+		if _, writeErr := out.Write(intro); writeErr != nil {
+			return
+		}
+		flusher.Flush()
+	}
+	reason := s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done())
+	// Kept at info level: how long connections last and how they end tells a press from a
+	// reconnect on the receivers that use the remote control buttons.
+	s.logger.Info("Client connection ended",
+		slog.String("route", requested),
+		slog.String("station", route),
+		slog.String("reason", reason),
+		slog.Float64("seconds", time.Since(startedAt).Seconds()),
+		slog.String("remoteAddr", r.RemoteAddr),
+		slog.String("userAgent", r.UserAgent()))
 }
 
 // determineContentType sets the appropriate MIME type for audio streaming.
@@ -221,6 +250,7 @@ func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr, 
 
 // streamDataToClient manages the streaming of audio data to a connected client.
 // out is where audio is written (w itself or a writer that adds ICY metadata).
+// Returns why the streaming ended.
 func (s *Server) streamDataToClient(
 	w http.ResponseWriter,
 	out io.Writer,
@@ -228,8 +258,7 @@ func (s *Server) streamDataToClient(
 	clientData *clientStreamData,
 	route string,
 	clientClosed <-chan struct{},
-	signals <-chan []byte, // sounds inserted into this client's audio; nil for none
-) {
+) string {
 	s.logger.Info("Starting data transmission", slog.Int("clientID", clientData.clientID), slog.String("route", route))
 
 	// Counter for tracking sent data.
@@ -251,8 +280,7 @@ func (s *Server) streamDataToClient(
 				slog.String("remoteAddr", clientData.remoteAddr),
 				slog.Int("clientID", clientData.clientID),
 				slog.Int64("totalBytesSent", totalBytesSent))
-			return
-		case data = <-signals:
+			return "client closed the connection"
 		case chunk, ok := <-clientData.clientCh:
 			if !ok {
 				// Channel closed.
@@ -260,7 +288,7 @@ func (s *Server) streamDataToClient(
 					slog.String("remoteAddr", clientData.remoteAddr),
 					slog.Int("clientID", clientData.clientID),
 					slog.Int64("totalBytesSent", totalBytesSent))
-				return
+				return "dropped by the station (client too slow or station stopped)"
 			}
 			data = chunk
 		}
@@ -271,7 +299,7 @@ func (s *Server) streamDataToClient(
 			s.logger.Debug("Failed to set write deadline", slog.String("error", deadlineErr.Error()))
 		}
 		if err := s.sendDataToClient(out, data, clientData, route, &totalBytesSent); err != nil {
-			return
+			return "write failed: " + err.Error()
 		}
 
 		// Update metrics and log periodically.

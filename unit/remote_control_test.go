@@ -20,31 +20,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// remoteSignalStart is how the remote control signals begin (MPEG-1 Layer III frame header).
+// remoteSoundStart is how the remote control sounds begin (MPEG-1 Layer III frame header).
 // The test audio files never contain these bytes.
-var remoteSignalStart = []byte{0xFF, 0xFB, 0x90, 0x64}
+var remoteSoundStart = []byte{0xFF, 0xFB, 0x90, 0x64}
 
 const (
-	remoteTestHold       = 800 * time.Millisecond
-	remoteTestSeriesHold = 100 * time.Millisecond
-	remoteTestMinListen  = 300 * time.Millisecond
-	remoteTestPass       = 50 * time.Millisecond // a preset passed while scrolling
+	remoteTestRepeatGap = 400 * time.Millisecond
+	remoteTestMinListen = 300 * time.Millisecond
+	remoteTestPass      = 50 * time.Millisecond // a preset passed while scrolling
+	remoteTestReceiver  = "TestReceiver/1.0"
 )
 
 // remoteListener is a receiver that asks for titles; it reads the stream in the background.
 type remoteListener struct {
-	mu     sync.Mutex
-	audio  []byte
-	titles []string
-	body   io.Closer
-	done   chan struct{}
+	mu        sync.Mutex
+	audio     []byte
+	titles    []string
+	body      io.Closer
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func listenRemote(t *testing.T, url string) *remoteListener {
 	t.Helper()
+	return listenRemoteAs(t, url, remoteTestReceiver)
+}
+
+func listenRemoteAs(t *testing.T, url, userAgent string) *remoteListener {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 	req.Header.Set("Icy-MetaData", "1")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -52,6 +59,8 @@ func listenRemote(t *testing.T, url string) *remoteListener {
 	require.NoError(t, err)
 
 	l := &remoteListener{body: resp.Body, done: make(chan struct{})}
+	// A failed assertion must not leave the connection open: the test server would wait for it forever.
+	t.Cleanup(l.close)
 	go func() {
 		defer close(l.done)
 		reader := bufio.NewReader(resp.Body)
@@ -80,7 +89,7 @@ func listenRemote(t *testing.T, url string) *remoteListener {
 	return l
 }
 
-// pass opens a preset for a moment, as when scrolling through the presets.
+// passRemote opens a preset for a moment, as when scrolling through the presets.
 func passRemote(t *testing.T, url string) {
 	t.Helper()
 	l := listenRemote(t, url)
@@ -89,15 +98,17 @@ func passRemote(t *testing.T, url string) {
 }
 
 func (l *remoteListener) close() {
-	l.body.Close()
-	<-l.done
+	l.closeOnce.Do(func() {
+		l.body.Close()
+		<-l.done
+	})
 }
 
-// heardSignal reports whether a remote control signal was received.
-func (l *remoteListener) heardSignal() bool {
+// heardSound reports whether a remote control sound (button ticks or switch beeps) was received.
+func (l *remoteListener) heardSound() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return bytes.Contains(l.audio, remoteSignalStart)
+	return bytes.Contains(l.audio, remoteSoundStart)
 }
 
 func (l *remoteListener) lastTitle() string {
@@ -117,10 +128,11 @@ func currentTrackName(t *testing.T, pl *playlist.Playlist) string {
 	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
-// TestRemoteControlButtons: staying on a button URL moves the station the listener was
-// listening to (not the ones passed on the way) and keeps playing it; passing the buttons
-// while scrolling, reconnects and duplicate connections do not move it; a receiver turned on
-// straight on a button gets the button's own station.
+// TestRemoteControlButtons: arriving on a button only introduces it, however long the
+// listener stays; pressing the same preset again moves the station listened to (not the ones
+// passed on the way); duplicate connections do not; the other button undoes it the same way;
+// another device behind the same address has its own session; a receiver turned on straight
+// on a button gets the button's own station.
 func TestRemoteControlButtons(t *testing.T) {
 	logger := slog.Default()
 	stations := radio.NewRadioStationManager(logger, createTestSentryHelper())
@@ -128,8 +140,8 @@ func TestRemoteControlButtons(t *testing.T) {
 	server := getTestServer()
 	server.SetStationManager(stations)
 	server.SetRemoteControlRoutes("/rc-next", "/rc-prev")
-	server.SetRemoteControlTiming(remoteTestHold, remoteTestSeriesHold, remoteTestMinListen)
-	defer server.SetRemoteControlTiming(0, 0, 0)
+	server.SetRemoteControlTiming(remoteTestRepeatGap, remoteTestMinListen)
+	defer server.SetRemoteControlTiming(0, 0)
 	defer server.SetRemoteControlRoutes("", "")
 
 	// The station the listener uses, another one passed while scrolling, and the two
@@ -159,95 +171,87 @@ func TestRemoteControlButtons(t *testing.T) {
 	defer ts.Close()
 	time.Sleep(300 * time.Millisecond)
 	station := playlists["/rc-station"]
-	afterHold := func() { time.Sleep(remoteTestHold + 400*time.Millisecond) }
 	eventually := func(cond func() bool, msg string) {
 		t.Helper()
 		require.Eventually(t, cond, 3*time.Second, 20*time.Millisecond, msg)
 	}
+	afterGap := func() { time.Sleep(remoteTestRepeatGap + 100*time.Millisecond) }
 
 	// The receiver plays its station long enough for it to count as listened.
 	listening := listenRemote(t, ts.URL+"/rc-station")
 	eventually(func() bool { return listening.lastTitle() == "01 first" }, "station title")
+	assert.False(t, listening.heardSound(), "an ordinary station has no sound inserted")
 	time.Sleep(remoteTestMinListen + 100*time.Millisecond)
 
-	// A HEAD request (some receivers probe first) is not a press.
+	// A HEAD request (some receivers probe first) does nothing.
 	head, err := http.Head(ts.URL + "/rc-next")
 	require.NoError(t, err)
 	head.Body.Close()
 
-	// Scrolling through the presets: passing both buttons quickly moves nothing.
-	listening.close()
-	passRemote(t, ts.URL+"/rc-next")
-	passRemote(t, ts.URL+"/rc-prev")
-	listening = listenRemote(t, ts.URL+"/rc-station")
-	afterHold()
-	assert.Equal(t, "01 first", currentTrackName(t, station), "scrolling past the buttons must not switch")
-	assert.False(t, listening.heardSignal())
-
-	// Scrolling to the "next" button past another station and staying there: the station
-	// the listener was listening to keeps playing, then moves forward with a signal.
+	// Scrolling past another station to the "next" button and staying there to listen: the
+	// button introduces itself, the station listened to keeps playing and does not move.
 	listening.close()
 	passRemote(t, ts.URL+"/rc-other")
-	pressed := listenRemote(t, ts.URL+"/rc-next")
-	eventually(func() bool { return pressed.lastTitle() == "01 first" },
-		"until the hold time the listener hears the station it was listening to")
-	assert.Equal(t, "01 first", currentTrackName(t, station))
-	eventually(pressed.heardSignal, "signal after the hold time")
-	assert.Equal(t, "02 second", currentTrackName(t, station))
+	arrived := listenRemote(t, ts.URL+"/rc-next")
+	duplicate := listenRemote(t, ts.URL+"/rc-next") // the receiver's duplicate for the same arrival
+	eventually(arrived.heardSound, "the button introduces itself with a sound")
+	eventually(func() bool { return arrived.lastTitle() == "01 first" }, "the listened station keeps playing on the button")
+	time.Sleep(3 * remoteTestRepeatGap) // stays on the button much longer than any gap
+	assert.Equal(t, "01 first", currentTrackName(t, station), "staying on a button must not switch")
 	assert.Equal(t, "other 1", currentTrackName(t, playlists["/rc-other"]), "a passed station must not move")
-	eventually(func() bool { return pressed.lastTitle() == "02 second" }, "new track title")
-
-	// A duplicate connection while the first is open is not a second press.
-	duplicate := listenRemote(t, ts.URL+"/rc-next")
-	afterHold()
-	assert.Equal(t, "02 second", currentTrackName(t, station))
-	assert.False(t, duplicate.heardSignal())
-	assert.Equal(t, "02 second", duplicate.lastTitle())
+	assert.False(t, duplicate.heardSound(), "a duplicate connection is not introduced again")
 	duplicate.close()
+	arrived.close()
+
+	// Pressing the same preset again: the station moves forward with a signal. The receiver
+	// opens a duplicate connection for the same press right away; it does not switch again.
+	pressed := listenRemote(t, ts.URL+"/rc-next")
+	pressedDuplicate := listenRemote(t, ts.URL+"/rc-next")
+	eventually(pressed.heardSound, "signal after the press")
+	assert.Equal(t, "02 second", currentTrackName(t, station))
+	eventually(func() bool { return pressed.lastTitle() == "02 second" }, "new track title")
+	afterGap()
+	assert.Equal(t, "02 second", currentTrackName(t, station))
+	pressedDuplicate.close()
 	pressed.close()
 
-	// A reconnect after a dropped connection is not a press either.
-	reconnect := listenRemote(t, ts.URL+"/rc-next")
-	afterHold()
-	assert.Equal(t, "02 second", currentTrackName(t, station))
-	assert.False(t, reconnect.heardSignal())
-	assert.Equal(t, "02 second", reconnect.lastTitle())
-	reconnect.close()
-
-	// Staying on "previous" right after: the station goes back.
-	back := listenRemote(t, ts.URL+"/rc-prev")
-	eventually(back.heardSignal, "signal on previous")
-	assert.Equal(t, "01 first", currentTrackName(t, station))
-	eventually(func() bool { return back.lastTitle() == "01 first" }, "previous track title")
-	back.close()
-
-	// "Next" twice: step to the neighbouring preset and back. The repeat right after a
-	// switch acts after the short series hold.
+	// And again: one more record.
 	again := listenRemote(t, ts.URL+"/rc-next")
-	eventually(again.heardSignal, "first next")
-	again.close()
-	assert.Equal(t, "02 second", currentTrackName(t, station))
-	passRemote(t, ts.URL+"/rc-prev")
-	again = listenRemote(t, ts.URL+"/rc-next")
-	require.Eventually(t, again.heardSignal, remoteTestHold/2, 10*time.Millisecond,
-		"a repeated press in a series must act sooner than the full hold")
+	eventually(again.heardSound, "signal after the second press")
 	assert.Equal(t, "03 third", currentTrackName(t, station))
 	again.close()
 
-	// Leaving the buttons by scrolling past the other one: it keeps the full hold, so a
-	// moment longer than the series hold on it does not switch back.
-	leaving := listenRemote(t, ts.URL+"/rc-prev")
-	time.Sleep(3 * remoteTestSeriesHold)
-	leaving.close()
-	afterHold()
-	assert.Equal(t, "03 third", currentTrackName(t, station), "the other button must not use the series hold")
+	// Undo with the other button: arriving introduces it, pressing it again goes back.
+	undoArrive := listenRemote(t, ts.URL+"/rc-prev")
+	eventually(undoArrive.heardSound, "the other button introduces itself")
+	afterGap()
+	assert.Equal(t, "03 third", currentTrackName(t, station), "arriving on the other button must not switch")
+	undoArrive.close()
+	undo := listenRemote(t, ts.URL+"/rc-prev")
+	eventually(undo.heardSound, "signal after the undo press")
+	assert.Equal(t, "02 second", currentTrackName(t, station))
+	eventually(func() bool { return undo.lastTitle() == "02 second" }, "previous track title")
+	undo.close()
 
-	// Turned on straight on the preset (nothing listened to recently): its own station plays.
+	// Another device behind the same address (a phone at home) has a session of its own:
+	// it never listened to anything, so the preset plays its own station and moves nothing.
+	phone := listenRemoteAs(t, ts.URL+"/rc-next", "SomePhone/2.0")
+	eventually(func() bool { return phone.lastTitle() == "next own" }, "own station for another device")
+	afterGap()
+	assert.False(t, phone.heardSound())
+	assert.Equal(t, "02 second", currentTrackName(t, station))
+	phone.close()
+
+	// Turned on straight on the preset (nothing listened to recently): its own station plays,
+	// and pressing it again does not move anything either.
 	server.SetRemoteControlRoutes("/rc-next", "/rc-prev") // forgets recent listening
 	own := listenRemote(t, ts.URL+"/rc-next")
 	eventually(func() bool { return own.lastTitle() == "next own" }, "own station title")
-	afterHold()
-	assert.False(t, own.heardSignal())
-	assert.Equal(t, "03 third", currentTrackName(t, station))
 	own.close()
+	afterGap()
+	ownAgain := listenRemote(t, ts.URL+"/rc-next")
+	eventually(func() bool { return ownAgain.lastTitle() == "next own" }, "own station again")
+	assert.False(t, ownAgain.heardSound())
+	assert.Equal(t, "02 second", currentTrackName(t, station))
+	ownAgain.close()
 }

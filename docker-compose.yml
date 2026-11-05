@@ -49,12 +49,13 @@ services:
       - TG_ALERT=${TG_ALERT:-true}
       - TG_ALERT_CONFIG_FILE=${TG_ALERT_CONFIG_FILE:-/app/telegram_alerts.json}
       - TG_ALERT_TIMEZONE=${TG_ALERT_TIMEZONE:-Europe/Moscow}
-      # Presets 1 and 2 of the receiver: staying on them for REMOTE_HOLD_SECONDS right after
-      # another station moves that station one track forward / back (passing them while
-      # scrolling through the presets does nothing). An empty route makes it an ordinary station.
+      # Presets 1 and 2 of the receiver: arriving on them only plays a short sound; pressing
+      # the same preset again moves the station listened to one track forward / back.
+      # A new connection to the same preset sooner than REMOTE_REPEAT_GAP_SECONDS is a
+      # duplicate the receiver opens itself. An empty route makes it an ordinary station.
       - REMOTE_NEXT_ROUTE=${REMOTE_NEXT_ROUTE-/shaov}
       - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
-      - REMOTE_HOLD_SECONDS=${REMOTE_HOLD_SECONDS:-6}
+      - REMOTE_REPEAT_GAP_SECONDS=${REMOTE_REPEAT_GAP_SECONDS:-8}
       # A station counts as the one being listened to after this many seconds on it.
       - REMOTE_MIN_LISTEN_SECONDS=${REMOTE_MIN_LISTEN_SECONDS:-15}
     sysctls:
