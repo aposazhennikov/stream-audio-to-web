@@ -324,10 +324,10 @@ func (a *Announcer) preparePass(ctx context.Context, tracks func() map[string][]
 		}
 		if _, err := a.prepare(ctx, p); err != nil {
 			a.cfg.Logger.Warn("Cannot prepare announcement clip", slog.String("text", p), slog.String("error", err.Error()))
-			select { // the speech service may be starting; try again later
+			select { // the speech service may be starting; try again shortly
 			case <-ctx.Done():
 				return made
-			case <-time.After(30 * time.Second):
+			case <-time.After(5 * time.Second):
 			}
 			continue
 		}

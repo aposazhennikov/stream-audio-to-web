@@ -97,7 +97,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
+          # Synthesis uses several threads; the audio server needs little CPU.
+          cpus: '2'
           memory: 512M
     restart: unless-stopped
     logging:
