@@ -15,6 +15,7 @@ import (
 
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
+	"github.com/aposazhennikov/stream-audio-to-web/positions"
 	"github.com/aposazhennikov/stream-audio-to-web/radio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
@@ -98,10 +99,13 @@ func main() {
 
 	// Log application configuration.
 	logConfiguration(logger, config)
+	config.Positions = positions.Load(os.Getenv("STATION_POSITIONS_FILE"), logger)
 
 	// Create and initialize components.
 	logger.Info("STEP 1: Starting component initialization...")
 	server, stationManager, relayManager, _ := initializeComponents(logger, config)
+	server.SetPositionStore(config.Positions)
+	setupAnnouncer(logger, config, server)
 	logger.Info("STEP 2: Component initialization completed")
 
 	// Create and start HTTP server.

@@ -41,6 +41,8 @@ func (s *Server) trackCurrentTrack(route string, trackCh <-chan string) {
 		s.trackMutex.Lock()
 		s.currentTracks[route] = fileName
 		s.trackMutex.Unlock()
+
+		s.savePosition(route, fileName)
 	}
 }
 

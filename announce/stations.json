@@ -1,0 +1,20 @@
+{
+ "/shaov": {"preset": 1, "name": "Шаов"},
+ "/troshin": {"preset": 2, "name": "Трошин"},
+ "/science": {"preset": 3, "name": "Наука"},
+ "/politics": {"preset": 4, "name": "Политика"},
+ "/humor": {"preset": 6, "name": "Юмор, Лесоповал"},
+ "/nature": {"preset": 11, "name": "Инитакса"},
+ "/monosov": {"preset": 15, "name": "Третий глаз, две тысячи двадцать три"},
+ "/monosov11": {"preset": 20, "name": "Аудиокниги, Мастер магии"},
+ "/monosov1": {"preset": 24, "name": "Ментальные профили"},
+ "/monosov2": {"preset": 25, "name": "Формирование магического сознания"},
+ "/monosov3": {"preset": 26, "name": "Египетская магия, Мир духов"},
+ "/monosov4": {"preset": 27, "name": "Патрон, Высший учитель"},
+ "/monosov5": {"preset": 29, "name": "Психокинетика"},
+ "/monosov6": {"preset": 30, "name": "Личная сила, верхнее подключение"},
+ "/monosov7": {"preset": 31, "name": "Боевая магия"},
+ "/monosov8": {"preset": 32, "name": "Целительство"},
+ "/monosov9": {"preset": 33, "name": "Личная сила, Личное могущество"},
+ "/monosov10": {"preset": 34, "name": "Фиксация на четыре один"}
+}

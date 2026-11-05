@@ -388,6 +388,19 @@ func createPlaylistOrNil(logger *slog.Logger, dir, route string, config *Config)
 		return nil
 	}
 	logger.Debug("Playlist for route successfully created", slog.String("route", route))
+
+	if config.NewestFirst[route] {
+		pl.SetNewestFirst(true)
+		logger.Info("Playlist ordered newest first", slog.String("route", route))
+	}
+	// After a restart the station continues from the track it was playing.
+	if saved := config.Positions.Track(route); saved != "" {
+		if pl.SetCurrentTrackByName(saved) {
+			logger.Info("Station continues from the saved track", slog.String("route", route), slog.String("track", saved))
+		} else {
+			logger.Info("Saved track is gone, station starts from the beginning", slog.String("route", route), slog.String("track", saved))
+		}
+	}
 	return pl
 }
 

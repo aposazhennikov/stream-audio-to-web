@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aposazhennikov/stream-audio-to-web/positions"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 )
 
@@ -41,6 +42,8 @@ type Config struct {
 	BufferSize             int
 	Shuffle                bool                       // Global shuffle tracks setting
 	PerStreamShuffle       map[string]bool            // Per-stream shuffle configuration
+	NewestFirst            map[string]bool            // Routes whose playlist is ordered by file date, newest first
+	Positions              *positions.Store           // Current track of every station, kept across restarts
 	NormalizeVolume        bool                       // Global volume normalization setting
 	NormalizeRuntime       string                     // Runtime normalization mode: "auto", "on", "off"
 	NormalizeSampleWindows int                        // Number of analysis windows for normalization
@@ -102,6 +105,7 @@ func parseCommandLineFlags() *Config {
 		BufferSize:             *bufferSize,
 		Shuffle:                *shuffle,
 		PerStreamShuffle:       make(map[string]bool),
+		NewestFirst:            make(map[string]bool),
 		NormalizeVolume:        *normalizeVolume,
 		NormalizeRuntime:       *normalizeRuntime,
 		NormalizeSampleWindows: *normalizeSampleWindows,
@@ -126,6 +130,16 @@ func loadConfigFromEnv(config *Config) {
 
 	// Load per-stream shuffle settings from environment.
 	loadShuffleSettingsFromEnv(config)
+
+	// Stations that get new files every day are played newest first.
+	for _, route := range strings.Split(os.Getenv("NEWEST_FIRST_ROUTES"), ",") {
+		if route = strings.TrimSpace(route); route != "" {
+			if !strings.HasPrefix(route, "/") {
+				route = "/" + route
+			}
+			config.NewestFirst[route] = true
+		}
+	}
 }
 
 // loadGenericConfig загружает общие параметры конфигурации из переменных окружения.

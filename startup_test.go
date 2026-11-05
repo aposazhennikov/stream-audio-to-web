@@ -1,18 +1,36 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	httpServer "github.com/aposazhennikov/stream-audio-to-web/http"
+	"github.com/aposazhennikov/stream-audio-to-web/positions"
 	"github.com/aposazhennikov/stream-audio-to-web/radio"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	"github.com/aposazhennikov/stream-audio-to-web/unit/testdata"
 )
+
+// The HTTP server registers global metrics, so a test binary can create it only once.
+var (
+	testServerOnce sync.Once
+	testServer     *httpServer.Server
+	testLogger     = slog.New(slog.NewTextHandler(io.Discard, nil))
+	testSentry     = sentryhelper.NewSentryHelper(false, testLogger)
+)
+
+func sharedTestServer() *httpServer.Server {
+	testServerOnce.Do(func() { testServer = httpServer.NewServer(10, testLogger, testSentry) })
+	return testServer
+}
 
 // writeFakeTool puts an executable shell script named name into dir.
 func writeFakeTool(t *testing.T, dir, name, body string) {
@@ -40,9 +58,8 @@ func TestStationStartsBeforeBitrateCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	sentry := sentryhelper.NewSentryHelper(false, logger)
-	server := httpServer.NewServer(10, logger, sentry)
+	logger, sentry := testLogger, testSentry
+	server := sharedTestServer()
 	stations := radio.NewRadioStationManager(logger, sentry)
 	defer stations.StopAll()
 	config := &Config{
@@ -78,5 +95,80 @@ func TestStationStartsBeforeBitrateCheck(t *testing.T) {
 	// Let the check release its slot before the temporary directories are removed.
 	for len(bitrateCheckSlots) > 0 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestStationContinuesFromSavedTrack: after a restart a station continues from the track it
+// was playing (saved in the positions file), not from the first one, and keeps saving.
+func TestStationContinuesFromSavedTrack(t *testing.T) {
+	tools := t.TempDir()
+	writeFakeTool(t, tools, "ffprobe", "echo 128000\n") // already 128 kbps: no conversion
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	audioDir := t.TempDir()
+	track := make([]byte, 160000) // ten seconds at 128 kbps
+	copy(track, testdata.GetMinimumMP3Data())
+	for _, name := range []string{"01 a.mp3", "02 b.mp3", "03 c.mp3"} {
+		if err := os.WriteFile(filepath.Join(audioDir, name), track, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stateFile := filepath.Join(t.TempDir(), "positions.json")
+	if err := os.WriteFile(stateFile, []byte(`{"/resume": "02 b.mp3"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := sharedTestServer()
+	store := positions.Load(stateFile, testLogger)
+	server.SetPositionStore(store)
+	defer server.SetPositionStore(nil)
+	stations := radio.NewRadioStationManager(testLogger, testSentry)
+	defer stations.StopAll()
+	server.SetStationManager(stations)
+	config := &Config{
+		Bitrate:          128,
+		MaxClients:       10,
+		BufferSize:       8192,
+		PerStreamShuffle: map[string]bool{},
+		NormalizeRuntime: "off",
+		SentryHelper:     testSentry,
+		Positions:        store,
+	}
+	if !configureSyncRoute(testLogger, server, stations, "/resume", audioDir, config) {
+		t.Fatal("route configuration failed")
+	}
+
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	var playing string
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(ts.URL + "/now-playing?route=/resume")
+		if err == nil {
+			var info struct {
+				Track string `json:"track"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&info)
+			resp.Body.Close()
+			if playing = info.Track; playing != "" {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if playing != "02 b.mp3" {
+		t.Fatalf("station plays %q after the restart, want the saved 02 b.mp3", playing)
+	}
+
+	// A manual switch is saved too.
+	if err := server.SwitchTrack("/resume", "next"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && positions.Load(stateFile, testLogger).Track("/resume") != "03 c.mp3" {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := positions.Load(stateFile, testLogger).Track("/resume"); got != "03 c.mp3" {
+		t.Fatalf("saved position after a switch = %q, want 03 c.mp3", got)
 	}
 }

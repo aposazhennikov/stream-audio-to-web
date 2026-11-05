@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/announce"
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
@@ -55,15 +56,54 @@ type Server struct {
 	relayManager        *relay.Manager                            // Manager for relay functionality.
 	globalShuffleConfig bool                                      // Global shuffle configuration.
 	// Prometheus metrics.
-	listenerCount                *prometheus.GaugeVec       // Gauge for tracking active listeners.
-	bytesSent                    *prometheus.CounterVec     // Counter for bytes sent.
-	trackSecondsTotal            *prometheus.CounterVec     // Counter for audio playback time.
-	logger                       *slog.Logger               // Logger for server operations.
-	sentryHelper                 *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry.
-	telegramManager              *telegram.Manager          // Manager for telegram alerts.
-	telegramFunctionalityEnabled bool                       // Whether telegram functionality is enabled via environment.
-	relayFunctionalityEnabled    bool                       // Whether relay functionality is enabled via environment.
-	remote                       *remoteControl             // Station URLs that work as next/previous buttons.
+	listenerCount                *prometheus.GaugeVec                   // Gauge for tracking active listeners.
+	bytesSent                    *prometheus.CounterVec                 // Counter for bytes sent.
+	trackSecondsTotal            *prometheus.CounterVec                 // Counter for audio playback time.
+	logger                       *slog.Logger                           // Logger for server operations.
+	sentryHelper                 *sentryhelper.SentryHelper             // Helper для безопасной работы с Sentry.
+	telegramManager              *telegram.Manager                      // Manager for telegram alerts.
+	telegramFunctionalityEnabled bool                                   // Whether telegram functionality is enabled via environment.
+	relayFunctionalityEnabled    bool                                   // Whether relay functionality is enabled via environment.
+	remote                       *remoteControl                         // Station URLs that work as next/previous buttons.
+	positions                    interface{ Save(route, track string) } // Remembers each station's track across restarts.
+	positionsMu                  sync.RWMutex
+	announcer                    *announce.Announcer // Spoken announcements for the listener's receiver.
+	switchedFrom                 map[string]string   // Track a station played before a button switched it (under trackMutex).
+}
+
+// announceTimeout limits how long a connection waits for its announcement to be put together.
+// Clips are prepared in advance; the limit matters only while the cache is being filled.
+const announceTimeout = 8 * time.Second
+
+// SetAnnouncer enables spoken announcements (nil disables them).
+func (s *Server) SetAnnouncer(a *announce.Announcer) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.announcer = a
+}
+
+// getAnnouncer returns the announcer, nil when announcements are off.
+func (s *Server) getAnnouncer() *announce.Announcer {
+	s.positionsMu.RLock()
+	defer s.positionsMu.RUnlock()
+	return s.announcer
+}
+
+// SetPositionStore sets where the current track of every station is remembered.
+func (s *Server) SetPositionStore(store interface{ Save(route, track string) }) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.positions = store
+}
+
+// savePosition remembers the track a station has started.
+func (s *Server) savePosition(route, track string) {
+	s.positionsMu.RLock()
+	store := s.positions
+	s.positionsMu.RUnlock()
+	if store != nil {
+		store.Save(route, track)
+	}
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"
@@ -133,6 +173,7 @@ func NewServer(maxClients int, logger *slog.Logger, sentryHelper *sentryhelper.S
 		trackSecondsTotal: trackSecondsTotal,
 		logger:            logger,
 		sentryHelper:      sentryHelper,
+		switchedFrom:      make(map[string]string),
 	}
 	remoteRepeatGap, _ := strconv.Atoi(os.Getenv("REMOTE_REPEAT_GAP_SECONDS"))
 	remoteMinListen, _ := strconv.Atoi(os.Getenv("REMOTE_MIN_LISTEN_SECONDS"))

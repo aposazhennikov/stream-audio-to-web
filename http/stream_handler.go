@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aposazhennikov/stream-audio-to-web/announce"
 )
 
 // clientClosedReason is how streamDataToClient reports that the client closed the connection.
@@ -56,6 +59,7 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr),
 				slog.String("userAgent", r.UserAgent()))
+			s.recordTrackBeforeSwitch(decision.target)
 			if switchErr := s.SwitchTrack(decision.target, decision.direction); switchErr != nil {
 				s.logger.Error("Remote control track switch failed",
 					slog.String("station", decision.target),
@@ -73,8 +77,77 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr))
 		}
-		closedByClient := s.serveStream(w, r, route, decision.target, contentType, decision.intro())
+		intro := decision.intro()
+		if announcer := s.getAnnouncer(); r.Method == http.MethodGet && announcer.Wants(r) {
+			intro = append(append([]byte{}, intro...), s.announcement(r, announcer, decision)...)
+		}
+		closedByClient := s.serveStream(w, r, route, decision.target, contentType, intro)
 		s.remote.release(decision, closedByClient)
+	}
+}
+
+// announcement returns the spoken announcement for this connection: the button on arrival,
+// the new record after a press, the station and its record on a new connection. Nothing for
+// duplicate connections and reconnects.
+func (s *Server) announcement(r *http.Request, announcer *announce.Announcer, decision remoteDecision) []byte {
+	ctx, cancel := context.WithTimeout(r.Context(), announceTimeout)
+	defer cancel()
+	switch {
+	case decision.direction != "":
+		trackPath, total := s.trackAfterSwitch(decision.target)
+		return announcer.ForSwitch(ctx, trackPath, total)
+	case decision.arrived:
+		return announcer.ForButton(ctx, decision.button == remoteDirectionNext, decision.target)
+	case decision.duplicate:
+		return nil
+	}
+	s.mutex.RLock()
+	stream, ok := s.streams[decision.target]
+	s.mutex.RUnlock()
+	if !ok {
+		return nil
+	}
+	trackPath, _, elapsed, total := stream.GetPlaybackInfo()
+	if trackPath == "" {
+		return nil
+	}
+	return announcer.ForStation(ctx, decision.target, trackPath, elapsed, total)
+}
+
+// recordTrackBeforeSwitch remembers the track a station plays before a button switches it,
+// so trackAfterSwitch can tell when the new one has started.
+func (s *Server) recordTrackBeforeSwitch(route string) {
+	s.mutex.RLock()
+	stream, ok := s.streams[route]
+	s.mutex.RUnlock()
+	if !ok {
+		return
+	}
+	trackPath, _, _, _ := stream.GetPlaybackInfo()
+	s.trackMutex.Lock()
+	s.switchedFrom[route] = trackPath
+	s.trackMutex.Unlock()
+}
+
+// trackAfterSwitch waits briefly for the station to start the track a switch moved it to and
+// returns that track and its length.
+func (s *Server) trackAfterSwitch(route string) (string, time.Duration) {
+	s.mutex.RLock()
+	stream, ok := s.streams[route]
+	s.mutex.RUnlock()
+	if !ok {
+		return "", 0
+	}
+	s.trackMutex.RLock()
+	before := s.switchedFrom[route]
+	s.trackMutex.RUnlock()
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for {
+		trackPath, _, _, total := stream.GetPlaybackInfo()
+		if (trackPath != before && trackPath != "") || time.Now().After(deadline) {
+			return trackPath, total
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -59,8 +59,17 @@ services:
       - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
       - REMOTE_REPEAT_GAP_SECONDS=${REMOTE_REPEAT_GAP_SECONDS:-3}
       - REMOTE_STATE_FILE=/app/state/remote_sessions.json
+      # The track every station is on, so that after the nightly restart it continues there.
+      - STATION_POSITIONS_FILE=/app/state/positions.json
+      # Stations that get new files every day are played newest first.
+      - NEWEST_FIRST_ROUTES=${NEWEST_FIRST_ROUTES-/politics,/science}
       # A station counts as the one being listened to after this many seconds on it.
       - REMOTE_MIN_LISTEN_SECONDS=${REMOTE_MIN_LISTEN_SECONDS:-15}
+      # Spoken announcements (station, record, minutes) for these receivers and for ?voice=1.
+      # An empty ANNOUNCE_TTS_URL turns them off.
+      - ANNOUNCE_TTS_URL=${ANNOUNCE_TTS_URL-http://tts:5002}
+      - ANNOUNCE_USER_AGENTS=${ANNOUNCE_USER_AGENTS:-WR-230SF}
+      - ANNOUNCE_CACHE_DIR=/app/state/voice
     sysctls:
       - net.ipv4.tcp_tw_reuse=1
     healthcheck:
@@ -80,3 +89,19 @@ services:
       driver: journald
       options:
         tag: audio-streamer
+
+  # Speech synthesis for the announcements (Piper, Russian voice); only the audio server uses it.
+  tts:
+    image: aposazhennikov/audio-streamer-tts:latest
+    container_name: audio-streamer-tts
+    deploy:
+      resources:
+        limits:
+          # Synthesis uses several threads; the audio server needs little CPU.
+          cpus: '2'
+          memory: 512M
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: audio-streamer-tts

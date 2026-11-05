@@ -45,7 +45,7 @@ jobs:
         run: go mod download
 
       - name: Run unit tests
-        run: go test -race -count=1 -timeout 15m . ./http/... ./unit/...
+        run: go test -race -count=1 -timeout 15m . ./http/... ./positions/... ./unit/...
 
   build-and-push:
     needs: unit-tests
@@ -86,6 +86,17 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer:buildcache,mode=max
 
+      - name: Build and push speech synthesis image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./tts
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer-tts:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer-tts:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer-tts:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audio-streamer-tts:buildcache,mode=max
+
   deploy:
     needs: build-and-push
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
@@ -97,6 +108,38 @@ jobs:
 
     steps:
       - name: Deploy to server
+        id: deploy_first
+        # The server sometimes drops SSH connections for a minute; the next step retries.
+        continue-on-error: true
+        uses: appleboy/ssh-action@master
+        env:
+          STATUS_PASSWORD: ${{ secrets.STATUS_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          timeout: 60s
+          command_timeout: 15m
+          envs: STATUS_PASSWORD,SENTRY_DSN,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
+          script: |
+            set -e
+            if [ ! -d /home/stream-audio-to-web/.git ]; then
+              git clone https://github.com/aposazhennikov/stream-audio-to-web.git /home/stream-audio-to-web
+            fi
+            cd /home/stream-audio-to-web
+            git fetch origin main
+            git checkout FETCH_HEAD -- scripts/deploy.sh
+            bash scripts/deploy.sh
+
+      - name: Wait before retrying the deploy
+        if: steps.deploy_first.outcome == 'failure'
+        run: sleep 60
+
+      - name: Deploy to server (retry)
+        if: steps.deploy_first.outcome == 'failure'
         uses: appleboy/ssh-action@master
         env:
           STATUS_PASSWORD: ${{ secrets.STATUS_PASSWORD }}
