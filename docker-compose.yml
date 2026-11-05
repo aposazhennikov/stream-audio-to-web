@@ -59,6 +59,10 @@ services:
       - REMOTE_PREV_ROUTE=${REMOTE_PREV_ROUTE-/troshin}
       - REMOTE_REPEAT_GAP_SECONDS=${REMOTE_REPEAT_GAP_SECONDS:-3}
       - REMOTE_STATE_FILE=/app/state/remote_sessions.json
+      # The track every station is on, so that after the nightly restart it continues there.
+      - STATION_POSITIONS_FILE=/app/state/positions.json
+      # Stations that get new files every day are played newest first.
+      - NEWEST_FIRST_ROUTES=${NEWEST_FIRST_ROUTES-/politics,/science}
       # A station counts as the one being listened to after this many seconds on it.
       - REMOTE_MIN_LISTEN_SECONDS=${REMOTE_MIN_LISTEN_SECONDS:-15}
     sysctls:

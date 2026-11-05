@@ -55,15 +55,34 @@ type Server struct {
 	relayManager        *relay.Manager                            // Manager for relay functionality.
 	globalShuffleConfig bool                                      // Global shuffle configuration.
 	// Prometheus metrics.
-	listenerCount                *prometheus.GaugeVec       // Gauge for tracking active listeners.
-	bytesSent                    *prometheus.CounterVec     // Counter for bytes sent.
-	trackSecondsTotal            *prometheus.CounterVec     // Counter for audio playback time.
-	logger                       *slog.Logger               // Logger for server operations.
-	sentryHelper                 *sentryhelper.SentryHelper // Helper для безопасной работы с Sentry.
-	telegramManager              *telegram.Manager          // Manager for telegram alerts.
-	telegramFunctionalityEnabled bool                       // Whether telegram functionality is enabled via environment.
-	relayFunctionalityEnabled    bool                       // Whether relay functionality is enabled via environment.
-	remote                       *remoteControl             // Station URLs that work as next/previous buttons.
+	listenerCount                *prometheus.GaugeVec                   // Gauge for tracking active listeners.
+	bytesSent                    *prometheus.CounterVec                 // Counter for bytes sent.
+	trackSecondsTotal            *prometheus.CounterVec                 // Counter for audio playback time.
+	logger                       *slog.Logger                           // Logger for server operations.
+	sentryHelper                 *sentryhelper.SentryHelper             // Helper для безопасной работы с Sentry.
+	telegramManager              *telegram.Manager                      // Manager for telegram alerts.
+	telegramFunctionalityEnabled bool                                   // Whether telegram functionality is enabled via environment.
+	relayFunctionalityEnabled    bool                                   // Whether relay functionality is enabled via environment.
+	remote                       *remoteControl                         // Station URLs that work as next/previous buttons.
+	positions                    interface{ Save(route, track string) } // Remembers each station's track across restarts.
+	positionsMu                  sync.RWMutex
+}
+
+// SetPositionStore sets where the current track of every station is remembered.
+func (s *Server) SetPositionStore(store interface{ Save(route, track string) }) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.positions = store
+}
+
+// savePosition remembers the track a station has started.
+func (s *Server) savePosition(route, track string) {
+	s.positionsMu.RLock()
+	store := s.positions
+	s.positionsMu.RUnlock()
+	if store != nil {
+		store.Save(route, track)
+	}
 }
 
 const xmlHTTPRequestHeader = "X-Requested-With"

@@ -42,6 +42,7 @@ type Playlist struct {
 	watcher      *fsnotify.Watcher
 	onChange     func()
 	shuffle      bool                       // Flag determining whether to shuffle tracks
+	newestFirst  bool                       // Order by file date, newest first (daily news)
 	history      []Track                    // History of played tracks
 	startTime    time.Time                  // Playlist start time
 	historyMutex sync.RWMutex               // Mutex for history
@@ -295,9 +296,12 @@ func (p *Playlist) updatePlaylistWithPath(tracks []Track, currentTrackPath strin
 	}
 
 	// Если включен режим перемешивания, перемешиваем треки.
-	if p.shuffle {
+	switch {
+	case p.shuffle:
 		p.shuffleTracks()
-	} else {
+	case p.newestFirst:
+		p.newestFirstSort()
+	default:
 		// Используем естественную сортировку для правильной обработки числовых имен файлов.
 		p.naturalSort()
 	}
@@ -735,6 +739,61 @@ func (p *Playlist) shuffleTracksInternal() {
 	p.logger.Info("Tracks shuffled internally",
 		slog.Int("trackCount", len(p.tracks)),
 		slog.Int("currentIndex", p.current))
+}
+
+// newestFirstSort orders tracks by file modification time, newest first; equal times by name.
+func (p *Playlist) newestFirstSort() {
+	modTime := func(t Track) time.Time {
+		if t.FileInfo == nil {
+			return time.Time{}
+		}
+		return t.FileInfo.ModTime()
+	}
+	sort.SliceStable(p.tracks, func(i, j int) bool {
+		ti, tj := modTime(p.tracks[i]), modTime(p.tracks[j])
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return naturalCompare(p.tracks[i].Name, p.tracks[j].Name)
+	})
+}
+
+// SetNewestFirst orders the playlist by file date, newest first (for stations that get new
+// files every day), keeping the current track.
+func (p *Playlist) SetNewestFirst(enabled bool) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if p.newestFirst == enabled {
+		return
+	}
+	p.newestFirst = enabled
+	if p.shuffle {
+		return
+	}
+	currentPath := ""
+	if p.current >= 0 && p.current < len(p.tracks) {
+		currentPath = p.tracks[p.current].Path
+	}
+	if enabled {
+		p.newestFirstSort()
+	} else {
+		p.naturalSort()
+	}
+	p.setCurrentTrackByPath(currentPath, 0)
+}
+
+// SetCurrentTrackByName makes the track with this file name current. Returns false if the
+// playlist has no such track (then the current track is unchanged).
+func (p *Playlist) SetCurrentTrackByName(name string) bool {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	for i, track := range p.tracks {
+		if track.Name == name {
+			p.current = i
+			return true
+		}
+	}
+	return false
 }
 
 // naturalSort выполняет естественную сортировку треков, учитывая числа в именах файлов.
