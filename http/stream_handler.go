@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// clientClosedReason is how streamDataToClient reports that the client closed the connection.
+const clientClosedReason = "client closed the connection"
+
 // isConnectionClosedError checks if error is result of client closing connection.
 func isConnectionClosedError(err error) bool {
 	if err == nil {
@@ -45,7 +48,6 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 
 		// The URL may be a remote control button: then another station is streamed.
 		decision := s.remote.resolve(r, route, s.IsStreamRegistered)
-		defer s.remote.release(decision)
 		switch {
 		case decision.direction != "":
 			s.logger.Info("Remote control: button pressed again, switching station",
@@ -71,17 +73,19 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr))
 		}
-		s.serveStream(w, r, route, decision.target, contentType, decision.intro())
+		closedByClient := s.serveStream(w, r, route, decision.target, contentType, decision.intro())
+		s.remote.release(decision, closedByClient)
 	}
 }
 
 // serveStream streams the station to the client; requested is the URL the client asked for
 // (a button URL streams another station). intro, if any, is sent before the station audio.
-func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, route, contentType string, intro []byte) {
+// Returns true if the client itself closed the connection.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, route, contentType string, intro []byte) bool {
 	// Verify stream exists.
 	stream, exists := s.getStream(route, w)
 	if !exists {
-		return
+		return false
 	}
 
 	// Set up appropriate headers for streaming.
@@ -107,7 +111,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 				slog.String("route", route),
 				slog.String("remoteAddr", r.RemoteAddr))
 			http.Error(w, "Stream not ready - files are being processed", http.StatusServiceUnavailable)
-			return
+			return false
 		}
 
 		s.logger.Debug("HEAD request - stream ready",
@@ -115,7 +119,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 			slog.String("remoteAddr", r.RemoteAddr),
 			slog.String("currentTrack", currentTrack))
 		w.WriteHeader(http.StatusOK)
-		return
+		return false
 	}
 
 	// Verify flushing capability.
@@ -125,7 +129,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 		s.logger.Error("ERROR: Streaming not supported")
 		s.sentryHelper.CaptureInfo(errorMsg, "http", "handler") // Save as this is an error
 		http.Error(w, errorMsg, http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	// Flush headers immediately - critical for streaming.
@@ -135,7 +139,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 	clientData, err := s.connectClientToStream(stream, route, r.RemoteAddr, r.UserAgent())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
+		return false
 	}
 	defer stream.RemoveClient(clientData.clientID)
 
@@ -151,7 +155,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 	// The intro goes out before the station audio queued for this client.
 	if len(intro) > 0 {
 		if _, writeErr := out.Write(intro); writeErr != nil {
-			return
+			return false
 		}
 		flusher.Flush()
 	}
@@ -165,6 +169,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 		slog.Float64("seconds", time.Since(startedAt).Seconds()),
 		slog.String("remoteAddr", r.RemoteAddr),
 		slog.String("userAgent", r.UserAgent()))
+	return reason == clientClosedReason
 }
 
 // determineContentType sets the appropriate MIME type for audio streaming.
@@ -280,7 +285,7 @@ func (s *Server) streamDataToClient(
 				slog.String("remoteAddr", clientData.remoteAddr),
 				slog.Int("clientID", clientData.clientID),
 				slog.Int64("totalBytesSent", totalBytesSent))
-			return "client closed the connection"
+			return clientClosedReason
 		case chunk, ok := <-clientData.clientCh:
 			if !ok {
 				// Channel closed.

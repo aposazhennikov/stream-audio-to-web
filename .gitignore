@@ -46,3 +46,5 @@ audio-streamer
 stream-audio-to-web
 telegram_alerts.json
 backups/
+state/
+naming-monosov.md
