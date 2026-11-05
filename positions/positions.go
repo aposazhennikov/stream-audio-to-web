@@ -54,6 +54,20 @@ func (s *Store) Track(route string) string {
 	return s.tracks[route]
 }
 
+// All returns a copy of the saved tracks: route -> track file name.
+func (s *Store) All() map[string]string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]string, len(s.tracks))
+	for route, track := range s.tracks {
+		out[route] = track
+	}
+	return out
+}
+
 // Save records that route now plays track (a file name) and writes the file.
 func (s *Store) Save(route, track string) {
 	if s == nil || s.path == "" || track == "" {

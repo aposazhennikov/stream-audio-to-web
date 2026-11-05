@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aposazhennikov/stream-audio-to-web/announce"
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
@@ -66,6 +67,26 @@ type Server struct {
 	remote                       *remoteControl                         // Station URLs that work as next/previous buttons.
 	positions                    interface{ Save(route, track string) } // Remembers each station's track across restarts.
 	positionsMu                  sync.RWMutex
+	announcer                    *announce.Announcer // Spoken announcements for the listener's receiver.
+	switchedFrom                 map[string]string   // Track a station played before a button switched it (under trackMutex).
+}
+
+// announceTimeout limits how long a connection waits for its announcement to be put together.
+// Clips are prepared in advance; the limit matters only while the cache is being filled.
+const announceTimeout = 8 * time.Second
+
+// SetAnnouncer enables spoken announcements (nil disables them).
+func (s *Server) SetAnnouncer(a *announce.Announcer) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.announcer = a
+}
+
+// getAnnouncer returns the announcer, nil when announcements are off.
+func (s *Server) getAnnouncer() *announce.Announcer {
+	s.positionsMu.RLock()
+	defer s.positionsMu.RUnlock()
+	return s.announcer
 }
 
 // SetPositionStore sets where the current track of every station is remembered.
@@ -152,6 +173,7 @@ func NewServer(maxClients int, logger *slog.Logger, sentryHelper *sentryhelper.S
 		trackSecondsTotal: trackSecondsTotal,
 		logger:            logger,
 		sentryHelper:      sentryHelper,
+		switchedFrom:      make(map[string]string),
 	}
 	remoteRepeatGap, _ := strconv.Atoi(os.Getenv("REMOTE_REPEAT_GAP_SECONDS"))
 	remoteMinListen, _ := strconv.Atoi(os.Getenv("REMOTE_MIN_LISTEN_SECONDS"))

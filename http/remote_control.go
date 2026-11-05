@@ -157,6 +157,7 @@ func normalizeRoute(route string) string {
 type remoteDecision struct {
 	target    string // station to stream
 	direction string // set when this request is a button press: switch the target this way
+	button    string // the requested URL is this button ("next" or "prev"), whatever the request does
 	arrived   bool   // the client has just come to a button: play the button sound
 	duplicate bool   // another connection of the same session (duplicate or reconnect)
 	clientKey string
@@ -206,6 +207,7 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 	listenedRecently := listened != "" && now.Sub(listenedLeft) <= remotePressWindow && hasStream(listened)
 
 	direction, isButton := rc.directions[route]
+	decision.button = direction
 	sameSession := sess != nil && sess.Via == route && (sess.Open > 0 || now.Sub(sess.LastSeen) <= remotePressWindow)
 	switch {
 	case isButton && listenedRecently && sameSession && sess.Route == listened:
@@ -220,7 +222,10 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 		decision.target = listened
 		decision.arrived = true
 	case sameSession && sess.Route == route:
-		decision.duplicate = true
+		// The same station pressed again (the client closed it itself just now): a request to
+		// hear what plays. Otherwise a duplicate connection or a reconnect after a drop.
+		closedJustNow := sess.Open == 0 && !sess.closedCleanAt.IsZero() && now.Sub(sess.closedCleanAt) <= remoteCleanCloseWindow
+		decision.duplicate = !closedJustNow
 	}
 
 	if sameSession && sess.Route == decision.target {
@@ -251,14 +256,13 @@ func (rc *remoteControl) resolve(r *http.Request, route string, hasStream func(s
 }
 
 // waitForPreviousClose waits up to remoteCloseWait while a connection of the same client to
-// the same button is still open: on a press the receiver has just closed it.
+// the same URL is still open: on a press the receiver has just closed it.
 func (rc *remoteControl) waitForPreviousClose(key, route string) {
 	deadline := time.Now().Add(remoteCloseWait)
 	for {
 		rc.mu.Lock()
-		_, isButton := rc.directions[route]
 		sess := rc.sessions[key]
-		stillOpen := isButton && sess != nil && sess.Via == route && sess.Open > 0
+		stillOpen := sess != nil && sess.Via == route && sess.Open > 0
 		rc.mu.Unlock()
 		if !stillOpen || time.Now().After(deadline) {
 			return

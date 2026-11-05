@@ -105,6 +105,7 @@ func main() {
 	logger.Info("STEP 1: Starting component initialization...")
 	server, stationManager, relayManager, _ := initializeComponents(logger, config)
 	server.SetPositionStore(config.Positions)
+	setupAnnouncer(logger, config, server)
 	logger.Info("STEP 2: Component initialization completed")
 
 	// Create and start HTTP server.
