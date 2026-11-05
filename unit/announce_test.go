@@ -113,8 +113,8 @@ func TestAnnouncements(t *testing.T) {
 	// The receiver connecting to the station: station, record, time.
 	got = voices(firstBytes(t, ts.URL+"/an-station", "WR-230SF/1.0", 4096))
 	require.GreaterOrEqual(t, len(got), 2, "station and record: %v", got)
-	assert.Equal(t, "Тридцать вторая. Целительство.", got[0])
-	assert.Equal(t, "Сейчас: две тысячи девятнадцать, Пси-заклинания один.", got[1])
+	assert.Equal(t, "Тридцать вторая станция. Целительство.", got[0])
+	assert.Equal(t, "Сейчас звучит: две тысячи девятнадцать, Пси-заклинания один.", got[1])
 	assert.True(t, len(got) == 2 || strings.HasPrefix(got[2], "Запись") || strings.HasPrefix(got[2], "Прошл"), "time: %v", got)
 
 	// Listen long enough for the station to count, then arrive on the "next" button.
@@ -131,5 +131,5 @@ func TestAnnouncements(t *testing.T) {
 	pressed := firstBytes(t, ts.URL+"/an-next", "WR-230SF/1.0", 32*1024)
 	got = voices(pressed)
 	require.NotEmpty(t, got, "the new record is announced after a press")
-	assert.Equal(t, "Сейчас: две тысячи девятнадцать, Пси-заклинания два.", got[0])
+	assert.Equal(t, "Сейчас звучит: две тысячи девятнадцать, Пси-заклинания два.", got[0])
 }

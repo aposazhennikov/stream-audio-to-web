@@ -236,7 +236,7 @@ func softenCaps(s string) string {
 	return strings.Join(words, " ")
 }
 
-// StationIntro: "Тридцать вторая. Целительство."
+// StationIntro: "Тридцать вторая станция. Целительство."
 func StationIntro(preset int, name string) string {
 	number := OrdinalFem(preset)
 	if number == "" {
@@ -244,16 +244,16 @@ func StationIntro(preset int, name string) string {
 	}
 	r := []rune(number)
 	r[0] = unicode.ToUpper(r[0])
-	return fmt.Sprintf("%s. %s.", string(r), name)
+	return fmt.Sprintf("%s станция. %s.", string(r), name)
 }
 
-// NowPlaying: "Сейчас: <title>."
+// NowPlaying: "Сейчас звучит: <title>."
 func NowPlaying(fileName string) string {
 	title := SpokenTitle(fileName)
 	if title == "" {
 		return ""
 	}
-	return "Сейчас: " + title + "."
+	return "Сейчас звучит: " + title + "."
 }
 
 // TimePhrase tells how much of the record has passed and how much is left:
