@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+{{template "head" .}}
+<body>
+    <header class="header">
+        <h1>Статистика слушателей</h1>
+        <nav class="stats-nav">
+            <a href="/status-page" class="nav-link">← Станции</a>
+            {{range .Months}}
+            <a href="/listening-stats?month={{.}}{{if $.ShowService}}&service=1{{end}}" class="nav-link month{{if eq . $.Month}} current{{end}}">{{.}}</a>
+            {{end}}
+            {{if .ShowService}}
+            <a href="/listening-stats?month={{.Month}}" class="nav-link">Скрыть служебные</a>
+            {{else}}
+            <a href="/listening-stats?month={{.Month}}&service=1" class="nav-link">Показать служебные</a>
+            {{end}}
+        </nav>
+        <div class="theme-toggle-wrapper">
+            <div class="theme-toggle" id="theme-toggle" title="Светлая или тёмная тема">
+                <div class="toggle-ball">
+                    <span class="icon sun-icon">☀️</span>
+                    <span class="icon moon-icon">🌙</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <p class="month-total">
+            {{.Month}}: слушателей {{len .Cards}}, всего прослушано {{.Total}}. Время московское.
+        </p>
+
+        {{if not .Cards}}
+        <div class="empty">За этот месяц записей нет. Учёт ведётся с момента выката этой версии.</div>
+        {{end}}
+
+        {{range .Cards}}
+        <section class="listener{{if .Service}} service{{end}}">
+            <div class="listener-head">
+                <div class="who">
+                    <div class="device">{{.Device}}{{if .Service}} <span class="tag">служебный</span>{{end}}</div>
+                    <div class="where">{{if .Place}}{{.Place}} · {{end}}<span class="ip">{{.IP}}</span></div>
+                </div>
+                <div class="total">
+                    <div class="total-time">{{.Total}}</div>
+                    <div class="total-sub">сеансов: {{.Count}}</div>
+                </div>
+            </div>
+            <div class="period">с {{.First}} по {{.Last}}</div>
+
+            <div class="stations">
+                {{range .Stations}}
+                <div class="station-row">
+                    <div class="station-name">{{.Title}}</div>
+                    <div class="bar"><span style="width: {{printf "%.1f" .Percent}}%"></span></div>
+                    <div class="station-time">{{.Duration}}</div>
+                </div>
+                {{end}}
+            </div>
+
+            <details>
+                <summary>Все сеансы</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Дата</th><th>Время</th><th>Станция</th><th>Длилось</th></tr></thead>
+                        <tbody>
+                            {{range .Sessions}}
+                            <tr>
+                                <td>{{.Date}}</td>
+                                <td class="nowrap">{{.Time}}</td>
+                                <td>{{.Station}}{{if .Via}} <span class="via">через кнопку {{.Via}}</span>{{end}}</td>
+                                <td class="nowrap">{{.Duration}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+        {{end}}
+
+        <p class="credit">Страна и город по IP: <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a> (CC BY 4.0).</p>
+    </main>
+
+    <style>
+        .header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1rem;
+            padding: 0.75rem 1.25rem;
+            background-color: var(--color-surface);
+            border-bottom: 1px solid var(--color-border);
+            margin-bottom: 1rem;
+        }
+        h1 {
+            color: var(--color-secondary);
+            font-size: 1.35rem;
+            margin: 0;
+        }
+        .stats-nav {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
+            flex: 1;
+            min-width: 0;
+        }
+        .header .theme-toggle-wrapper {
+            position: static;
+            margin-left: auto;
+        }
+        .nav-link {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.3rem 0.75rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--color-text);
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 999px;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .nav-link:hover {
+            color: var(--color-primary);
+            border-color: var(--color-primary);
+            background: var(--color-primary-light);
+        }
+        .nav-link.current {
+            color: #fff;
+            background: var(--color-primary);
+            border-color: var(--color-primary);
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 1.25rem 3rem;
+        }
+        .month-total, .credit, .empty {
+            color: var(--color-text-secondary);
+        }
+        .credit { font-size: 0.8rem; margin-top: 2rem; }
+        .credit a { color: inherit; }
+        .listener {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .listener.service { opacity: 0.75; }
+        .listener-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+        .who { min-width: 0; }
+        .device {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--color-secondary);
+        }
+        .where { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+        .ip { font-variant-numeric: tabular-nums; user-select: text; -webkit-user-select: text; }
+        .tag {
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: var(--color-surface-accent);
+            padding: 0.1rem 0.5rem;
+            border-radius: 1rem;
+        }
+        .total { text-align: right; flex-shrink: 0; }
+        .total-time { font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .total-sub, .period { color: var(--color-text-secondary); font-size: 0.85rem; }
+        .period { margin: 0.25rem 0 0.75rem; }
+        .station-row {
+            display: grid;
+            grid-template-columns: minmax(8rem, 16rem) 1fr auto;
+            gap: 0.75rem;
+            align-items: center;
+            margin: 0.3rem 0;
+        }
+        .station-name { overflow-wrap: anywhere; }
+        .bar {
+            height: 0.5rem;
+            background: var(--color-surface-accent);
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+        .bar span {
+            display: block;
+            height: 100%;
+            background: var(--color-primary);
+            border-radius: 1rem;
+        }
+        .station-time { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); white-space: nowrap; }
+        details { margin-top: 0.75rem; }
+        summary { cursor: pointer; color: var(--color-primary); }
+        .table-wrap { overflow-x: auto; margin-top: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td {
+            text-align: left;
+            padding: 0.35rem 0.5rem;
+            border-bottom: 1px solid var(--color-border);
+            vertical-align: top;
+        }
+        th { color: var(--color-text-secondary); font-weight: 500; }
+        .nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .via { color: var(--color-text-secondary); font-size: 0.8rem; }
+        @media (max-width: 600px) {
+            .stats-nav { order: 3; flex-basis: 100%; }
+            .station-row { grid-template-columns: 1fr auto; }
+            .station-row .bar { grid-column: 1 / -1; grid-row: 2; }
+        }
+    </style>
+    <script>
+        (function () {
+            const toggle = document.getElementById('theme-toggle');
+            if (toggle) {
+                toggle.addEventListener('click', function () {
+                    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    try { localStorage.setItem('theme', next); } catch (e) {}
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

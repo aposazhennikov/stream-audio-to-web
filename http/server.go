@@ -12,6 +12,7 @@ import (
 
 	"github.com/aposazhennikov/stream-audio-to-web/announce"
 	"github.com/aposazhennikov/stream-audio-to-web/audio"
+	"github.com/aposazhennikov/stream-audio-to-web/listeners"
 	"github.com/aposazhennikov/stream-audio-to-web/relay"
 	sentryhelper "github.com/aposazhennikov/stream-audio-to-web/sentry_helper"
 	"github.com/aposazhennikov/stream-audio-to-web/telegram"
@@ -67,8 +68,10 @@ type Server struct {
 	remote                       *remoteControl                         // Station URLs that work as next/previous buttons.
 	positions                    interface{ Save(route, track string) } // Remembers each station's track across restarts.
 	positionsMu                  sync.RWMutex
-	announcer                    *announce.Announcer // Spoken announcements for the listener's receiver.
-	switchedFrom                 map[string]string   // Track a station played before a button switched it (under trackMutex).
+	announcer                    *announce.Announcer         // Spoken announcements for the listener's receiver.
+	stationLabels                map[string]announce.Station // Preset number and name of each station on the receiver.
+	listeners                    *listeners.Tracker          // Who listens now and the monthly statistics.
+	switchedFrom                 map[string]string           // Track a station played before a button switched it (under trackMutex).
 }
 
 // announceTimeout limits how long a connection waits for its announcement to be put together.
@@ -80,6 +83,34 @@ func (s *Server) SetAnnouncer(a *announce.Announcer) {
 	s.positionsMu.Lock()
 	defer s.positionsMu.Unlock()
 	s.announcer = a
+}
+
+// SetStationLabels sets the preset number and name each station has on the listener's
+// receiver; the status page shows them.
+func (s *Server) SetStationLabels(labels map[string]announce.Station) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.stationLabels = labels
+}
+
+func (s *Server) stationLabel(route string) (announce.Station, bool) {
+	s.positionsMu.RLock()
+	defer s.positionsMu.RUnlock()
+	label, ok := s.stationLabels[route]
+	return label, ok
+}
+
+// SetListenerTracker sets where listening sessions are recorded.
+func (s *Server) SetListenerTracker(t *listeners.Tracker) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.listeners = t
+}
+
+func (s *Server) getListeners() *listeners.Tracker {
+	s.positionsMu.RLock()
+	defer s.positionsMu.RUnlock()
+	return s.listeners
 }
 
 // getAnnouncer returns the announcer, nil when announcements are off.
@@ -291,6 +322,8 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/status", s.statusLoginSubmitHandler).Methods("POST")
 	s.router.HandleFunc("/status-page", s.statusPageHandler).Methods("GET")
 	s.router.HandleFunc("/status-page/", s.statusPageHandler).Methods("GET")
+	s.router.HandleFunc("/api/listeners", s.liveListenersHandler).Methods("GET")
+	s.router.HandleFunc("/listening-stats", s.listeningStatsHandler).Methods("GET")
 
 	// Add handlers for track switching.
 	s.router.HandleFunc("/next-track/{route}", s.nextTrackHandler).Methods("POST")

@@ -1,81 +1,80 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 {{template "head" .}}
 <body>
     <header class="header">
+        <h1>Станции</h1>
+        <div class="server-info">
+            <span class="pill global-shuffle-info">
+                Перемешивание по умолчанию:
+                <span class="global-shuffle-status {{if .GlobalShuffle}}enabled{{else}}disabled{{end}}">{{if .GlobalShuffle}}вкл{{else}}выкл{{end}}</span>
+            </span>
+            {{if .RelayEnabled}}
+            <span class="relay-management-link">
+                {{if .RelayClickable}}
+                <a href="/relay-management" class="pill relay-link">
+                    Ретрансляция
+                    {{if .RelayActive}}<span class="relay-active-badge">работает</span>{{else}}<span class="relay-inactive-badge">выкл</span>{{end}}
+                </a>
+                {{else}}
+                <span class="pill relay-link disabled" title="Включается переменной RELAY=true">
+                    Ретрансляция <span class="relay-inactive-badge">выкл</span>
+                </span>
+                {{end}}
+            </span>
+            {{end}}
+            {{if .TelegramEnabled}}
+            <span class="telegram-alerts-link">
+                {{if .TelegramClickable}}
+                <a href="/telegram-alerts" class="pill telegram-link">
+                    Оповещения в Telegram
+                    {{if .TelegramActive}}<span class="telegram-active-badge">работают</span>{{else}}<span class="telegram-inactive-badge">выкл</span>{{end}}
+                </a>
+                {{else}}
+                <span class="pill telegram-link disabled" title="Включаются переменной TG_ALERT=true">
+                    Оповещения в Telegram <span class="telegram-inactive-badge">выкл</span>
+                </span>
+                {{end}}
+            </span>
+            {{end}}
+            <a href="/listening-stats" class="pill stats-link">Статистика слушателей</a>
+            <span class="version-info" title="Собрано {{.Version.BuildTime}}, работает с {{.Version.StartedAt}}">
+                версия {{if .Version.Commit}}<a href="https://github.com/aposazhennikov/stream-audio-to-web/commit/{{.Version.Commit}}" target="_blank" rel="noopener">{{.Version.Version}}</a>{{else}}{{.Version.Version}}{{end}}
+            </span>
+        </div>
         <div class="theme-toggle-wrapper">
-            <div class="theme-toggle" id="theme-toggle">
+            <div class="theme-toggle" id="theme-toggle" title="Светлая или тёмная тема">
                 <div class="toggle-ball">
                     <span class="icon sun-icon">☀️</span>
                     <span class="icon moon-icon">🌙</span>
                 </div>
             </div>
         </div>
-        <h1>Audio Streams Status</h1>
-        <div class="server-info">
-            <div class="global-shuffle-info">
-                <span class="shuffle-icon">🔀</span>
-                Global Shuffle: <span class="global-shuffle-status {{if .GlobalShuffle}}enabled{{else}}disabled{{end}}">
-                    {{if .GlobalShuffle}}Enabled{{else}}Disabled{{end}}
-                </span>
-            </div>
-            <div class="global-shuffle-info version-info" title="Built {{.Version.BuildTime}}, running since {{.Version.StartedAt}}">
-                <span class="shuffle-icon">🏷️</span>
-                Version:
-                {{if .Version.Commit}}<a href="https://github.com/aposazhennikov/stream-audio-to-web/commit/{{.Version.Commit}}" target="_blank" rel="noopener">{{.Version.Version}}</a>{{else}}{{.Version.Version}}{{end}}
-            </div>
-            {{if .RelayEnabled}}
-            <div class="relay-management-link">
-                {{if .RelayClickable}}
-                <a href="/relay-management" class="relay-link">
-                    <span class="relay-icon">🔄</span>
-                    Relay Management
-                    {{if .RelayActive}}<span class="relay-active-badge">Active</span>{{else}}<span class="relay-inactive-badge">Inactive</span>{{end}}
-                </a>
-                {{else}}
-                <span class="relay-link disabled" title="Set RELAY=true in environment variables to enable">
-                    <span class="relay-icon">🔄</span>
-                    Relay Management
-                    <span class="relay-inactive-badge">Inactive</span>
-                </span>
-                {{end}}
-            </div>
-            {{end}}
-            {{if .TelegramEnabled}}
-            <div class="telegram-alerts-link">
-                {{if .TelegramClickable}}
-                <a href="/telegram-alerts" class="telegram-link">
-                    <span class="telegram-icon">📱</span>
-                    Telegram Alerts
-                    {{if .TelegramActive}}<span class="telegram-active-badge">Active</span>{{else}}<span class="telegram-inactive-badge">Inactive</span>{{end}}
-                </a>
-                {{else}}
-                <span class="telegram-link disabled" title="Set TG_ALERT=true in environment variables to enable">
-                    <span class="telegram-icon">📱</span>
-                    Telegram Alerts
-                    <span class="telegram-inactive-badge">Inactive</span>
-                </span>
-                {{end}}
-            </div>
-            {{end}}
-        </div>
     </header>
+
+    <nav class="jump" aria-label="Переход к станции по номеру кнопки">
+        {{range .Streams}}{{if .Preset}}<a href="#st-{{.RouteID}}" title="{{.StationName}}">{{.Preset}}</a>{{end}}{{end}}
+    </nav>
+
     <div class="container">
         {{range .Streams}}
-        <div class="stream-container">
+        <div class="stream-container" id="st-{{.RouteID}}">
             <div class="stream-header">
-                <a href="{{.Route}}" target="_blank">{{.DisplayName}}</a>
+                <a href="{{.Route}}" target="_blank" class="stream-title">
+                    {{if .Preset}}<span class="preset-badge" title="Кнопка на приёмнике дедушки">{{.Preset}}</span>{{end}}
+                    <span class="stream-name">{{if .StationName}}{{.StationName}}{{else}}{{.DisplayName}}{{end}}</span>
+                    {{if .StationName}}<span class="stream-route">{{.DisplayName}}</span>{{end}}
+                </a>
                 <span class="stream-status-indicator checking" id="stream-status-{{.RouteID}}">
                     <span class="status-dot"></span>
-                    <span class="status-text">Checking...</span>
+                    <span class="status-text">Проверка…</span>
                 </span>
             </div>
-            <div class="status-info start-time">Started: {{.StartTime}}</div>
             <div class="status-info current-track">
                 <div class="track-info-container">
                     <div class="track-name-container">
                         <span class="track-name">{{.CurrentTrack}}</span>
-                        <button class="copy-button" data-track="{{.CurrentTrack}}">
+                        <button class="copy-button" data-track="{{.CurrentTrack}}" title="Скопировать название">
                             <span class="copy-icon">📋</span>
                             <span class="copy-feedback"></span>
                         </button>
@@ -85,30 +84,39 @@
                     </div>
                 </div>
             </div>
-            <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
-            <div class="status-info shuffle-info">
-                Shuffle: <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">
-                    {{if .ShuffleEnabled}}Enabled{{else}}Disabled{{end}}
+            <div class="meta">
+                <span class="status-info listeners">Слушают:
+                    <span class="listeners-wrap" tabindex="0" data-route="{{.Route}}" title="Кто слушает">
+                        <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span>
+                        <span class="listeners-pop" role="tooltip"></span>
+                    </span>
                 </span>
+                <span class="status-info shuffle-info">Перемешивание:
+                    <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">{{if .ShuffleEnabled}}вкл{{else}}выкл{{end}}</span>
+                </span>
+                <span class="status-info start-time">Запущена в {{.StartTime}}</span>
             </div>
             <div class="button-group">
                 <form method="post" action="/prev-track/{{.RouteID}}">
-                    <button type="submit" class="prev-track">Previous track</button>
+                    <button type="submit" class="prev-track">Назад</button>
                 </form>
                 <form method="post" action="/next-track/{{.RouteID}}">
-                    <button type="submit" class="next-track">Next track</button>
+                    <button type="submit" class="next-track">Вперёд</button>
                 </form>
                 <form method="post" action="/shuffle-playlist/{{.RouteID}}">
-                    <button type="submit" class="shuffle-playlist">Shuffle now</button>
+                    <button type="submit" class="shuffle-playlist">Перемешать</button>
                 </form>
-                <form method="post" action="/set-shuffle/{{.RouteID}}/on">
-                    <button type="submit" class="enable-shuffle">Enable Shuffle</button>
-                </form>
+                {{if .ShuffleEnabled}}
                 <form method="post" action="/set-shuffle/{{.RouteID}}/off">
-                    <button type="submit" class="disable-shuffle">Disable Shuffle</button>
+                    <button type="submit" class="disable-shuffle">Играть по порядку</button>
                 </form>
-                <button data-action="toggle-history" data-route-id="{{.RouteID}}" class="show-history">Show track history</button>
-                <button data-action="clear-history" data-route-id="{{.RouteID}}" data-route="{{.Route}}" class="clear-history">Clear history</button>
+                {{else}}
+                <form method="post" action="/set-shuffle/{{.RouteID}}/on">
+                    <button type="submit" class="enable-shuffle">Перемешивать всегда</button>
+                </form>
+                {{end}}
+                <button data-action="toggle-history" data-route-id="{{.RouteID}}" class="show-history">История</button>
+                <button data-action="clear-history" data-route-id="{{.RouteID}}" data-route="{{.Route}}" class="clear-history">Очистить историю</button>
             </div>
             <div id="track-list-{{.RouteID}}" class="track-list">
                 {{.HistoryHTML}}
@@ -119,740 +127,785 @@
 
     {{block "additional_styles" .}}
     <style>
-        /* Disable text selection on status page. */
+        /* The page is a control panel: no accidental text selection, except names worth copying. */
         *,
         *::before,
         *::after {
             -webkit-user-select: none !important;
             -moz-user-select: none !important;
-            -ms-user-select: none !important;
             user-select: none !important;
             -webkit-touch-callout: none !important;
             -webkit-tap-highlight-color: transparent !important;
         }
 
-        /* Allow text selection only for input fields. */
         input,
         textarea,
-        [contenteditable="true"] {
+        [contenteditable="true"],
+        .track-name,
+        .stream-route,
+        .li-meta,
+        .version-info a {
             -webkit-user-select: text !important;
             -moz-user-select: text !important;
-            -ms-user-select: text !important;
             user-select: text !important;
         }
 
+        /* Header: title, links and theme switch in one row. */
         .header {
-            text-align: center;
-            padding: 2rem 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1rem;
+            padding: 0.75rem 1.25rem;
             background-color: var(--color-surface);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--color-border);
         }
 
         h1 {
             color: var(--color-secondary);
-            font-size: 2.2rem;
+            font-size: 1.35rem;
             font-weight: 700;
-            text-align: center;
-            margin: 0 0 2rem;
-            position: relative;
-            padding-bottom: 1rem;
-            display: inline-block;
-        }
-
-        h1::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80px;
-            height: 4px;
-            background: var(--color-primary);
-            border-radius: 2px;
+            margin: 0;
         }
 
         .server-info {
             display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 2rem;
-            margin-top: 1rem;
             flex-wrap: wrap;
-        }
-
-        .global-shuffle-info {
-            display: flex;
             align-items: center;
             gap: 0.5rem;
-            background-color: var(--color-surface-accent);
-            padding: 0.5rem 1rem;
-            border-radius: var(--border-radius);
-            font-weight: 500;
-            box-shadow: var(--box-shadow);
+            flex: 1;
+            min-width: 0;
         }
 
-        .shuffle-icon {
-            font-size: 1.1rem;
+        .header .theme-toggle-wrapper {
+            position: static;
+            margin-left: auto;
         }
 
-        .global-shuffle-status {
+        .pill {
             display: inline-flex;
             align-items: center;
-            padding: 0.2rem 0.6rem;
-            border-radius: 1rem;
+            gap: 0.4rem;
+            padding: 0.3rem 0.75rem;
             font-size: 0.8rem;
             font-weight: 500;
-        }
-
-        .global-shuffle-status.enabled {
-            background-color: rgba(46, 204, 113, 0.2);
-            color: #27ae60;
-        }
-
-        .global-shuffle-status.disabled {
-            background-color: rgba(149, 165, 166, 0.2);
-            color: var(--color-text-secondary);
-        }
-
-        .relay-management-link {
-            display: inline-block;
-        }
-
-        .relay-link {
-            display: inline-flex;
-            align-items: center;
-            background-color: var(--color-surface-accent);
             color: var(--color-text);
+            background-color: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 999px;
             text-decoration: none;
-            padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            transition: var(--transition);
-            font-weight: 500;
-            box-shadow: var(--box-shadow);
+            white-space: nowrap;
         }
 
-        .relay-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            background-color: var(--color-primary);
-            color: white;
+        a.pill:hover {
+            color: var(--color-primary);
+            border-color: var(--color-primary);
+            background-color: var(--color-primary-light);
         }
 
-        .relay-link.disabled {
+        .pill.disabled {
             opacity: 0.6;
             cursor: not-allowed;
         }
 
-        .relay-link.disabled:hover {
-            transform: none;
-            box-shadow: var(--box-shadow);
-            background-color: var(--color-surface-accent);
-            color: var(--color-text);
+        .stats-link {
+            color: var(--color-primary);
+            border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
         }
 
-        .relay-icon {
-            margin-right: 0.5rem;
-            font-size: 1.1rem;
-        }
-
-        .relay-active-badge {
-            display: inline-block;
-            margin-left: 0.5rem;
-            background-color: rgba(39, 174, 96, 0.2);
-            color: #27ae60;
-            padding: 0.2rem 0.5rem;
-            border-radius: 0.75rem;
-            font-size: 0.8rem;
-        }
-
-        .relay-inactive-badge {
-            display: inline-block;
-            margin-left: 0.5rem;
-            background-color: rgba(231, 76, 60, 0.2);
-            color: #e74c3c;
-            padding: 0.2rem 0.5rem;
-            border-radius: 0.75rem;
-            font-size: 0.8rem;
-        }
-
-        .telegram-alerts-link {
-            display: inline-block;
-            margin-left: 1rem;
-        }
-
-        .telegram-link {
-            display: inline-flex;
-            align-items: center;
-            background-color: var(--color-surface-accent);
-            color: var(--color-text);
-            text-decoration: none;
-            padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            transition: var(--transition);
-            font-weight: 500;
-            box-shadow: var(--box-shadow);
-        }
-
-        .telegram-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            background-color: var(--color-primary);
-            color: white;
-        }
-
-        .telegram-link.disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .telegram-link.disabled:hover {
-            transform: none;
-            box-shadow: var(--box-shadow);
-            background-color: var(--color-surface-accent);
-            color: var(--color-text);
-        }
-
-        .telegram-icon {
-            margin-right: 0.5rem;
-            font-size: 1.1rem;
-        }
-
-        .telegram-active-badge {
-            display: inline-block;
-            margin-left: 0.5rem;
-            background-color: rgba(39, 174, 96, 0.2);
-            color: #27ae60;
-            padding: 0.2rem 0.5rem;
-            border-radius: 0.75rem;
-            font-size: 0.8rem;
-        }
-
+        .global-shuffle-status,
+        .relay-active-badge,
+        .relay-inactive-badge,
+        .telegram-active-badge,
         .telegram-inactive-badge {
-            display: inline-block;
-            margin-left: 0.5rem;
-            background-color: rgba(231, 76, 60, 0.2);
-            color: #e74c3c;
-            padding: 0.2rem 0.5rem;
-            border-radius: 0.75rem;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.05rem 0.45rem;
+            border-radius: 999px;
         }
 
+        .global-shuffle-status.enabled,
+        .relay-active-badge,
+        .telegram-active-badge {
+            color: var(--color-success);
+            background-color: color-mix(in srgb, var(--color-success) 12%, transparent);
+        }
+
+        .global-shuffle-status.disabled,
+        .relay-inactive-badge,
+        .telegram-inactive-badge {
+            color: var(--color-text-secondary);
+            background-color: var(--color-surface-accent);
+        }
+
+        .version-info {
+            font-size: 0.8rem;
+            color: var(--color-text-secondary);
+            white-space: nowrap;
+        }
+
+        .version-info a {
+            color: inherit;
+        }
+
+        /* Quick jump by receiver preset number; stays on top while scrolling. */
+        .jump {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            display: flex;
+            gap: 0.35rem;
+            overflow-x: auto;
+            padding: 0.45rem 1.25rem;
+            background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
+            -webkit-backdrop-filter: blur(6px);
+            backdrop-filter: blur(6px);
+            border-bottom: 1px solid var(--color-border);
+            scrollbar-width: thin;
+        }
+
+        .jump a {
+            flex: 0 0 auto;
+            min-width: 2rem;
+            height: 2rem;
+            padding: 0 0.35rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.45rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--color-primary);
+            background-color: var(--color-primary-light);
+            text-decoration: none;
+        }
+
+        .jump a:hover {
+            color: #fff;
+            background-color: var(--color-primary);
+        }
+
+        .jump:empty {
+            display: none;
+        }
+
+        /* Cards: one column on phones, two or more on wide screens. */
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 0 1.5rem 3rem;
+            padding: 1rem 1.25rem 3rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(480px, 100%), 1fr));
+            gap: 1rem;
+            align-items: start;
         }
 
         .stream-container {
+            position: relative;
+            min-width: 0;
+            padding: 1rem 1.25rem;
             background-color: var(--color-surface);
+            border: 1px solid var(--color-border);
             border-radius: var(--border-radius);
             box-shadow: var(--box-shadow);
-            margin-bottom: 1.5rem;
-            padding: 1.5rem;
-            position: relative;
             overflow: hidden;
-            transition: var(--transition);
+            scroll-margin-top: 3.5rem;
         }
 
-        .stream-container:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
-        }
-
-        .stream-container::before {
+        /* A station that does not answer is marked on the left edge. */
+        .stream-container:has(.stream-status-indicator.offline)::before {
             content: '';
             position: absolute;
             top: 0;
             left: 0;
-            height: 100%;
             width: 4px;
-            background-color: var(--color-primary);
+            height: 100%;
+            background-color: var(--color-error);
         }
 
         .stream-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            font-size: 1.5rem;
+            gap: 0.75rem;
+            font-size: 1.15rem;
             font-weight: 600;
             color: var(--color-secondary);
-            margin-bottom: 1rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .stream-header::before {
-            content: '🎵';
-            margin-right: 0.5rem;
-            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
         }
 
         .stream-header a {
             color: inherit;
             text-decoration: none;
-            transition: var(--transition);
         }
 
-        .stream-header a:hover {
+        .stream-header a:hover .stream-name {
             color: var(--color-primary);
         }
 
+        /* Number badge on the left, our name and the route stacked next to it. */
+        .stream-title {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: center;
+            column-gap: 0.6rem;
+            row-gap: 0;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .stream-title .preset-badge {
+            grid-row: span 2;
+        }
+
+        .stream-title .preset-badge ~ .stream-route {
+            grid-column: 2;
+        }
+
+        .preset-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.9rem;
+            height: 1.9rem;
+            padding: 0 0.35rem;
+            border-radius: 0.5rem;
+            background: var(--color-primary);
+            color: #fff;
+            font-size: 1rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stream-name {
+            overflow-wrap: anywhere;
+            line-height: 1.3;
+        }
+
+        .stream-route {
+            font-size: 0.8rem;
+            font-weight: 400;
+            color: var(--color-text-secondary);
+        }
+
         .stream-status-indicator {
+            flex-shrink: 0;
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
-            padding: 0.3rem 0.7rem;
-            border-radius: 1rem;
-            font-size: 0.75rem;
+            padding: 0.25rem 0.65rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
             font-weight: 500;
-            transition: var(--transition);
         }
 
         .stream-status-indicator.online {
-            background-color: rgba(39, 174, 96, 0.1);
-            color: #27ae60;
-        }
-
-        .stream-status-indicator.online .status-dot {
-            background-color: #27ae60;
+            color: var(--color-success);
+            background-color: color-mix(in srgb, var(--color-success) 12%, transparent);
         }
 
         .stream-status-indicator.offline {
-            background-color: rgba(231, 76, 60, 0.1);
-            color: #e74c3c;
-        }
-
-        .stream-status-indicator.offline .status-dot {
-            background-color: #e74c3c;
+            color: var(--color-error);
+            background-color: color-mix(in srgb, var(--color-error) 12%, transparent);
         }
 
         .stream-status-indicator.checking {
-            background-color: rgba(241, 196, 15, 0.1);
-            color: #f39c12;
-        }
-
-        .stream-status-indicator.checking .status-dot {
-            background-color: #f39c12;
-            animation: pulse 1.5s ease-in-out infinite;
+            color: var(--color-warning);
+            background-color: color-mix(in srgb, var(--color-warning) 12%, transparent);
         }
 
         .status-dot {
-            width: 6px;
-            height: 6px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            display: inline-block;
+            background-color: currentColor;
+        }
+
+        .stream-status-indicator.checking .status-dot {
+            animation: pulse 1.5s ease-in-out infinite;
         }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            50% { opacity: 0.4; }
         }
 
-        .status-info {
-            margin-bottom: 0.75rem;
-            font-size: 1rem;
-            display: flex;
-            align-items: center;
+        @media (prefers-reduced-motion: reduce) {
+            .stream-status-indicator.checking .status-dot {
+                animation: none;
+            }
         }
 
-        .status-info:before {
-            margin-right: 0.5rem;
-            font-size: 1rem;
-        }
-
-        .status-info.start-time:before {
-            content: '🕒';
-        }
-
+        /* What plays now. */
         .status-info.current-track {
-            background-color: rgba(52, 152, 219, 0.08);
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            border-left: 3px solid var(--color-primary);
-            margin: 1rem 0;
             display: flex;
+            align-items: center;
+            min-width: 0;
+            overflow: hidden;
+            padding: 0.55rem 0.75rem;
+            background-color: var(--color-primary-light);
+            border-radius: var(--border-radius);
+        }
+
+        .track-info-container {
+            display: flex;
+            align-items: center;
             justify-content: space-between;
-            align-items: center;
-            min-width: 0; /* Allow shrinking */
-            overflow: hidden; /* Prevent container overflow */
-        }
-
-        .status-info.current-track:before {
-            content: '▶️';
-            margin-right: 0.5rem;
-        }
-
-        .status-info.listeners:before {
-            content: '👥';
-        }
-
-        .status-info.shuffle-info:before {
-            content: '🔀';
-        }
-
-        .shuffle-status {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            margin-left: 0.5rem;
-            font-weight: 500;
-            font-size: 0.85rem;
-        }
-
-        .shuffle-status.enabled {
-            background-color: rgba(46, 204, 113, 0.1);
-            color: #27ae60;
-        }
-
-        .shuffle-status.disabled {
-            background-color: rgba(149, 165, 166, 0.1);
-            color: var(--color-text-secondary);
-        }
-
-        .listeners-count {
-            display: inline-flex;
-            align-items: center;
-            background-color: rgba(46, 204, 113, 0.1);
-            color: var(--color-text-secondary);
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            margin-left: 0.5rem;
-            font-weight: 500;
-        }
-
-        .listeners-count.zero {
-            background-color: rgba(231, 76, 60, 0.1);
-            color: var(--color-error);
-        }
-
-        .button-group {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 0.75rem;
-            margin-top: 1.5rem;
-            border-top: 1px solid var(--color-border);
-            padding-top: 1.5rem;
-        }
-
-        .button-group form {
-            display: contents;
-        }
-
-        button {
-            background-color: var(--color-primary);
-            color: white;
-            border: none;
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 0.85rem;
-            font-weight: 500;
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.4rem;
-            min-height: 42px;
-            white-space: nowrap;
-            text-align: center;
             width: 100%;
+            min-width: 0;
         }
 
-        button:hover {
-            background-color: var(--color-primary-dark);
-            transform: translateY(-2px);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        button.prev-track:before {
-            content: '⏮️';
-        }
-
-        button.next-track:before {
-            content: '⏭️';
-        }
-        
-        button.shuffle-playlist:before {
-            content: '🔀';
-        }
-        
-        button.enable-shuffle:before {
-            content: '✅';
-        }
-        
-        button.disable-shuffle:before {
-            content: '❌';
-        }
-        
-        button.show-history:before {
-            content: '📋';
-        }
-
-        button.clear-history {
-            background-color: var(--color-error);
-        }
-        
-        button.clear-history:before {
-            content: '🗑️';
-        }
-        
-        button.clear-history:hover {
-            background-color: var(--color-error-dark);
-        }
-
-        .track-list {
-            display: none;
-            margin-top: 1rem;
-            background-color: rgba(52, 152, 219, 0.04);
-            border-radius: var(--border-radius);
-            padding: 1rem;
-            max-height: 300px;
-            overflow-y: auto;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        .track-list ul {
-            list-style-type: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        .track-list li {
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--color-border);
-            position: relative;
+        .track-name-container {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            padding-left: 1.5rem;
+            gap: 0.4rem;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
         }
 
-        .track-list li:last-child {
-            border-bottom: none;
+        .track-name {
+            flex: 1;
+            min-width: 0;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: opacity 0.15s;
         }
 
-        .track-list li:before {
-            content: '🎵';
-            position: absolute;
-            left: 0;
-            top: 0.5rem;
-        }
-
-        .no-data {
-            text-align: center;
-            color: var(--color-text-secondary);
-            font-style: italic;
-            padding: 1rem;
-            background-color: rgba(149, 165, 166, 0.1);
-            border-radius: var(--border-radius);
-            margin: 0.5rem 0;
-        }
-
-        .error-container {
-            background-color: rgba(231, 76, 60, 0.1);
-            color: var(--color-error);
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            border-radius: var(--border-radius);
-            border-left: 3px solid var(--color-error);
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                padding: 0 1rem 2rem;
-            }
-            
-            h1 {
-                font-size: 1.8rem;
-            }
-            
-            .stream-container {
-                padding: 1.25rem;
-            }
-            
-            .stream-header {
-                font-size: 1.3rem;
-            }
-            
-            .button-group {
-                grid-template-columns: 1fr;
-                gap: 0.5rem;
-            }
-            
-            button {
-                font-size: 0.9rem;
-                padding: 0.8rem 1rem;
-                min-height: 44px;
-            }
-        }
-
-        @media (max-width: 1024px) and (min-width: 769px) {
-            .button-group {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        .copy-button {
-            background: var(--color-surface-accent);
-            border: 1px solid var(--color-border);
-            cursor: pointer;
-            padding: 0.25rem 0.4rem;
-            border-radius: 4px;
-            margin-left: 0.5rem;
-            position: relative;
-            transition: var(--transition);
-            min-width: 28px;
-            max-width: 32px;
-            height: 28px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
+        .playback-time-container {
             flex-shrink: 0;
         }
 
+        .playback-time {
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--color-text-secondary);
+            white-space: nowrap;
+        }
+
+        /* Copy button: an outlined icon drawn with a mask (also for the buttons in the history). */
+        .copy-button {
+            position: relative;
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--color-text-secondary);
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
         .copy-button:hover {
-            background-color: var(--color-primary-light);
-            border-color: var(--color-primary);
-            transform: scale(1.05);
+            color: var(--color-primary);
+            background-color: var(--color-surface);
+            border-color: var(--color-border);
         }
 
         .copy-icon {
-            font-size: 0.8rem;
-            color: var(--color-text-secondary);
-            transition: var(--transition);
-        }
-
-        .copy-button:hover .copy-icon {
-            color: var(--color-primary);
+            display: block;
+            width: 15px;
+            height: 15px;
+            font-size: 0;
+            background-color: currentColor;
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='12' height='12' rx='2'/%3E%3Cpath d='M5 15V5a2 2 0 0 1 2-2h10'/%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='12' height='12' rx='2'/%3E%3Cpath d='M5 15V5a2 2 0 0 1 2-2h10'/%3E%3C/svg%3E") center / contain no-repeat;
         }
 
         .copy-feedback {
             position: absolute;
-            top: -35px;
+            bottom: calc(100% + 6px);
             left: 50%;
             transform: translateX(-50%);
+            padding: 0.2rem 0.5rem;
             font-size: 0.75rem;
             font-weight: 500;
+            white-space: nowrap;
             color: var(--color-success);
             background-color: var(--color-surface);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            opacity: 0;
-            transition: opacity 0.2s;
-            pointer-events: none;
-            white-space: nowrap;
-            box-shadow: var(--box-shadow);
             border: 1px solid var(--color-border);
+            border-radius: 6px;
+            box-shadow: var(--box-shadow);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
         }
 
         .copy-button.copied .copy-feedback {
             opacity: 1;
         }
 
-        /* NEW STYLES: Track info layout with time display */
-        .track-info-container {
+        /* One line of small facts under the track. */
+        .meta {
             display: flex;
-            justify-content: space-between;
+            flex-wrap: wrap;
             align-items: center;
-            gap: 15px;
-            width: 100%;
-            min-width: 0; /* Allow shrinking */
-        }
-
-        .track-name-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex: 1;
-            min-width: 0; /* Allow shrinking */
-            overflow: hidden; /* Prevent container overflow */
-        }
-
-        .track-name {
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            flex: 1; /* Take available space */
-            min-width: 0; /* Allow shrinking */
-        }
-
-        .playback-time-container {
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            background: var(--color-surface-accent);
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-            padding: 6px 12px;
-            min-width: 120px; /* Increased for "MM:SS / MM:SS" format */
-            justify-content: center;
-        }
-
-        .playback-time {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 14px;
-            font-weight: 600;
+            gap: 0.4rem 1.25rem;
+            margin-top: 0.65rem;
+            font-size: 0.85rem;
             color: var(--color-text-secondary);
-            letter-spacing: 0.5px;
         }
 
-        /* Responsive design for smaller screens */
-        @media (max-width: 768px) {
-            .track-info-container {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 8px;
+        .meta .status-info {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .listeners-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.6rem;
+            padding: 0.05rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: #fff;
+            background-color: var(--color-primary);
+        }
+
+        .listeners-count.zero {
+            color: var(--color-text-secondary);
+            background-color: var(--color-surface-accent);
+            font-weight: 500;
+        }
+
+        .shuffle-status {
+            font-weight: 600;
+        }
+
+        .shuffle-status.enabled {
+            color: var(--color-success);
+        }
+
+        /* Who listens: shown on hover, focus or tap on the listener count. */
+        .listeners-wrap {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .listeners-wrap:focus-visible .listeners-count {
+            box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-primary);
+        }
+
+        .stream-container:has(.listeners-wrap.open) {
+            overflow: visible;
+            z-index: 5;
+        }
+
+        .listeners-pop {
+            display: none;
+            position: absolute;
+            left: 0;
+            top: calc(100% + 0.4rem);
+            z-index: 10;
+            width: max-content;
+            max-width: min(26rem, calc(100vw - 3rem));
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            color: var(--color-text);
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            box-shadow: 0 8px 24px rgba(15, 40, 80, 0.16);
+            cursor: auto;
+        }
+
+        .listeners-wrap.open .listeners-pop {
+            display: block;
+        }
+
+        .listener-item {
+            padding: 0.4rem 0;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .listener-item:last-child {
+            border-bottom: none;
+        }
+
+        .listener-item .li-device {
+            font-weight: 600;
+        }
+
+        .listener-item .li-meta {
+            color: var(--color-text-secondary);
+            overflow-wrap: anywhere;
+        }
+
+        .listener-item.service {
+            opacity: 0.7;
+        }
+
+        .listeners-pop .li-empty {
+            color: var(--color-text-secondary);
+        }
+
+        /* Controls: the two track buttons filled, the rest outlined, clearing in red. */
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.9rem;
+            padding-top: 0.9rem;
+            border-top: 1px solid var(--color-border);
+        }
+
+        .button-group form {
+            display: contents;
+        }
+
+        .button-group button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            width: 100%;
+            min-height: 40px;
+            padding: 0.5rem 0.75rem;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            line-height: 1.2;
+            text-align: center;
+            white-space: normal;
+            color: var(--color-primary);
+            background-color: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+        }
+
+        .button-group button:hover {
+            background-color: var(--color-primary-light);
+            border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+        }
+
+        .button-group button.prev-track,
+        .button-group button.next-track {
+            color: #fff;
+            background-color: var(--color-button);
+            border-color: var(--color-button);
+        }
+
+        .button-group button.prev-track:hover,
+        .button-group button.next-track:hover {
+            background-color: var(--color-button-hover);
+            border-color: var(--color-button-hover);
+        }
+
+        .button-group button.prev-track::before {
+            content: '\23EE\FE0E';
+        }
+
+        .button-group button.next-track::after {
+            content: '\23ED\FE0E';
+        }
+
+        .button-group button.clear-history {
+            color: var(--color-error);
+            border-color: color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+        }
+
+        .button-group button.clear-history:hover {
+            background-color: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+        }
+
+        .button-group button:disabled {
+            opacity: 0.6;
+            cursor: progress;
+        }
+
+        /* Track history. */
+        .track-list {
+            display: none;
+            margin-top: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: var(--color-surface-accent);
+            border-radius: var(--border-radius);
+            transition: opacity 0.2s;
+        }
+
+        .track-list ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .track-list li {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.35rem 0;
+            font-size: 0.9rem;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .track-list li:last-child {
+            border-bottom: none;
+        }
+
+        .no-data {
+            padding: 0.75rem;
+            text-align: center;
+            color: var(--color-text-secondary);
+        }
+
+        .error-container {
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+            color: var(--color-error);
+            background-color: color-mix(in srgb, var(--color-error) 10%, transparent);
+            border-radius: var(--border-radius);
+        }
+
+        @media (max-width: 600px) {
+            .header {
+                padding: 0.65rem 1rem;
             }
-            
-            .track-name-container {
-                width: 100%;
-                overflow: hidden; /* Prevent container overflow */
+
+            .server-info {
+                order: 3;
+                flex-basis: 100%;
+                gap: 0.35rem;
             }
-            
-            .track-name {
-                flex: 1;
-                min-width: 0; /* Allow shrinking */
+
+            .server-info .pill {
+                padding: 0.25rem 0.6rem;
+                font-size: 0.75rem;
             }
-            
-            .playback-time-container {
-                align-self: flex-end;
-                margin-top: 5px;
+
+            .jump {
+                padding: 0.4rem 1rem;
+            }
+
+            .container {
+                padding: 0.75rem 0.75rem 2rem;
+                gap: 0.75rem;
+            }
+
+            .stream-container {
+                padding: 0.9rem 1rem;
+            }
+
+            .copy-button {
+                width: 36px;
+                height: 36px;
+            }
+
+            .button-group button {
+                min-height: 44px;
             }
         }
     </style>
     {{end}}
 
     <script>
-        // Theme toggle functionality.
+        // Theme toggle (the saved theme is applied in <head> before the page is drawn).
         document.addEventListener('DOMContentLoaded', () => {
             const themeToggle = document.getElementById('theme-toggle');
-
-            // Set theme on initial load.
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-
             if (themeToggle) {
                 themeToggle.addEventListener('click', () => {
-                    const currentTheme = document.documentElement.getAttribute('data-theme');
-                    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-
+                    const newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
                     document.documentElement.setAttribute('data-theme', newTheme);
-                    localStorage.setItem('theme', newTheme);
+                    try { localStorage.setItem('theme', newTheme); } catch (e) {}
                 });
             }
         });
+
+        // Who listens: the list for a station opens on hover, focus or tap on its listener count.
+        (function () {
+            let cache = null;
+            let cachedAt = 0;
+
+            function fetchListeners() {
+                if (cache && Date.now() - cachedAt < 3000) {
+                    return Promise.resolve(cache);
+                }
+                return fetch('/api/listeners', { credentials: 'same-origin' })
+                    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+                    .then(data => { cache = data || {}; cachedAt = Date.now(); return cache; });
+            }
+
+            function item(l) {
+                const div = document.createElement('div');
+                div.className = 'listener-item' + (l.service ? ' service' : '');
+                const device = document.createElement('div');
+                device.className = 'li-device';
+                device.textContent = l.device + (l.service ? ' (служебный)' : '');
+                const where = document.createElement('div');
+                where.className = 'li-meta';
+                where.textContent = (l.place ? l.place + ' · ' : '') + l.ip;
+                const time = document.createElement('div');
+                time.className = 'li-meta';
+                time.textContent = 'слушает с ' + l.since + ', ' + l.duration + (l.via ? ', через кнопку ' + l.via : '');
+                div.append(device, where, time);
+                return div;
+            }
+
+            function render(wrap, data) {
+                const list = data[wrap.dataset.route] || [];
+                const pop = wrap.querySelector('.listeners-pop');
+                const count = wrap.querySelector('.listeners-count');
+                pop.replaceChildren();
+                if (list.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'li-empty';
+                    empty.textContent = 'Сейчас никто не слушает';
+                    pop.append(empty);
+                } else {
+                    list.forEach(l => pop.append(item(l)));
+                }
+                count.textContent = list.length;
+                count.classList.toggle('zero', list.length === 0);
+            }
+
+            function open(wrap) {
+                wrap.classList.add('open');
+                const pop = wrap.querySelector('.listeners-pop');
+                if (!pop.hasChildNodes()) {
+                    pop.textContent = 'Загрузка…';
+                }
+                fetchListeners().then(data => render(wrap, data)).catch(() => {
+                    wrap.querySelector('.listeners-pop').textContent = 'Не удалось получить список';
+                });
+            }
+
+            function close(wrap) {
+                wrap.classList.remove('open');
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                document.querySelectorAll('.listeners-wrap').forEach(wrap => {
+                    wrap.addEventListener('mouseenter', () => open(wrap));
+                    wrap.addEventListener('mouseleave', () => close(wrap));
+                    wrap.addEventListener('focus', () => open(wrap));
+                    wrap.addEventListener('blur', () => close(wrap));
+                    // A tap on a phone focuses it (opens); a tap elsewhere blurs it (closes).
+                    wrap.addEventListener('click', () => open(wrap));
+                });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') document.querySelectorAll('.listeners-wrap.open').forEach(close);
+                });
+            });
+        })();
 
         function toggleTrackList(id) {
             const trackList = document.getElementById('track-list-' + id);
@@ -864,14 +917,14 @@
             const showHistoryButton = buttonGroup.querySelector('button.show-history');
             
             if (showHistoryButton) {
-                showHistoryButton.textContent = isVisible ? 'Show track history' : 'Hide track history';
+                showHistoryButton.textContent = isVisible ? 'История' : 'Скрыть историю';
             }
         }
 
         function copyToClipboard(text, button) {
             navigator.clipboard.writeText(text).then(() => {
                 const feedback = button.querySelector('.copy-feedback');
-                feedback.textContent = 'Copied!';
+                feedback.textContent = 'Скопировано';
                 button.classList.add('copied');
 
                 setTimeout(() => {
@@ -879,7 +932,7 @@
                 }, 2000);
             }).catch(err => {
                 const feedback = button.querySelector('.copy-feedback');
-                feedback.textContent = 'Error';
+                feedback.textContent = 'Не удалось';
                 button.classList.add('copied');
 
                 setTimeout(() => {
@@ -907,7 +960,7 @@
         });
 
         function clearTrackHistory(routeID, route) {
-            if (confirm('Are you sure you want to clear the track history for this stream?')) {
+            if (confirm('Очистить историю записей этой станции?')) {
                 fetch(`/clear-history${route}`, {
                     method: 'POST',
                     headers: {
@@ -918,15 +971,15 @@
                         // Clear the track list display
                         const trackListDiv = document.querySelector(`#track-list-${routeID}`);
                         if (trackListDiv) {
-                            trackListDiv.innerHTML = '<div class="no-data">No tracks in history yet.</div>';
+                            trackListDiv.innerHTML = '<div class="no-data">История пока пуста.</div>';
                         }
                         console.log('Track history cleared for route:', route);
                     } else {
-                        alert('Failed to clear track history');
+                        alert('Не удалось очистить историю');
                     }
                 }).catch(error => {
                     console.error('Error clearing track history:', error);
-                    alert('Error clearing track history');
+                    alert('Не удалось очистить историю');
                 });
             }
         }
@@ -1077,7 +1130,7 @@
                                     }, 200);
                                 } else {
                                     // If no history data, show the empty message
-                                    trackListDiv.innerHTML = '<div class="no-data">No tracks in history yet.</div>';
+                                    trackListDiv.innerHTML = '<div class="no-data">История пока пуста.</div>';
                                     console.log('No history data available for route:', route);
                                 }
                             })
@@ -1262,7 +1315,7 @@
                 
                 if (element) {
                     const statusClass = status.status;
-                    const statusText = status.status === 'online' ? 'Online' : 'Offline';
+                    const statusText = status.status === 'online' ? 'В эфире' : 'Нет связи';
                     
                     // Remove all status classes
                     element.classList.remove('online', 'offline', 'checking');
