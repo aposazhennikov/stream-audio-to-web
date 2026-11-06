@@ -139,7 +139,7 @@ func (s *Server) streamsHandler(w http.ResponseWriter, _ *http.Request) {
 		var historyHTMLBuilder strings.Builder
 
 		if len(history) == 0 {
-			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
+			historyHTMLBuilder.WriteString(`<div class="no-data">История пока пуста.</div>`)
 		} else {
 			historyHTMLBuilder.WriteString("<ul>")
 			for _, item := range history {

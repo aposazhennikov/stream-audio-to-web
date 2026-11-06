@@ -61,7 +61,7 @@ func TestStatusPageContent(t *testing.T) {
 
 	// Check for main page elements.
 	requiredElements := []string{
-		"<h1>Audio Streams Status</h1>",       // Page title
+		"<h1>Станции</h1>",                    // Page title
 		"class=\"status-info listeners\"",     // Listeners information
 		"class=\"status-info current-track\"", // Current track information
 		"class=\"status-info start-time\"",    // Start time information
@@ -79,13 +79,13 @@ func TestStatusPageContent(t *testing.T) {
 	}
 
 	// Check time format (expected format like "02.01.2006 15:04:05").
-	timePattern := "Started: "
+	timePattern := "Запущена в "
 	if !strings.Contains(htmlContent, timePattern) {
 		t.Errorf("Status page doesn't contain start time information with pattern '%s'", timePattern)
 	}
 
 	// Check listeners count display.
-	listenersPattern := "Listeners count: <span class=\"listeners-count"
+	listenersPattern := "class=\"listeners-count"
 	if !strings.Contains(htmlContent, listenersPattern) {
 		t.Errorf("Status page doesn't contain listeners count information with pattern '%s'", listenersPattern)
 	}

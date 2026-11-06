@@ -147,7 +147,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 
 		if len(history) == 0 {
 			// Show message when no history is available
-			historyHTMLBuilder.WriteString(`<div class="no-data">No tracks in history yet.</div>`)
+			historyHTMLBuilder.WriteString(`<div class="no-data">История пока пуста.</div>`)
 		} else {
 			historyHTMLBuilder.WriteString("<ul>")
 			for _, item := range history {
@@ -250,7 +250,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 	// Передаем данные в шаблон и обрабатываем ошибки.
 	if executeErr := tmpl.Execute(w, map[string]interface{}{
 		"Streams":           streams,
-		"Title":             "Audio Streams Status",
+		"Title":             "Станции",
 		"RelayEnabled":      s.relayManager != nil,
 		"RelayActive":       s.relayManager != nil && s.relayManager.IsActive(),
 		"RelayClickable":    s.relayFunctionalityEnabled,
