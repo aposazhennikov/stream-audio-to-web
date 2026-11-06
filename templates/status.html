@@ -64,7 +64,11 @@
         {{range .Streams}}
         <div class="stream-container">
             <div class="stream-header">
-                <a href="{{.Route}}" target="_blank">{{.DisplayName}}</a>
+                <a href="{{.Route}}" target="_blank" class="stream-title">
+                    {{if .Preset}}<span class="preset-badge" title="Кнопка на приёмнике дедушки">{{.Preset}}</span>{{end}}
+                    <span class="stream-name">{{if .StationName}}{{.StationName}}{{else}}{{.DisplayName}}{{end}}</span>
+                    {{if .StationName}}<span class="stream-route">{{.DisplayName}}</span>{{end}}
+                </a>
                 <span class="stream-status-indicator checking" id="stream-status-{{.RouteID}}">
                     <span class="status-dot"></span>
                     <span class="status-text">Checking...</span>
@@ -396,6 +400,51 @@
 
         .stream-header a:hover {
             color: var(--color-primary);
+        }
+
+        /* Number badge on the left, our name and the route stacked next to it. */
+        .stream-title {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            align-items: center;
+            column-gap: 0.6rem;
+            row-gap: 0.1rem;
+            flex: 1;
+            min-width: 0;
+            margin-right: 0.75rem;
+        }
+
+        .stream-title .preset-badge {
+            grid-row: span 2;
+        }
+
+        .stream-title .preset-badge ~ .stream-route {
+            grid-column: 2;
+        }
+
+        .preset-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 2.1rem;
+            height: 2.1rem;
+            padding: 0 0.4rem;
+            border-radius: 0.5rem;
+            background: var(--color-primary);
+            color: #fff;
+            font-size: 1.1rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stream-name {
+            overflow-wrap: anywhere;
+        }
+
+        .stream-route {
+            font-size: 0.85rem;
+            font-weight: 400;
+            color: var(--color-text-secondary, #888);
         }
 
         .stream-status-indicator {

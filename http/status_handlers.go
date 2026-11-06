@@ -126,6 +126,8 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		Route          string
 		RouteID        string
 		DisplayName    string
+		Preset         int    // button on the listener's receiver, 0 if none
+		StationName    string // how the station is called for the listener
 		StartTime      string
 		CurrentTrack   string
 		Listeners      int
@@ -194,11 +196,14 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			historyHTMLBuilder.WriteString("</ul>")
 		}
 		historyHTML := historyHTMLBuilder.String()
+		label, _ := s.stationLabel(route)
 
 		streams = append(streams, StreamInfo{
 			Route:          route,
 			RouteID:        strings.TrimPrefix(route, "/"),
 			DisplayName:    route,
+			Preset:         label.Preset,
+			StationName:    label.Name,
 			StartTime:      s.playlists[route].GetStartTime().Format("15:04:05"),
 			CurrentTrack:   currentTrack,
 			Listeners:      stream.GetClientCount(),
@@ -207,9 +212,17 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Sort streams by route for consistent output.
+	// In the order of the listener's receiver presets; stations without a preset after them,
+	// by route.
 	sort.Slice(streams, func(i, j int) bool {
-		return streams[i].Route < streams[j].Route
+		a, b := streams[i], streams[j]
+		if (a.Preset > 0) != (b.Preset > 0) {
+			return a.Preset > 0
+		}
+		if a.Preset != b.Preset {
+			return a.Preset < b.Preset
+		}
+		return a.Route < b.Route
 	})
 
 	// Загружаем шаблон с правильными путями.

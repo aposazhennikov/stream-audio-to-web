@@ -14,17 +14,20 @@ import (
 // setupAnnouncer enables spoken announcements when a speech service is configured
 // (ANNOUNCE_TTS_URL) and starts preparing the clips in the background.
 func setupAnnouncer(logger *slog.Logger, config *Config, server *httpServer.Server) {
+	// The stations file also labels the status page, with or without announcements.
+	stationsFile := getEnvOrDefault("ANNOUNCE_STATIONS_FILE", "./announce_stations.json")
+	stations, err := announce.LoadStations(stationsFile)
+	if err != nil {
+		logger.Warn("Cannot read the stations file, stations are not named",
+			slog.String("file", stationsFile), slog.String("error", err.Error()))
+		stations = map[string]announce.Station{}
+	}
+	server.SetStationLabels(stations)
+
 	ttsURL := os.Getenv("ANNOUNCE_TTS_URL")
 	if ttsURL == "" {
 		logger.Info("Announcements disabled: ANNOUNCE_TTS_URL is not set")
 		return
-	}
-	stationsFile := getEnvOrDefault("ANNOUNCE_STATIONS_FILE", "./announce_stations.json")
-	stations, err := announce.LoadStations(stationsFile)
-	if err != nil {
-		logger.Warn("Announcements: cannot read the stations file, stations are not named",
-			slog.String("file", stationsFile), slog.String("error", err.Error()))
-		stations = map[string]announce.Station{}
 	}
 	var userAgents []string
 	for _, ua := range strings.Split(getEnvOrDefault("ANNOUNCE_USER_AGENTS", "WR-230SF"), ",") {

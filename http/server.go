@@ -68,6 +68,7 @@ type Server struct {
 	positions                    interface{ Save(route, track string) } // Remembers each station's track across restarts.
 	positionsMu                  sync.RWMutex
 	announcer                    *announce.Announcer // Spoken announcements for the listener's receiver.
+	stationLabels                map[string]announce.Station // Preset number and name of each station on the receiver.
 	switchedFrom                 map[string]string   // Track a station played before a button switched it (under trackMutex).
 }
 
@@ -80,6 +81,21 @@ func (s *Server) SetAnnouncer(a *announce.Announcer) {
 	s.positionsMu.Lock()
 	defer s.positionsMu.Unlock()
 	s.announcer = a
+}
+
+// SetStationLabels sets the preset number and name each station has on the listener's
+// receiver; the status page shows them.
+func (s *Server) SetStationLabels(labels map[string]announce.Station) {
+	s.positionsMu.Lock()
+	defer s.positionsMu.Unlock()
+	s.stationLabels = labels
+}
+
+func (s *Server) stationLabel(route string) (announce.Station, bool) {
+	s.positionsMu.RLock()
+	defer s.positionsMu.RUnlock()
+	label, ok := s.stationLabels[route]
+	return label, ok
 }
 
 // getAnnouncer returns the announcer, nil when announcements are off.
