@@ -1,16 +1,19 @@
 package http
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aposazhennikov/stream-audio-to-web/announce"
 )
 
 // Remote control for radio receivers that can only play a stream URL.
@@ -57,16 +60,24 @@ const (
 	remoteDirectionPrev = "prev"
 )
 
-// Sounds inserted into the stream, MP3 at 128 kbps, 44.1 kHz, stereo, without tags:
-// rising and falling double beeps after a switch, three soft ticks when arriving on a button.
-var (
-	//go:embed sounds/next.mp3
-	remoteNextSound []byte
-	//go:embed sounds/prev.mp3
-	remotePrevSound []byte
-	//go:embed sounds/button.mp3
-	remoteButtonSound []byte
-)
+// Sounds inserted into the stream, MP3 stereo without tags: rising and falling double beeps
+// after a switch, three soft ticks when arriving on a button. next.mp3 and the others are
+// 44.1 kHz; next-48000.mp3 and so on are the same sounds at the other rates the stations use,
+// because the receiver goes silent when the sample rate changes inside a stream.
+//
+//go:embed sounds/*.mp3
+var remoteSounds embed.FS
+
+// remoteSound returns the named sound at this sample rate (44.1 kHz if there is none).
+func remoteSound(name string, rate int) []byte {
+	if rate != announce.DefaultSampleRate && rate > 0 {
+		if data, err := remoteSounds.ReadFile("sounds/" + name + "-" + strconv.Itoa(rate) + ".mp3"); err == nil {
+			return data
+		}
+	}
+	data, _ := remoteSounds.ReadFile("sounds/" + name + ".mp3")
+	return data
+}
 
 // listenerSession is what one client (address and receiver model) listens to.
 type listenerSession struct {
@@ -165,15 +176,21 @@ type remoteDecision struct {
 	tracked   bool
 }
 
-// intro returns the sound to send before the station audio.
-func (d remoteDecision) intro() []byte {
+// hasIntro reports whether a sound goes before the station audio.
+func (d remoteDecision) hasIntro() bool {
+	return d.direction != "" || d.arrived
+}
+
+// intro returns the sound to send before the station audio, at the sample rate of the track
+// that follows it.
+func (d remoteDecision) intro(rate int) []byte {
 	switch {
 	case d.direction == remoteDirectionNext:
-		return remoteNextSound
+		return remoteSound("next", rate)
 	case d.direction == remoteDirectionPrev:
-		return remotePrevSound
+		return remoteSound("prev", rate)
 	case d.arrived:
-		return remoteButtonSound
+		return remoteSound("button", rate)
 	}
 	return nil
 }

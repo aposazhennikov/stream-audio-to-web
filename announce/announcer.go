@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -105,6 +106,9 @@ func (a *Announcer) StationName(route string) string {
 	return a.cfg.Stations[route].Name
 }
 
+// Every announcement is made at the sample rate of the track that plays after it (see
+// SampleRate): trackPath is that track.
+
 // ForStation is said when the receiver connects to a station: the station, the record and
 // the time. Clips that are not ready are left out; nothing ready gives nil.
 func (a *Announcer) ForStation(ctx context.Context, route, trackPath string, elapsed, total time.Duration) []byte {
@@ -117,7 +121,7 @@ func (a *Announcer) ForStation(ctx context.Context, route, trackPath string, ela
 	}
 	parts = append(parts, NowPlaying(filepath.Base(trackPath)))
 	parts = append(parts, timeClips(elapsed, total)...)
-	return a.join(ctx, parts)
+	return a.join(ctx, parts, ClipRate(SampleRate(trackPath)))
 }
 
 // ForSwitch is said after a button switched the station: the new record and its length.
@@ -127,11 +131,12 @@ func (a *Announcer) ForSwitch(ctx context.Context, trackPath string, total time.
 	}
 	parts := []string{NowPlaying(filepath.Base(trackPath))}
 	parts = append(parts, timeClips(0, total)...)
-	return a.join(ctx, parts)
+	return a.join(ctx, parts, ClipRate(SampleRate(trackPath)))
 }
 
-// ForButton is said when the receiver arrives on a button.
-func (a *Announcer) ForButton(ctx context.Context, next bool, stationRoute string) []byte {
+// ForButton is said when the receiver arrives on a button; the station keeps playing
+// trackPath.
+func (a *Announcer) ForButton(ctx context.Context, next bool, stationRoute, trackPath string) []byte {
 	if a == nil {
 		return nil
 	}
@@ -139,7 +144,7 @@ func (a *Announcer) ForButton(ctx context.Context, next bool, stationRoute strin
 	if name == "" {
 		name = strings.TrimPrefix(stationRoute, "/")
 	}
-	return a.join(ctx, []string{ButtonPhrase(next, name)})
+	return a.join(ctx, []string{ButtonPhrase(next, name)}, ClipRate(SampleRate(trackPath)))
 }
 
 // timeClips splits the time phrase into clips that can be prepared in advance: "Прошло
@@ -159,16 +164,18 @@ func timeClips(elapsed, total time.Duration) []string {
 	return []string{phrase}
 }
 
-// join synthesizes (or takes from the cache) every phrase and joins the MP3 clips.
-func (a *Announcer) join(ctx context.Context, phrases []string) []byte {
+// join synthesizes (or takes from the cache) every phrase at this sample rate and joins the
+// MP3 clips.
+func (a *Announcer) join(ctx context.Context, phrases []string, rate int) []byte {
 	var out bytes.Buffer
 	for _, p := range phrases {
 		if p == "" {
 			continue
 		}
-		clip, err := a.Speak(ctx, p)
+		clip, err := a.Speak(ctx, p, rate)
 		if err != nil {
-			a.cfg.Logger.Warn("Announcement clip not ready", slog.String("text", p), slog.String("error", err.Error()))
+			a.cfg.Logger.Warn("Announcement clip not ready", slog.String("text", p), slog.Int("rate", rate),
+				slog.String("error", err.Error()))
 			continue
 		}
 		out.Write(clip)
@@ -179,14 +186,20 @@ func (a *Announcer) join(ctx context.Context, phrases []string) []byte {
 	return out.Bytes()
 }
 
-func (a *Announcer) clipPath(text string) string {
-	sum := sha1.Sum([]byte("ruslan-medium\n" + text))
+// clipPath is where the clip for text at this rate is cached. Clips at the default rate keep
+// the names they had before rates were told apart.
+func (a *Announcer) clipPath(text string, rate int) string {
+	key := "ruslan-medium\n" + text
+	if rate != DefaultSampleRate {
+		key = "ruslan-medium\n" + strconv.Itoa(rate) + "\n" + text
+	}
+	sum := sha1.Sum([]byte(key))
 	return filepath.Join(a.cfg.CacheDir, hex.EncodeToString(sum[:])+".mp3")
 }
 
-// Cached returns the clip for text if it is already synthesized.
-func (a *Announcer) Cached(text string) ([]byte, bool) {
-	path := a.clipPath(text)
+// Cached returns the clip for text at this rate if it is already synthesized.
+func (a *Announcer) Cached(text string, rate int) ([]byte, bool) {
+	path := a.clipPath(text, ClipRate(rate))
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
 		return nil, false
@@ -196,19 +209,20 @@ func (a *Announcer) Cached(text string) ([]byte, bool) {
 	return data, true
 }
 
-// Speak returns the clip for text, synthesizing and caching it if needed. A listener waiting
-// for an announcement goes before the background preparation.
-func (a *Announcer) Speak(ctx context.Context, text string) ([]byte, error) {
-	if data, ok := a.Cached(text); ok {
+// Speak returns the clip for text at this sample rate, synthesizing and caching it if needed.
+// A listener waiting for an announcement goes before the background preparation.
+func (a *Announcer) Speak(ctx context.Context, text string, rate int) ([]byte, error) {
+	rate = ClipRate(rate)
+	if data, ok := a.Cached(text, rate); ok {
 		return data, nil
 	}
 	a.demand.Add(1)
 	defer a.demand.Add(-1)
-	return a.speak(ctx, text)
+	return a.speak(ctx, text, rate)
 }
 
 // prepare synthesizes a clip for the background preparation, after any waiting listener.
-func (a *Announcer) prepare(ctx context.Context, text string) ([]byte, error) {
+func (a *Announcer) prepare(ctx context.Context, text string, rate int) ([]byte, error) {
 	for a.demand.Load() > 0 {
 		select {
 		case <-ctx.Done():
@@ -216,18 +230,19 @@ func (a *Announcer) prepare(ctx context.Context, text string) ([]byte, error) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return a.speak(ctx, text)
+	return a.speak(ctx, text, rate)
 }
 
-func (a *Announcer) speak(ctx context.Context, text string) ([]byte, error) {
+func (a *Announcer) speak(ctx context.Context, text string, rate int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, a.cfg.SpeakTimeout)
 	defer cancel()
 	a.synth.Lock()
 	defer a.synth.Unlock()
-	if data, ok := a.Cached(text); ok { // synthesized while we waited
+	if data, ok := a.Cached(text, rate); ok { // synthesized while we waited
 		return data, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.cfg.TTSURL, "/")+"/speak", strings.NewReader(text))
+	url := strings.TrimRight(a.cfg.TTSURL, "/") + "/speak?rate=" + strconv.Itoa(rate)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(text))
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +260,7 @@ func (a *Announcer) speak(ctx context.Context, text string) ([]byte, error) {
 		return nil, fmt.Errorf("speech service: %s %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	if err := os.MkdirAll(a.cfg.CacheDir, 0o755); err == nil {
-		path := a.clipPath(text)
+		path := a.clipPath(text, rate)
 		tmp := path + ".tmp"
 		if os.WriteFile(tmp, data, 0o644) == nil {
 			_ = os.Rename(tmp, path)
@@ -256,8 +271,9 @@ func (a *Announcer) speak(ctx context.Context, text string) ([]byte, error) {
 
 // Prepare synthesizes, in the background and one by one, every phrase an announcement can
 // need: station intros and button phrases, the minute clips, and the titles of all records
-// (tracks returns route -> file names and is asked again on every pass, so new files are
-// picked up). Clips unused for two weeks are removed. Runs until ctx is done.
+// (tracks returns route -> file paths and is asked again on every pass, so new files are
+// picked up), each at the sample rates of the records it can precede. Clips unused for two
+// weeks are removed. Runs until ctx is done.
 // playing returns the track file name each station plays now; their titles are made first.
 func (a *Announcer) Prepare(ctx context.Context, tracks func() map[string][]string, playing func() map[string]string, buttons map[string]bool) {
 	if a == nil {
@@ -279,51 +295,105 @@ func (a *Announcer) Prepare(ctx context.Context, tracks func() map[string][]stri
 }
 
 func (a *Announcer) preparePass(ctx context.Context, tracks func() map[string][]string, playing func() map[string]string, buttons map[string]bool) int {
-	var phrases []string
-	for route, st := range a.cfg.Stations {
-		phrases = append(phrases, StationIntro(st.Preset, st.Name))
-		for button, next := range buttons {
-			if route != button {
-				phrases = append(phrases, ButtonPhrase(next, st.Name))
+	type clip struct {
+		text string
+		rate int
+	}
+	var clips []clip
+	add := func(text string, rate int) {
+		if text != "" {
+			clips = append(clips, clip{text, ClipRate(rate)})
+		}
+	}
+
+	// The sample rate of every record and the rates each station plays at.
+	files := tracks()
+	rateOf := map[string]int{}
+	stationRates := map[string][]int{}
+	allRates := []int{DefaultSampleRate}
+	for route, paths := range files {
+		seen := map[int]bool{}
+		for _, path := range paths {
+			rate := ClipRate(SampleRate(path))
+			rateOf[path] = rate
+			if !seen[rate] {
+				seen[rate] = true
+				stationRates[route] = append(stationRates[route], rate)
+			}
+			if !containsRate(allRates, rate) {
+				allRates = append(allRates, rate)
 			}
 		}
 	}
+	stationPhrases := func(route string, rate int) {
+		st, ok := a.cfg.Stations[route]
+		if !ok {
+			return
+		}
+		add(StationIntro(st.Preset, st.Name), rate)
+		for button, next := range buttons {
+			if route != button {
+				add(ButtonPhrase(next, st.Name), rate)
+			}
+		}
+	}
+
 	// What plays now is what the listener will hear about first.
 	if playing != nil {
-		for _, name := range playing() {
-			phrases = append(phrases, NowPlaying(name))
+		for route, name := range playing() {
+			rate := DefaultSampleRate
+			for _, path := range files[route] {
+				if filepath.Base(path) == name {
+					rate = rateOf[path]
+					break
+				}
+			}
+			stationPhrases(route, rate)
+			add(NowPlaying(name), rate)
+		}
+	}
+	for route := range a.cfg.Stations {
+		rates := stationRates[route]
+		if len(rates) == 0 {
+			rates = []int{DefaultSampleRate}
+		}
+		for _, rate := range rates {
+			stationPhrases(route, rate)
 		}
 	}
 	// Minute clips for usual lengths first, titles next, long records last.
 	const usual = 90
 	minuteClips := func(from, to int) {
-		for m := from; m <= to; m++ {
-			total := time.Duration(m) * time.Minute
-			phrases = append(phrases, timeClips(0, total)...)
-			phrases = append(phrases, timeClips(total, total+2*time.Minute)[0], timeClips(time.Minute, total+time.Minute)[1])
+		for _, rate := range allRates {
+			for m := from; m <= to; m++ {
+				total := time.Duration(m) * time.Minute
+				for _, p := range timeClips(0, total) {
+					add(p, rate)
+				}
+				add(timeClips(total, total+2*time.Minute)[0], rate)
+				add(timeClips(time.Minute, total+time.Minute)[1], rate)
+			}
 		}
 	}
 	minuteClips(1, usual)
-	for _, names := range tracks() {
-		for _, name := range names {
-			phrases = append(phrases, NowPlaying(name))
+	for _, paths := range files {
+		for _, path := range paths {
+			add(NowPlaying(filepath.Base(path)), rateOf[path])
 		}
 	}
 	minuteClips(usual+1, a.cfg.MaxMinutes)
 
 	made := 0
-	for _, p := range phrases {
+	for _, c := range clips {
 		if ctx.Err() != nil {
 			return made
 		}
-		if p == "" {
+		if _, ok := a.Cached(c.text, c.rate); ok {
 			continue
 		}
-		if _, ok := a.Cached(p); ok {
-			continue
-		}
-		if _, err := a.prepare(ctx, p); err != nil {
-			a.cfg.Logger.Warn("Cannot prepare announcement clip", slog.String("text", p), slog.String("error", err.Error()))
+		if _, err := a.prepare(ctx, c.text, c.rate); err != nil {
+			a.cfg.Logger.Warn("Cannot prepare announcement clip", slog.String("text", c.text), slog.Int("rate", c.rate),
+				slog.String("error", err.Error()))
 			select { // the speech service may be starting; try again shortly
 			case <-ctx.Done():
 				return made
@@ -334,6 +404,15 @@ func (a *Announcer) preparePass(ctx context.Context, tracks func() map[string][]
 		made++
 	}
 	return made
+}
+
+func containsRate(rates []int, rate int) bool {
+	for _, r := range rates {
+		if r == rate {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanup removes clips not used for maxAge (titles of deleted news videos and the like).

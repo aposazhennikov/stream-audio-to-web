@@ -77,41 +77,64 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 				slog.String("station", decision.target),
 				slog.String("remoteAddr", r.RemoteAddr))
 		}
-		intro := decision.intro()
-		if announcer := s.getAnnouncer(); r.Method == http.MethodGet && announcer.Wants(r) {
-			intro = append(append([]byte{}, intro...), s.announcement(r, announcer, decision)...)
+		// Sounds and speech before the station audio are made at the sample rate of the
+		// track that follows them: the receiver goes silent when the rate changes.
+		var intro []byte
+		announcer := s.getAnnouncer()
+		wantsVoice := r.Method == http.MethodGet && announcer.Wants(r) && !decision.duplicate
+		if decision.hasIntro() || wantsVoice {
+			track := s.followingTrack(decision)
+			intro = decision.intro(announce.ClipRate(announce.SampleRate(track.path)))
+			if wantsVoice {
+				intro = append(append([]byte{}, intro...), s.announcement(r, announcer, decision, track)...)
+			}
 		}
 		closedByClient := s.serveStream(w, r, route, decision.target, contentType, intro)
 		s.remote.release(decision, closedByClient)
 	}
 }
 
-// announcement returns the spoken announcement for this connection: the button on arrival,
-// the new record after a press, the station and its record on a new connection. Nothing for
-// duplicate connections and reconnects.
-func (s *Server) announcement(r *http.Request, announcer *announce.Announcer, decision remoteDecision) []byte {
-	ctx, cancel := context.WithTimeout(r.Context(), announceTimeout)
-	defer cancel()
-	switch {
-	case decision.direction != "":
-		trackPath, total := s.trackAfterSwitch(decision.target)
-		return announcer.ForSwitch(ctx, trackPath, total)
-	case decision.arrived:
-		return announcer.ForButton(ctx, decision.button == remoteDirectionNext, decision.target)
-	case decision.duplicate:
-		return nil
+// playingTrack is the track a station plays, where it is in it and how long it is.
+type playingTrack struct {
+	path           string
+	elapsed, total time.Duration
+}
+
+// followingTrack returns the track the client will hear after the intro: the new one after a
+// press, otherwise what the station plays now.
+func (s *Server) followingTrack(decision remoteDecision) playingTrack {
+	if decision.direction != "" {
+		path, total := s.trackAfterSwitch(decision.target)
+		return playingTrack{path: path, total: total}
 	}
 	s.mutex.RLock()
 	stream, ok := s.streams[decision.target]
 	s.mutex.RUnlock()
 	if !ok {
+		return playingTrack{}
+	}
+	path, _, elapsed, total := stream.GetPlaybackInfo()
+	return playingTrack{path: path, elapsed: elapsed, total: total}
+}
+
+// announcement returns the spoken announcement for this connection: the button on arrival,
+// the new record after a press, the station and its record on a new connection. Nothing for
+// duplicate connections and reconnects.
+func (s *Server) announcement(r *http.Request, announcer *announce.Announcer, decision remoteDecision, track playingTrack) []byte {
+	ctx, cancel := context.WithTimeout(r.Context(), announceTimeout)
+	defer cancel()
+	switch {
+	case decision.direction != "":
+		return announcer.ForSwitch(ctx, track.path, track.total)
+	case decision.arrived:
+		return announcer.ForButton(ctx, decision.button == remoteDirectionNext, decision.target, track.path)
+	case decision.duplicate:
 		return nil
 	}
-	trackPath, _, elapsed, total := stream.GetPlaybackInfo()
-	if trackPath == "" {
+	if track.path == "" {
 		return nil
 	}
-	return announcer.ForStation(ctx, decision.target, trackPath, elapsed, total)
+	return announcer.ForStation(ctx, decision.target, track.path, track.elapsed, track.total)
 }
 
 // recordTrackBeforeSwitch remembers the track a station plays before a button switches it,
