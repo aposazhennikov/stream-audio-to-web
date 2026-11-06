@@ -24,9 +24,11 @@ import (
 )
 
 // Station is how a station is announced: its preset number on the receiver and its name.
+// Music stations (songs of a few minutes) do not announce each next record.
 type Station struct {
 	Preset int    `json:"preset"`
 	Name   string `json:"name"`
+	Music  bool   `json:"music,omitempty"`
 }
 
 // Config sets up an Announcer.
@@ -132,6 +134,24 @@ func (a *Announcer) ForSwitch(ctx context.Context, trackPath string, total time.
 	parts := []string{NowPlaying(filepath.Base(trackPath))}
 	parts = append(parts, timeClips(0, total)...)
 	return a.join(ctx, parts, ClipRate(SampleRate(trackPath)))
+}
+
+// AnnouncesNext reports whether the station names the next record when it moves on to it.
+func (a *Announcer) AnnouncesNext(route string) bool {
+	if a == nil {
+		return false
+	}
+	st, ok := a.cfg.Stations[route]
+	return ok && !st.Music
+}
+
+// ForNext is said when the station moves on to the next record while the receiver keeps
+// listening: "Дальше: <title>." Nil for music stations and when the clip is not ready.
+func (a *Announcer) ForNext(ctx context.Context, route, trackPath string) []byte {
+	if !a.AnnouncesNext(route) || trackPath == "" {
+		return nil
+	}
+	return a.join(ctx, []string{NextRecord(filepath.Base(trackPath))}, ClipRate(SampleRate(trackPath)))
 }
 
 // ForButton is said when the receiver arrives on a button; the station keeps playing
@@ -379,6 +399,13 @@ func (a *Announcer) preparePass(ctx context.Context, tracks func() map[string][]
 	for _, paths := range files {
 		for _, path := range paths {
 			add(NowPlaying(filepath.Base(path)), rateOf[path])
+		}
+	}
+	for route, paths := range files {
+		if a.AnnouncesNext(route) {
+			for _, path := range paths {
+				add(NextRecord(filepath.Base(path)), rateOf[path])
+			}
 		}
 	}
 	minuteClips(usual+1, a.cfg.MaxMinutes)

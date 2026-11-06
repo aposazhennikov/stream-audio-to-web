@@ -256,6 +256,16 @@ func NowPlaying(fileName string) string {
 	return "Сейчас звучит: " + title + "."
 }
 
+// NextRecord is said when the station moves on to the next record while the listener stays:
+// "Дальше: <title>."
+func NextRecord(fileName string) string {
+	title := SpokenTitle(fileName)
+	if title == "" {
+		return ""
+	}
+	return "Дальше: " + title + "."
+}
+
 // TimePhrase tells how much of the record has passed and how much is left:
 // "Прошло двенадцать минут, осталось двадцать восемь минут."
 func TimePhrase(elapsed, total time.Duration) string {

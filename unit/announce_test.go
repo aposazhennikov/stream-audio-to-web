@@ -2,6 +2,7 @@ package unit_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -192,6 +193,93 @@ func TestAnnouncements(t *testing.T) {
 	got = voices(arrive)
 	require.Len(t, got, 1, "%v", got)
 	assert.Equal(t, "48000", speech.rate(got[0]))
+}
+
+// readFor reads a stream as a client with this User-Agent for d.
+func readFor(t *testing.T, url, userAgent string, d time.Duration) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	require.NoError(t, err)
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	return data
+}
+
+// TestNextRecordAnnouncement: when the station moves on to the next record while the receiver
+// listens, the receiver hears "Дальше: <title>" in its stream; music stations stay silent and
+// the record named on connecting is not named again.
+func TestNextRecordAnnouncement(t *testing.T) {
+	logger := slog.Default()
+	speech := fakeSpeech(t)
+	defer speech.Close()
+
+	stations := radio.NewRadioStationManager(logger, createTestSentryHelper())
+	defer stations.StopAll()
+	server := getTestServer()
+	server.SetStationManager(stations)
+
+	files := map[string][]string{
+		"/nx-lecture": {"Лекция 1", "Лекция 2"},
+		"/nx-music":   {"Песня 1", "Песня 2"},
+	}
+	for route, names := range files {
+		dir := t.TempDir()
+		for i, name := range names {
+			patternFile(t, dir, name+".mp3", 2*qualityBytesPerSec, byte(i+1))
+		}
+		pl, err := playlist.NewPlaylist(dir, nil, false, logger, createTestSentryHelper())
+		require.NoError(t, err)
+		defer pl.Close()
+		streamer := newQualityStreamer()
+		defer streamer.Close()
+		stations.AddStation(route, streamer, pl)
+		server.RegisterStream(route, streamer, pl)
+	}
+	server.SetAnnouncer(announce.New(announce.Config{
+		TTSURL:   speech.URL,
+		CacheDir: t.TempDir(),
+		Stations: map[string]announce.Station{
+			"/nx-lecture": {Preset: 5, Name: "Лекции"},
+			"/nx-music":   {Preset: 6, Name: "Песни", Music: true},
+		},
+		UserAgents: []string{"WR-230SF"},
+		Logger:     logger,
+	}))
+	defer server.SetAnnouncer(nil)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	// Two-second records: listening for five seconds passes at least two record starts.
+	got := voices(readFor(t, ts.URL+"/nx-lecture", "WR-230SF/1.0 (next test)", 5500*time.Millisecond))
+	require.GreaterOrEqual(t, len(got), 3, "connect announcement and the next records: %v", got)
+	assert.Equal(t, "Пятая станция. Лекции.", got[0])
+	require.True(t, strings.HasPrefix(got[1], "Сейчас звучит: Лекция "), "%v", got)
+	first := strings.TrimSuffix(strings.TrimPrefix(got[1], "Сейчас звучит: "), ".")
+	var nexts []string
+	for _, v := range got {
+		if strings.HasPrefix(v, "Дальше: ") {
+			nexts = append(nexts, strings.TrimSuffix(strings.TrimPrefix(v, "Дальше: "), "."))
+		}
+	}
+	require.GreaterOrEqual(t, len(nexts), 2, "each next record is named: %v", got)
+	assert.NotEqual(t, first, nexts[0], "the record named on connecting is not named again: %v", got)
+	for i := 1; i < len(nexts); i++ {
+		assert.NotEqual(t, nexts[i-1], nexts[i], "records alternate: %v", got)
+	}
+
+	// Other players and music stations hear no "Дальше".
+	for _, v := range voices(readFor(t, ts.URL+"/nx-lecture", "SomePlayer/1.0", 4500*time.Millisecond)) {
+		assert.NotContains(t, v, "Дальше")
+	}
+	for _, v := range voices(readFor(t, ts.URL+"/nx-music", "WR-230SF/1.0 (next test)", 4500*time.Millisecond)) {
+		assert.NotContains(t, v, "Дальше", "music stations do not announce each song")
+	}
 }
 
 // TestSampleRate: the rate is read from the first confirmed Layer III frame, after an ID3 tag.

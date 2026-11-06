@@ -84,6 +84,12 @@ type Streamer struct {
 	isStreaming      int32 // Атомарный флаг: идёт ли сейчас StreamTrack
 	lastActivityNano int64 // Время (UnixNano) последнего разосланного куска аудио
 
+	// Первые куски последних треков: по ним обработчик клиента узнаёт стык записей в своём
+	// потоке (клиенты отстают от вещания по-разному, общий момент смены трека им не подходит).
+	startsMutex sync.Mutex
+	starts      [trackStartMarks]trackStartMark
+	startsNext  int
+
 	trackMutex       sync.RWMutex // Защищает trackStartTime, currentTrackPath, trackDuration
 	trackStartTime   time.Time
 	currentTrackPath string
@@ -97,6 +103,43 @@ type Streamer struct {
 
 	logger       *slog.Logger
 	sentryHelper *sentryhelper.SentryHelper
+}
+
+// trackStartMarks is how many recent track starts are remembered; a client is never more
+// than a few tracks behind the broadcast.
+const trackStartMarks = 16
+
+type trackStartMark struct {
+	first *byte // first byte of the track's first chunk: the chunk slice itself is what clients get
+	path  string
+}
+
+// markTrackStart remembers that chunk is the first chunk of trackPath.
+func (s *Streamer) markTrackStart(chunk []byte, trackPath string) {
+	if len(chunk) == 0 {
+		return
+	}
+	s.startsMutex.Lock()
+	s.starts[s.startsNext] = trackStartMark{first: &chunk[0], path: trackPath}
+	s.startsNext = (s.startsNext + 1) % trackStartMarks
+	s.startsMutex.Unlock()
+}
+
+// TrackStartedBy reports whether a chunk a client received is the first chunk of a track,
+// and of which.
+func (s *Streamer) TrackStartedBy(chunk []byte) (string, bool) {
+	if len(chunk) == 0 {
+		return "", false
+	}
+	first := &chunk[0]
+	s.startsMutex.Lock()
+	defer s.startsMutex.Unlock()
+	for _, mark := range s.starts {
+		if mark.first == first {
+			return mark.path, true
+		}
+	}
+	return "", false
 }
 
 // NewStreamer creates a new audio streamer. bitrate is in kbps.
@@ -377,6 +420,9 @@ func (s *Streamer) streamAudioLoop(reader io.Reader, trackPath string, bytesPerS
 		n, readErr := io.ReadFull(reader, chunk)
 		if n > 0 {
 			chunk = chunk[:n]
+			if bytesSent == 0 {
+				s.markTrackStart(chunk, trackPath)
+			}
 			s.publishChunk(chunk)
 			bytesSent += int64(n)
 			s.paceDue += time.Duration(float64(n) / bytesPerSecond * float64(time.Second))

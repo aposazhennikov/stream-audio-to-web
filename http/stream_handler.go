@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -81,17 +82,67 @@ func (s *Server) StreamAudioHandler(route string) http.HandlerFunc {
 		// track that follows them: the receiver goes silent when the rate changes.
 		var intro []byte
 		announcer := s.getAnnouncer()
-		wantsVoice := r.Method == http.MethodGet && announcer.Wants(r) && !decision.duplicate
-		if decision.hasIntro() || wantsVoice {
+		voiceClient := r.Method == http.MethodGet && announcer.Wants(r)
+		wantsVoice := voiceClient && !decision.duplicate
+		var next *nextRecordVoice
+		if voiceClient && announcer.AnnouncesNext(decision.target) {
+			next = &nextRecordVoice{announcer: announcer, station: decision.target, remoteAddr: r.RemoteAddr}
+		}
+		if decision.hasIntro() || wantsVoice || next != nil {
 			track := s.followingTrack(decision)
-			intro = decision.intro(announce.ClipRate(announce.SampleRate(track.path)))
+			if next != nil {
+				next.named = track.path // already named on connecting, or the receiver heard it before
+			}
+			if decision.hasIntro() || wantsVoice {
+				intro = decision.intro(announce.ClipRate(announce.SampleRate(track.path)))
+			}
 			if wantsVoice {
 				intro = append(append([]byte{}, intro...), s.announcement(r, announcer, decision, track)...)
 			}
 		}
-		closedByClient := s.serveStream(w, r, route, decision.target, contentType, intro)
+		closedByClient := s.serveStream(w, r, route, decision.target, contentType, intro, next)
 		s.remote.release(decision, closedByClient)
 	}
+}
+
+// nextRecordVoice names the next record when the station moves on to it while the receiver
+// keeps listening: the next-record sound and "Дальше: <title>.", at the new record's rate.
+type nextRecordVoice struct {
+	announcer  *announce.Announcer
+	station    string
+	remoteAddr string
+	named      string // the record the listener already heard named
+}
+
+// nextRecordTimeout limits the wait for a clip that is not synthesized yet; the stream waits
+// meanwhile, so it is short, and the announcement is skipped if the clip is late.
+const nextRecordTimeout = 3 * time.Second
+
+// before returns what to send before chunk: the announcement if chunk starts a new record.
+func (v *nextRecordVoice) before(ctx context.Context, stream StreamHandler, chunk []byte, logger *slog.Logger) []byte {
+	marks, ok := stream.(interface {
+		TrackStartedBy(chunk []byte) (string, bool)
+	})
+	if !ok {
+		return nil
+	}
+	path, started := marks.TrackStartedBy(chunk)
+	if !started || path == v.named {
+		return nil
+	}
+	v.named = path
+	ctx, cancel := context.WithTimeout(ctx, nextRecordTimeout)
+	defer cancel()
+	voice := v.announcer.ForNext(ctx, v.station, path)
+	if len(voice) == 0 {
+		return nil
+	}
+	logger.Info("Announced the next record",
+		slog.String("station", v.station),
+		slog.String("track", filepath.Base(path)),
+		slog.String("remoteAddr", v.remoteAddr))
+	sound := remoteSound("next", announce.ClipRate(announce.SampleRate(path)))
+	return append(append(make([]byte, 0, len(sound)+len(voice)), sound...), voice...)
 }
 
 // playingTrack is the track a station plays, where it is in it and how long it is.
@@ -176,8 +227,9 @@ func (s *Server) trackAfterSwitch(route string) (string, time.Duration) {
 
 // serveStream streams the station to the client; requested is the URL the client asked for
 // (a button URL streams another station). intro, if any, is sent before the station audio.
-// Returns true if the client itself closed the connection.
-func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, route, contentType string, intro []byte) bool {
+// next, if set, names each next record the station moves on to. Returns true if the client
+// itself closed the connection.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, route, contentType string, intro []byte, next *nextRecordVoice) bool {
 	// Verify stream exists.
 	stream, exists := s.getStream(route, w)
 	if !exists {
@@ -255,7 +307,11 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 		}
 		flusher.Flush()
 	}
-	reason := s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done())
+	var before func([]byte) []byte
+	if next != nil {
+		before = func(chunk []byte) []byte { return next.before(r.Context(), stream, chunk, s.logger) }
+	}
+	reason := s.streamDataToClient(w, out, flusher, clientData, route, r.Context().Done(), before)
 	// Kept at info level: how long connections last and how they end tells a press from a
 	// reconnect on the receivers that use the remote control buttons.
 	s.logger.Info("Client connection ended",
@@ -350,7 +406,8 @@ func (s *Server) connectClientToStream(stream StreamHandler, route, remoteAddr, 
 }
 
 // streamDataToClient manages the streaming of audio data to a connected client.
-// out is where audio is written (w itself or a writer that adds ICY metadata).
+// out is where audio is written (w itself or a writer that adds ICY metadata). before, if
+// set, returns audio to insert before a chunk (an announcement at the start of a record).
 // Returns why the streaming ended.
 func (s *Server) streamDataToClient(
 	w http.ResponseWriter,
@@ -359,7 +416,9 @@ func (s *Server) streamDataToClient(
 	clientData *clientStreamData,
 	route string,
 	clientClosed <-chan struct{},
+	before func([]byte) []byte,
 ) string {
+	inserted := false
 	s.logger.Info("Starting data transmission", slog.Int("clientID", clientData.clientID), slog.String("route", route))
 
 	// Counter for tracking sent data.
@@ -392,6 +451,29 @@ func (s *Server) streamDataToClient(
 				return "dropped by the station (client too slow or station stopped)"
 			}
 			data = chunk
+		}
+
+		if before != nil {
+			if extra := before(data); len(extra) > 0 {
+				// The announcement goes out in front of the record; the listener then hears
+				// the station that much later, and the queue of this client grows by it.
+				data = append(append(make([]byte, 0, len(extra)+len(data)), extra...), data...)
+				inserted = true
+			}
+		}
+		// Announcements add up over hours of listening. Before the queue fills up and the
+		// station drops the client, skip some of the queued audio.
+		if inserted && cap(clientData.clientCh) > 0 && len(clientData.clientCh) > cap(clientData.clientCh)*3/4 {
+			skipped := 0
+			for len(clientData.clientCh) > cap(clientData.clientCh)/2 {
+				if _, ok := <-clientData.clientCh; !ok {
+					break
+				}
+				skipped++
+			}
+			s.logger.Info("Skipped queued audio after announcements",
+				slog.Int("chunks", skipped), slog.String("route", route),
+				slog.String("remoteAddr", clientData.remoteAddr))
 		}
 
 		// Send data and handle errors.
