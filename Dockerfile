@@ -44,6 +44,7 @@ COPY --from=builder /app/web /app/web
 COPY --from=builder /app/templates /app/templates
 COPY --from=builder /app/image /app/image
 COPY --from=builder /app/announce/stations.json /app/announce_stations.json
+COPY --from=builder /app/listeners/known.json /app/listeners_known.json
 
 # Copying entrypoint script
 COPY entrypoint.sh /app/

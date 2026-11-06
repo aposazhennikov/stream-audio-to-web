@@ -206,7 +206,7 @@ func (s *Server) statusPageHandler(w http.ResponseWriter, r *http.Request) {
 			StationName:    label.Name,
 			StartTime:      s.playlists[route].GetStartTime().Format("15:04:05"),
 			CurrentTrack:   currentTrack,
-			Listeners:      stream.GetClientCount(),
+			Listeners:      s.realListeners(route, stream.GetClientCount()),
 			HistoryHTML:    template.HTML(historyHTML),
 			ShuffleEnabled: s.getShuffleStatusForRoute(route),
 		})

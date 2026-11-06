@@ -2,6 +2,17 @@ package listeners
 
 import "strings"
 
+// serviceDevice names a connection from the server itself: checks after a deploy, monitoring
+// and test recordings come without a User-Agent or as curl/python.
+func serviceDevice(ua, device string) string {
+	lower := strings.ToLower(strings.TrimSpace(ua))
+	if lower == "" || strings.HasPrefix(lower, "curl/") || strings.HasPrefix(lower, "python") ||
+		strings.HasPrefix(lower, "go-http-client") || strings.HasPrefix(ua, "VoiceCheck") {
+		return "проверка с сервера"
+	}
+	return device
+}
+
 // DeviceName turns a User-Agent into a short readable name: "Радиоприёмник WR-230SF",
 // "Chrome, Windows", "VLC".
 func DeviceName(ua string) string {

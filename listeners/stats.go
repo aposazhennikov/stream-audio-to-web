@@ -15,8 +15,11 @@ type StationTime struct {
 // ListenerSummary is one listener's month: who (address and device), where from, how long,
 // on which stations, and every session.
 type ListenerSummary struct {
-	IP       string
+	IP       string   // the latest address
+	IPs      []string // every address seen (a known listener's provider may change it)
 	Device   string
+	Name     string
+	Place    string
 	Country  string
 	City     string
 	Service  bool
@@ -27,27 +30,35 @@ type ListenerSummary struct {
 	Sessions []Session     // newest first
 }
 
-// Summarize groups sessions by listener (address and device), longest listening first.
+// Summarize groups sessions by listener — a known listener by name, others by address and
+// device — longest listening first.
 func Summarize(sessions []Session) []ListenerSummary {
 	byKey := map[string]*ListenerSummary{}
 	stationSeconds := map[string]map[string]float64{}
 	for _, s := range sessions {
 		key := s.IP + "|" + s.Device
+		if s.Name != "" {
+			key = "name|" + s.Name
+		}
 		sum, ok := byKey[key]
 		if !ok {
-			sum = &ListenerSummary{IP: s.IP, Device: s.Device, Service: s.Service, First: s.Start, Last: s.End}
+			sum = &ListenerSummary{IP: s.IP, Device: s.Device, Name: s.Name, Place: s.Place, Service: s.Service, First: s.Start, Last: s.End}
 			byKey[key] = sum
 			stationSeconds[key] = map[string]float64{}
 		}
 		if s.Country != "" {
 			sum.Country, sum.City = s.Country, s.City
 		}
+		if !containsString(sum.IPs, s.IP) {
+			sum.IPs = append(sum.IPs, s.IP)
+		}
 		sum.Seconds += s.Seconds
 		if s.Start.Before(sum.First) {
 			sum.First = s.Start
 		}
-		if s.End.After(sum.Last) {
+		if !s.End.Before(sum.Last) {
 			sum.Last = s.End
+			sum.IP, sum.Device = s.IP, s.Device
 		}
 		stationSeconds[key][s.Station] += s.Seconds
 		sum.Sessions = append(sum.Sessions, s)
@@ -68,6 +79,15 @@ func Summarize(sessions []Session) []ListenerSummary {
 		return out[i].Seconds > out[j].Seconds
 	})
 	return out
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatDuration says a duration the way the status page shows it: "2 ч 05 мин", "12 мин",

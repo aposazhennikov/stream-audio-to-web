@@ -30,7 +30,9 @@ type Session struct {
 	IP        string    `json:"ip"`
 	UserAgent string    `json:"userAgent"`
 	Device    string    `json:"device"`
-	Country   string    `json:"country,omitempty"`
+	Name      string    `json:"name,omitempty"`    // a known listener's name
+	Place     string    `json:"place,omitempty"`   // a known listener's place, set by hand
+	Country   string    `json:"country,omitempty"` // found by IP: often only where the provider registered the address
 	City      string    `json:"city,omitempty"`
 	Route     string    `json:"route"`   // URL the listener asked for (a button URL streams another station)
 	Station   string    `json:"station"` // station streamed
@@ -52,9 +54,10 @@ type Tracker struct {
 	logger *slog.Logger
 	now    func() time.Time
 
-	mu   sync.Mutex
-	open map[int64]*Session
-	next int64
+	mu    sync.Mutex
+	open  map[int64]*Session
+	next  int64
+	known []Known
 
 	fileMu sync.Mutex
 }
@@ -68,6 +71,16 @@ func New(dir string, geo Geo, logger *slog.Logger) *Tracker {
 	t := &Tracker{dir: dir, geo: geo, logger: logger, now: time.Now, open: map[int64]*Session{}}
 	t.recoverOpen()
 	return t
+}
+
+// SetKnown sets the listeners the family named, for connections that start from now on.
+func (t *Tracker) SetKnown(known []Known) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.known = known
+	t.mu.Unlock()
 }
 
 // Start records a new connection and returns its id for End.
@@ -85,12 +98,17 @@ func (t *Tracker) Start(remoteAddr, userAgent, route, station string) int64 {
 		Start:     t.now(),
 		Service:   isServiceAddress(ip),
 	}
-	if t.geo != nil && !sess.Service {
-		if parsed := net.ParseIP(ip); parsed != nil {
-			sess.Country, sess.City = t.geo.Lookup(parsed)
-		}
+	parsed := net.ParseIP(ip)
+	if sess.Service {
+		sess.Device = serviceDevice(userAgent, sess.Device)
+	}
+	if t.geo != nil && !sess.Service && parsed != nil {
+		sess.Country, sess.City = t.geo.Lookup(parsed)
 	}
 	t.mu.Lock()
+	if k, ok := match(t.known, parsed, userAgent); ok {
+		sess.Name, sess.Place = k.Name, k.Place
+	}
 	t.next++
 	id := t.next
 	t.open[id] = sess
@@ -183,6 +201,17 @@ func (t *Tracker) Month(month string) []Session {
 		for _, s := range t.Live() {
 			if s.Seconds >= minRecorded.Seconds() {
 				out = append(out, s)
+			}
+		}
+	}
+	// Sessions recorded before a listener was named get the name now.
+	t.mu.Lock()
+	known := t.known
+	t.mu.Unlock()
+	for i := range out {
+		if out[i].Name == "" {
+			if k, ok := match(known, net.ParseIP(out[i].IP), out[i].UserAgent); ok {
+				out[i].Name, out[i].Place = k.Name, k.Place
 			}
 		}
 	}
