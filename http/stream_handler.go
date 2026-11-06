@@ -290,6 +290,9 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, requested, 
 		return false
 	}
 	defer stream.RemoveClient(clientData.clientID)
+	tracker := s.getListeners()
+	sessionID := tracker.Start(r.RemoteAddr, r.UserAgent(), requested, route)
+	defer tracker.End(sessionID)
 
 	// Start streaming data to client.
 	var out io.Writer = w

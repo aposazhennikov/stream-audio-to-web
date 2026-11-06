@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ru">
+{{template "head" .}}
+<body>
+    <header class="header">
+        <div class="theme-toggle-wrapper">
+            <div class="theme-toggle" id="theme-toggle">
+                <div class="toggle-ball">
+                    <span class="icon sun-icon">☀️</span>
+                    <span class="icon moon-icon">🌙</span>
+                </div>
+            </div>
+        </div>
+        <h1>Статистика слушателей</h1>
+        <nav class="stats-nav">
+            <a href="/status-page" class="nav-link">← Статус станций</a>
+            {{range .Months}}
+            <a href="/listening-stats?month={{.}}{{if $.ShowService}}&service=1{{end}}" class="nav-link month{{if eq . $.Month}} current{{end}}">{{.}}</a>
+            {{end}}
+            {{if .ShowService}}
+            <a href="/listening-stats?month={{.Month}}" class="nav-link">Скрыть служебные</a>
+            {{else}}
+            <a href="/listening-stats?month={{.Month}}&service=1" class="nav-link">Показать служебные</a>
+            {{end}}
+        </nav>
+    </header>
+
+    <main class="container">
+        <p class="month-total">
+            {{.Month}}: слушателей {{len .Cards}}, всего прослушано {{.Total}}. Время московское.
+        </p>
+
+        {{if not .Cards}}
+        <div class="empty">За этот месяц записей нет. Учёт ведётся с момента выката этой версии.</div>
+        {{end}}
+
+        {{range .Cards}}
+        <section class="listener{{if .Service}} service{{end}}">
+            <div class="listener-head">
+                <div class="who">
+                    <div class="device">{{.Device}}{{if .Service}} <span class="tag">служебный</span>{{end}}</div>
+                    <div class="where">{{if .Place}}{{.Place}} · {{end}}<span class="ip">{{.IP}}</span></div>
+                </div>
+                <div class="total">
+                    <div class="total-time">{{.Total}}</div>
+                    <div class="total-sub">сеансов: {{.Count}}</div>
+                </div>
+            </div>
+            <div class="period">с {{.First}} по {{.Last}}</div>
+
+            <div class="stations">
+                {{range .Stations}}
+                <div class="station-row">
+                    <div class="station-name">{{.Title}}</div>
+                    <div class="bar"><span style="width: {{printf "%.1f" .Percent}}%"></span></div>
+                    <div class="station-time">{{.Duration}}</div>
+                </div>
+                {{end}}
+            </div>
+
+            <details>
+                <summary>Все сеансы</summary>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Дата</th><th>Время</th><th>Станция</th><th>Длилось</th></tr></thead>
+                        <tbody>
+                            {{range .Sessions}}
+                            <tr>
+                                <td>{{.Date}}</td>
+                                <td class="nowrap">{{.Time}}</td>
+                                <td>{{.Station}}{{if .Via}} <span class="via">через кнопку {{.Via}}</span>{{end}}</td>
+                                <td class="nowrap">{{.Duration}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+        {{end}}
+
+        <p class="credit">Страна и город по IP: <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a> (CC BY 4.0).</p>
+    </main>
+
+    <style>
+        .header {
+            text-align: center;
+            padding: 2rem 1rem 1.25rem;
+            background-color: var(--color-surface);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: var(--color-secondary);
+            font-size: 2rem;
+            margin: 0 0 1rem;
+        }
+        .stats-nav {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .nav-link {
+            background: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.4rem 0.9rem;
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+        }
+        .nav-link:hover { color: var(--color-primary); }
+        .nav-link.current {
+            background: var(--color-primary);
+            color: #fff;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 1rem 3rem;
+        }
+        .month-total, .credit, .empty {
+            color: var(--color-text-secondary);
+        }
+        .credit { font-size: 0.8rem; margin-top: 2rem; }
+        .credit a { color: inherit; }
+        .listener {
+            background: var(--color-surface);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid var(--color-primary);
+        }
+        .listener.service { border-left-color: var(--color-border); opacity: 0.8; }
+        .listener-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+        .who { min-width: 0; }
+        .device {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--color-secondary);
+        }
+        .where { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+        .ip { font-variant-numeric: tabular-nums; user-select: text; -webkit-user-select: text; }
+        .tag {
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: var(--color-surface-accent);
+            padding: 0.1rem 0.5rem;
+            border-radius: 1rem;
+        }
+        .total { text-align: right; flex-shrink: 0; }
+        .total-time { font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+        .total-sub, .period { color: var(--color-text-secondary); font-size: 0.85rem; }
+        .period { margin: 0.25rem 0 0.75rem; }
+        .station-row {
+            display: grid;
+            grid-template-columns: minmax(8rem, 16rem) 1fr auto;
+            gap: 0.75rem;
+            align-items: center;
+            margin: 0.3rem 0;
+        }
+        .station-name { overflow-wrap: anywhere; }
+        .bar {
+            height: 0.6rem;
+            background: var(--color-surface-accent);
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+        .bar span {
+            display: block;
+            height: 100%;
+            background: var(--color-primary);
+            border-radius: 1rem;
+        }
+        .station-time { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); white-space: nowrap; }
+        details { margin-top: 0.75rem; }
+        summary { cursor: pointer; color: var(--color-primary); }
+        .table-wrap { overflow-x: auto; margin-top: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td {
+            text-align: left;
+            padding: 0.35rem 0.5rem;
+            border-bottom: 1px solid var(--color-border);
+            vertical-align: top;
+        }
+        th { color: var(--color-text-secondary); font-weight: 500; }
+        .nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .via { color: var(--color-text-secondary); font-size: 0.8rem; }
+        @media (max-width: 600px) {
+            h1 { font-size: 1.6rem; }
+            .station-row { grid-template-columns: 1fr auto; }
+            .station-row .bar { grid-column: 1 / -1; grid-row: 2; }
+        }
+    </style>
+    <script>
+        (function () {
+            let saved = 'light';
+            try { saved = localStorage.getItem('theme') || 'light'; } catch (e) {}
+            document.documentElement.setAttribute('data-theme', saved);
+            const toggle = document.getElementById('theme-toggle');
+            if (toggle) {
+                toggle.addEventListener('click', function () {
+                    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    try { localStorage.setItem('theme', next); } catch (e) {}
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

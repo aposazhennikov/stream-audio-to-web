@@ -58,6 +58,7 @@
                 {{end}}
             </div>
             {{end}}
+            <a href="/listening-stats" class="stats-link">📊 Статистика слушателей</a>
         </div>
     </header>
     <div class="container">
@@ -89,7 +90,12 @@
                     </div>
                 </div>
             </div>
-            <div class="status-info listeners">Listeners count: <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span></div>
+            <div class="status-info listeners">Listeners count:
+                <span class="listeners-wrap" tabindex="0" data-route="{{.Route}}" title="Кто слушает">
+                    <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span>
+                    <span class="listeners-pop" role="tooltip"></span>
+                </span>
+            </div>
             <div class="status-info shuffle-info">
                 Shuffle: <span class="shuffle-status {{if .ShuffleEnabled}}enabled{{else}}disabled{{end}}">
                     {{if .ShuffleEnabled}}Enabled{{else}}Disabled{{end}}
@@ -576,6 +582,89 @@
             color: var(--color-error);
         }
 
+        /* Who listens: shown on hover, focus or tap on the listener count. */
+        .listeners-wrap {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .listeners-wrap:focus-visible .listeners-count {
+            box-shadow: 0 0 0 2px var(--color-primary);
+        }
+
+        .stream-container:has(.listeners-wrap.open) {
+            overflow: visible;
+            z-index: 5;
+        }
+
+        .listeners-pop {
+            display: none;
+            position: absolute;
+            left: 0;
+            top: calc(100% + 0.4rem);
+            z-index: 10;
+            width: max-content;
+            max-width: min(26rem, calc(100vw - 3rem));
+            background: var(--color-surface);
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
+            border-radius: var(--border-radius);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            cursor: auto;
+        }
+
+        .listeners-wrap.open .listeners-pop {
+            display: block;
+        }
+
+        .listener-item {
+            padding: 0.4rem 0;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .listener-item:last-child {
+            border-bottom: none;
+        }
+
+        .listener-item .li-device {
+            font-weight: 600;
+        }
+
+        .listener-item .li-meta {
+            color: var(--color-text-secondary);
+            overflow-wrap: anywhere;
+        }
+
+        .listener-item.service {
+            opacity: 0.7;
+        }
+
+        .listeners-pop .li-empty {
+            color: var(--color-text-secondary);
+        }
+
+        .stats-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background-color: var(--color-surface-accent);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            box-shadow: var(--box-shadow);
+        }
+
+        .stats-link:hover {
+            color: var(--color-primary);
+        }
+
         .button-group {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -902,6 +991,79 @@
                 });
             }
         });
+
+        // Who listens: the list for a station opens on hover, focus or tap on its listener count.
+        (function () {
+            let cache = null;
+            let cachedAt = 0;
+
+            function fetchListeners() {
+                if (cache && Date.now() - cachedAt < 3000) {
+                    return Promise.resolve(cache);
+                }
+                return fetch('/api/listeners', { credentials: 'same-origin' })
+                    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+                    .then(data => { cache = data || {}; cachedAt = Date.now(); return cache; });
+            }
+
+            function item(l) {
+                const div = document.createElement('div');
+                div.className = 'listener-item' + (l.service ? ' service' : '');
+                const device = document.createElement('div');
+                device.className = 'li-device';
+                device.textContent = l.device + (l.service ? ' (служебный)' : '');
+                const where = document.createElement('div');
+                where.className = 'li-meta';
+                where.textContent = (l.place ? l.place + ' · ' : '') + l.ip;
+                const time = document.createElement('div');
+                time.className = 'li-meta';
+                time.textContent = 'слушает с ' + l.since + ', ' + l.duration + (l.via ? ', через кнопку ' + l.via : '');
+                div.append(device, where, time);
+                return div;
+            }
+
+            function render(wrap, data) {
+                const list = data[wrap.dataset.route] || [];
+                const pop = wrap.querySelector('.listeners-pop');
+                const count = wrap.querySelector('.listeners-count');
+                pop.replaceChildren();
+                if (list.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'li-empty';
+                    empty.textContent = 'Сейчас никто не слушает';
+                    pop.append(empty);
+                } else {
+                    list.forEach(l => pop.append(item(l)));
+                }
+                count.textContent = list.length;
+                count.classList.toggle('zero', list.length === 0);
+            }
+
+            function open(wrap) {
+                wrap.classList.add('open');
+                fetchListeners().then(data => render(wrap, data)).catch(() => {
+                    wrap.querySelector('.listeners-pop').textContent = 'Не удалось получить список';
+                });
+            }
+
+            function close(wrap) {
+                wrap.classList.remove('open');
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+                document.querySelectorAll('.listeners-wrap').forEach(wrap => {
+                    wrap.addEventListener('mouseenter', () => open(wrap));
+                    wrap.addEventListener('mouseleave', () => close(wrap));
+                    wrap.addEventListener('focus', () => open(wrap));
+                    wrap.addEventListener('blur', () => close(wrap));
+                    // A tap on a phone focuses it (opens); a tap elsewhere blurs it (closes).
+                    wrap.addEventListener('click', () => open(wrap));
+                });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') document.querySelectorAll('.listeners-wrap.open').forEach(close);
+                });
+            });
+        })();
 
         function toggleTrackList(id) {
             const trackList = document.getElementById('track-list-' + id);
