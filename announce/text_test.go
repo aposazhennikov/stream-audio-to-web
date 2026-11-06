@@ -84,6 +84,9 @@ func TestTimePhrase(t *testing.T) {
 			t.Errorf("TimePhrase(%v, %v) = %q, want %q", c.elapsed, c.total, got, c.want)
 		}
 	}
+	if got := NextRecord("2023 Работа в высокочастотном режиме 2.mp3"); got != "Дальше: две тысячи двадцать три, Работа в высокочастотном режиме два." {
+		t.Errorf("NextRecord = %q", got)
+	}
 	if got := StationIntro(32, "Целительство"); got != "Тридцать вторая станция. Целительство." {
 		t.Errorf("StationIntro = %q", got)
 	}

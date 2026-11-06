@@ -1,9 +1,9 @@
 {
- "/shaov": {"preset": 1, "name": "Шаов"},
- "/troshin": {"preset": 2, "name": "Трошин"},
+ "/shaov": {"preset": 1, "name": "Шаов", "music": true},
+ "/troshin": {"preset": 2, "name": "Трошин", "music": true},
  "/science": {"preset": 3, "name": "Наука"},
  "/politics": {"preset": 4, "name": "Политика"},
- "/humor": {"preset": 6, "name": "Юмор, Лесоповал"},
+ "/humor": {"preset": 6, "name": "Юмор, Лесоповал", "music": true},
  "/nature": {"preset": 11, "name": "Инитакса"},
  "/monosov": {"preset": 15, "name": "Третий глаз, две тысячи двадцать три"},
  "/monosov11": {"preset": 20, "name": "Аудиокниги, Мастер магии"},
