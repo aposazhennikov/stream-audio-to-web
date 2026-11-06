@@ -29,6 +29,22 @@ func (s *Server) stationTitle(route string) string {
 	return route
 }
 
+// realListeners is how many real listeners a station has now: connections from the server
+// itself (checks, recordings) do not count. Without a tracker it is every connection.
+func (s *Server) realListeners(station string, connections int) int {
+	tracker := s.getListeners()
+	if tracker == nil {
+		return connections
+	}
+	n := 0
+	for _, sess := range tracker.Live() {
+		if sess.Station == station && !sess.Service {
+			n++
+		}
+	}
+	return n
+}
+
 // liveListener is one open connection as the status page shows it.
 type liveListener struct {
 	IP       string `json:"ip"`

@@ -85,6 +85,9 @@ func (t *Tracker) Start(remoteAddr, userAgent, route, station string) int64 {
 		Start:     t.now(),
 		Service:   isServiceAddress(ip),
 	}
+	if sess.Service {
+		sess.Device = serviceDevice(userAgent, sess.Device)
+	}
 	if t.geo != nil && !sess.Service {
 		if parsed := net.ParseIP(ip); parsed != nil {
 			sess.Country, sess.City = t.geo.Lookup(parsed)

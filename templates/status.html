@@ -86,7 +86,7 @@
             </div>
             <div class="meta">
                 <span class="status-info listeners">Слушают:
-                    <span class="listeners-wrap" tabindex="0" data-route="{{.Route}}" title="Кто слушает">
+                    <span class="listeners-wrap" tabindex="0" data-route="{{.Route}}" aria-label="Кто слушает">
                         <span class="listeners-count {{if eq .Listeners 0}}zero{{end}}">{{.Listeners}}</span>
                         <span class="listeners-pop" role="tooltip"></span>
                     </span>
@@ -654,6 +654,17 @@
             color: var(--color-text-secondary);
         }
 
+        .listeners-pop .li-section {
+            margin-top: 0.4rem;
+            padding-top: 0.4rem;
+            border-top: 1px solid var(--color-border);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--color-text-secondary);
+        }
+
         /* Controls: the two track buttons filled, the rest outlined, clearing in red. */
         .button-group {
             display: grid;
@@ -849,7 +860,7 @@
                 div.className = 'listener-item' + (l.service ? ' service' : '');
                 const device = document.createElement('div');
                 device.className = 'li-device';
-                device.textContent = l.device + (l.service ? ' (служебный)' : '');
+                device.textContent = l.device;
                 const where = document.createElement('div');
                 where.className = 'li-meta';
                 where.textContent = (l.place ? l.place + ' · ' : '') + l.ip;
@@ -861,20 +872,29 @@
             }
 
             function render(wrap, data) {
-                const list = data[wrap.dataset.route] || [];
+                const all = data[wrap.dataset.route] || [];
+                // Real listeners first and counted; the server's own checks below, in grey.
+                const people = all.filter(l => !l.service);
+                const service = all.filter(l => l.service);
                 const pop = wrap.querySelector('.listeners-pop');
                 const count = wrap.querySelector('.listeners-count');
                 pop.replaceChildren();
-                if (list.length === 0) {
+                if (people.length === 0) {
                     const empty = document.createElement('div');
                     empty.className = 'li-empty';
                     empty.textContent = 'Сейчас никто не слушает';
                     pop.append(empty);
-                } else {
-                    list.forEach(l => pop.append(item(l)));
                 }
-                count.textContent = list.length;
-                count.classList.toggle('zero', list.length === 0);
+                people.forEach(l => pop.append(item(l)));
+                if (service.length > 0) {
+                    const title = document.createElement('div');
+                    title.className = 'li-section';
+                    title.textContent = 'Служебные подключения';
+                    pop.append(title);
+                    service.forEach(l => pop.append(item(l)));
+                }
+                count.textContent = people.length;
+                count.classList.toggle('zero', people.length === 0);
             }
 
             function open(wrap) {

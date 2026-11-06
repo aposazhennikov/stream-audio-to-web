@@ -41,9 +41,14 @@ func TestTrackerRecordsSessionsByMonth(t *testing.T) {
 	if live[0].Device != "Радиоприёмник WR-230SF" || live[0].City != "Москва" || live[0].Service {
 		t.Errorf("receiver session = %+v", live[0])
 	}
-	if !live[1].Service {
+	if !live[1].Service || live[1].Device != "проверка с сервера" {
 		t.Errorf("a connection from the docker network is ours: %+v", live[1])
 	}
+	check := tr.Start("172.18.0.1:40000", "", "/humor", "/humor")
+	if got := tr.Live()[2].Device; got != "проверка с сервера" {
+		t.Errorf("a check without User-Agent = %q", got)
+	}
+	tr.End(check)
 
 	c.t = c.t.Add(40 * time.Minute)
 	tr.End(radio)
