@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/aposazhennikov/stream-audio-to-web/announce"
@@ -62,7 +63,7 @@ func normalizeRouteEnv(name string) string {
 	return route
 }
 
-// audioFilesByRoute lists the audio file names of every station directory.
+// audioFilesByRoute lists the audio file paths of every station directory.
 func audioFilesByRoute(config *Config) map[string][]string {
 	result := make(map[string][]string, len(config.DirectoryRoutes))
 	for route, dir := range config.DirectoryRoutes {
@@ -72,7 +73,7 @@ func audioFilesByRoute(config *Config) map[string][]string {
 		}
 		for _, e := range entries {
 			if !e.IsDir() && isAudioFileName(e.Name()) {
-				result[route] = append(result[route], e.Name())
+				result[route] = append(result[route], filepath.Join(dir, e.Name()))
 			}
 		}
 	}
