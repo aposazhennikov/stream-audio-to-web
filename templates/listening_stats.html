@@ -38,8 +38,8 @@
         <section class="listener{{if .Service}} service{{end}}">
             <div class="listener-head">
                 <div class="who">
-                    <div class="device">{{.Device}}{{if .Service}} <span class="tag">служебный</span>{{end}}</div>
-                    <div class="where">{{if .Place}}{{.Place}} · {{end}}<span class="ip">{{.IP}}</span></div>
+                    <div class="device">{{if .Name}}{{.Name}}{{else}}{{.Device}}{{end}}{{if .Service}} <span class="tag">служебный</span>{{end}}</div>
+                    <div class="where">{{if .Name}}{{.Device}} · {{end}}{{if .Place}}{{.Place}} · {{end}}<span class="ip">{{.IP}}</span></div>
                 </div>
                 <div class="total">
                     <div class="total-time">{{.Total}}</div>

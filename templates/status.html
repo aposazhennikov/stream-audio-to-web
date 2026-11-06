@@ -860,10 +860,10 @@
                 div.className = 'listener-item' + (l.service ? ' service' : '');
                 const device = document.createElement('div');
                 device.className = 'li-device';
-                device.textContent = l.device;
+                device.textContent = l.name || l.device;
                 const where = document.createElement('div');
                 where.className = 'li-meta';
-                where.textContent = (l.place ? l.place + ' · ' : '') + l.ip;
+                where.textContent = (l.name ? l.device + ' · ' : '') + (l.place ? l.place + ' · ' : '') + l.ip;
                 const time = document.createElement('div');
                 time.className = 'li-meta';
                 time.textContent = 'слушает с ' + l.since + ', ' + l.duration + (l.via ? ', через кнопку ' + l.via : '');

@@ -94,6 +94,51 @@ func TestTrackerRecoversSessionsOpenAtRestart(t *testing.T) {
 	}
 }
 
+func TestKnownListenersAreNamed(t *testing.T) {
+	known, err := LoadKnown("known.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &clock{t: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)}
+	tr := New(t.TempDir(), fakeGeo{}, nil)
+	tr.now = c.now
+	tr.SetKnown(known)
+
+	radio := tr.Start("94.188.82.133:1", "WR-230SF/1.0", "/science", "/science")
+	first := tr.Start("185.213.230.51:1", "Mozilla/5.0 (Windows NT 10.0) Chrome/156.0", "/monosov5", "/monosov5")
+	stranger := tr.Start("8.8.8.8:1", "VLC/3.0", "/humor", "/humor")
+	live := tr.Live()
+	if live[0].Name != "Дедушка" || live[0].Place != "Санкт-Петербург" {
+		t.Errorf("receiver = %+v", live[0])
+	}
+	if live[1].Name != "Александр" || live[1].Place != "Ташкент" {
+		t.Errorf("owner = %+v", live[1])
+	}
+	if live[2].Name != "" {
+		t.Errorf("a stranger is not named: %+v", live[2])
+	}
+
+	c.t = c.t.Add(10 * time.Minute)
+	tr.End(radio)
+	tr.End(first)
+	tr.End(stranger)
+	// The provider gives the owner another address: still the same listener in the month.
+	second := tr.Start("185.213.229.16:1", "Mozilla/5.0 (Windows NT 10.0) Chrome/156.0", "/monosov6", "/monosov6")
+	c.t = c.t.Add(5 * time.Minute)
+	tr.End(second)
+
+	sums := Summarize(tr.Month("2026-11"))
+	var owner *ListenerSummary
+	for i := range sums {
+		if sums[i].Name == "Александр" {
+			owner = &sums[i]
+		}
+	}
+	if owner == nil || len(owner.Sessions) != 2 || len(owner.IPs) != 2 || owner.IP != "185.213.229.16" {
+		t.Errorf("owner summary = %+v", owner)
+	}
+}
+
 func TestDeviceName(t *testing.T) {
 	cases := map[string]string{
 		"WR-230SF/1.0": "Радиоприёмник WR-230SF",

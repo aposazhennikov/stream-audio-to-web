@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aposazhennikov/stream-audio-to-web/listeners"
@@ -49,6 +50,7 @@ func (s *Server) realListeners(station string, connections int) int {
 type liveListener struct {
 	IP       string `json:"ip"`
 	Device   string `json:"device"`
+	Name     string `json:"name,omitempty"`
 	Place    string `json:"place"`
 	Since    string `json:"since"`
 	Duration string `json:"duration"`
@@ -67,7 +69,8 @@ func (s *Server) liveListenersHandler(w http.ResponseWriter, r *http.Request) {
 		item := liveListener{
 			IP:       sess.IP,
 			Device:   sess.Device,
-			Place:    place(sess.Country, sess.City),
+			Name:     sess.Name,
+			Place:    place(sess.Place, sess.Country, sess.City),
 			Since:    sess.Start.In(moscow).Format("15:04"),
 			Duration: listeners.FormatDuration(sess.Seconds),
 			Service:  sess.Service,
@@ -82,12 +85,17 @@ func (s *Server) liveListenersHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(byStation)
 }
 
-func place(country, city string) string {
+// place says where a listener is: the place the family set for a known listener, otherwise
+// the city found by IP, marked as approximate (it is often where the provider registered the
+// address, not where the listener is).
+func place(known, country, city string) string {
 	switch {
+	case known != "":
+		return known
 	case country != "" && city != "":
-		return city + ", " + country
+		return city + ", " + country + " (по IP, примерно)"
 	case country != "":
-		return country
+		return country + " (по IP)"
 	}
 	return ""
 }
@@ -121,6 +129,7 @@ func (s *Server) listeningStatsHandler(w http.ResponseWriter, r *http.Request) {
 	type listenerCard struct {
 		IP       string
 		Device   string
+		Name     string
 		Place    string
 		Service  bool
 		Total    string
@@ -138,9 +147,10 @@ func (s *Server) listeningStatsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		card := listenerCard{
-			IP:      sum.IP,
+			IP:      strings.Join(sum.IPs, ", "),
 			Device:  sum.Device,
-			Place:   place(sum.Country, sum.City),
+			Name:    sum.Name,
+			Place:   place(sum.Place, sum.Country, sum.City),
 			Service: sum.Service,
 			Total:   listeners.FormatDuration(sum.Seconds),
 			Count:   len(sum.Sessions),
